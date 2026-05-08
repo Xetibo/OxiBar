@@ -1,4 +1,6 @@
 /target
+/plugins/workspaces/target
+/plugins/workspaces/tmp
 /tmp
 /.direnv
 .envrc
