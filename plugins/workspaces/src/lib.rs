@@ -67,7 +67,6 @@ pub enum Message {
 }
 
 #[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
 pub extern "Rust" fn model(
     global_config: Table,
 ) -> (
@@ -79,7 +78,6 @@ pub extern "Rust" fn model(
 }
 
 #[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
 pub extern "Rust" fn update(
     _filter_text: String,
     model: Arc<RwLock<&'static mut dyn OxiAny>>,
@@ -117,7 +115,6 @@ pub extern "Rust" fn update(
 }
 
 #[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
 pub extern "Rust" fn launch(
     _focused_index: usize,
     _model: Arc<RwLock<&'static mut dyn OxiAny>>,
@@ -126,7 +123,6 @@ pub extern "Rust" fn launch(
 }
 
 #[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
 pub extern "Rust" fn view(
     model: Arc<RwLock<&'static mut dyn OxiAny>>,
 ) -> Result<Vec<Element<'static, Arc<dyn OxiAny>>>, std::io::Error> {
@@ -228,13 +224,11 @@ pub extern "Rust" fn view(
 }
 
 #[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
 pub extern "Rust" fn name() -> &'static str {
     "Workspaces"
 }
 
 #[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
 pub extern "Rust" fn errors(_model: Arc<RwLock<&'static mut dyn OxiAny>>) -> Vec<String> {
     vec![]
 }
@@ -244,7 +238,6 @@ pub extern "Rust" fn errors(_model: Arc<RwLock<&'static mut dyn OxiAny>>) -> Vec
 /// This avoids the two-tokio-instance problem (separate dylib = separate reactor).
 /// The stream bridge uses `try_send` which is sync and doesn't need a runtime.
 #[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
 pub extern "Rust" fn subscription() -> *mut (dyn Stream<Item = Arc<dyn OxiAny>> + Send) {
     let s =
         stream::channel(
