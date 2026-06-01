@@ -1,11 +1,18 @@
-use std::collections::HashMap;
+//! Oxibar entry point and the iced application driving the bar.
+//!
+//! TODO (architectural):
+//! - `WINDOW_SIZE` is hardcoded for one monitor. Should be derived from the
+//!   active wayland output (`wl_output` advertise width) or a config knob.
+//! - `view()` currently concatenates every plugin into a single `Row`.
+//!   Once plugins declare a `Slot`, split into left/center/right containers.
+//! - Replace the raw `*mut Stream` ABI with an `extern "C"` callback channel
+//!   (see `oxibar-plugin-api`).
+
 use std::pin::Pin;
 
-use iced::widget::{Container, container};
-use iced::{Alignment, Font};
+use iced::widget::Container;
 use iced::{
-    Element, Length, Subscription, Task, Theme,
-    futures::Stream,
+    Alignment, Element, Font, Length, Subscription, Task, Theme,
     theme::Style,
     widget::Row,
 };
@@ -15,15 +22,14 @@ use iced_layershell::{
     settings::LayerShellSettings,
 };
 use once_cell::sync::Lazy;
+use oxibar_plugin_api::{PluginMsg, PluginStream, SubscriptionFn};
 use oxiced::theme::theme_impl::OXITHEME;
-use oxiced::{
-    theme::theme_impl::get_derived_iced_theme,
-    widgets::oxi_layer::layer_theme,
-};
+use oxiced::{theme::theme_impl::get_derived_iced_theme, widgets::oxi_layer::layer_theme};
 use toml::Table;
+use tracing::error;
 
-use crate::config::{get_allowed_plugins, get_config, get_oxirun_dir};
-use crate::plugins::{PluginFuncs, PluginModel, PluginMsg, SubscriptionFn, load_plugin};
+use crate::config::get_config;
+use crate::plugins::{PluginMap, dispatch_update, drain_errors, load_plugins, render_plugin};
 
 pub mod config;
 pub mod plugins;
@@ -33,17 +39,25 @@ static CONFIG: Lazy<Table> = Lazy::new(get_config);
 const WINDOW_SIZE: (u32, u32) = (3440, 25);
 const SCALE_FACTOR: f32 = 1.0;
 const WINDOW_MARGINS: (i32, i32, i32, i32) = (0, 0, 0, 0);
-const WINDOW_KEYBAORD_MODE: KeyboardInteractivity = KeyboardInteractivity::OnDemand;
+const WINDOW_KEYBOARD_MODE: KeyboardInteractivity = KeyboardInteractivity::OnDemand;
+const EXCLUSIVE_ZONE: i32 = 25;
 
 pub fn main() -> Result<(), iced_layershell::Error> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     let settings = Settings {
         layer_settings: LayerShellSettings {
             size: Some(WINDOW_SIZE),
-            exclusive_zone: 25,
+            exclusive_zone: EXCLUSIVE_ZONE,
             anchor: Anchor::Top,
             layer: Layer::Background,
             margin: WINDOW_MARGINS,
-            keyboard_interactivity: WINDOW_KEYBAORD_MODE,
+            keyboard_interactivity: WINDOW_KEYBOARD_MODE,
             ..Default::default()
         },
         ..Default::default()
@@ -60,8 +74,7 @@ pub fn main() -> Result<(), iced_layershell::Error> {
 
 struct OxiBar {
     theme: Theme,
-    _config: Table,
-    plugins: HashMap<usize, (PluginModel, PluginFuncs)>,
+    plugins: PluginMap,
 }
 
 impl TryInto<iced_layershell::actions::LayershellCustomActionWithId> for Message {
@@ -76,56 +89,17 @@ impl TryInto<iced_layershell::actions::LayershellCustomActionWithId> for Message
 #[derive(Debug, Clone)]
 pub enum Message {
     Exit,
-    PluginSubMsg(usize, PluginMsg),
-}
-
-type PluginMap = HashMap<usize, (PluginModel, PluginFuncs)>;
-
-fn get_plugins(config: &Table) -> (PluginMap, Vec<Task<Message>>) {
-    let mut plugins = HashMap::new();
-    let mut tasks = Vec::new();
-    let plugin_dir = get_oxirun_dir().join("plugins");
-    if !plugin_dir.is_dir() {
-        std::fs::create_dir(&plugin_dir).expect("Could not create config dir");
-    }
-    let allowed_files = get_allowed_plugins(config);
-    for (index, res) in plugin_dir
-        .read_dir()
-        .expect("Could not read plugin directory")
-        .enumerate()
-    {
-        if let Ok(file) = res {
-            if allowed_files.contains(&file.file_name().to_str().unwrap_or("")) {
-                unsafe {
-                    let lib = Box::leak(Box::new(
-                        libloading::Library::new(file.path()).expect("Could not load library"),
-                    ));
-                    if let Some(plugin) = load_plugin(lib) {
-                        let (model, task_opt) = (plugin.model.clone())(config.clone());
-                        plugins.insert(index, (model, plugin));
-                        if let Some(task) = task_opt
-                            .map(|val| val.map(move |msg| Message::PluginSubMsg(index, msg)))
-                        {
-                            tasks.push(task)
-                        }
-                    }
-                }
-            }
-        }
-    }
-    (plugins, tasks)
+    PluginSubMsg(String, PluginMsg),
 }
 
 impl OxiBar {
     fn new() -> (Self, Task<Message>) {
-        let (plugins, plugin_tasks) = get_plugins(&CONFIG);
-        dbg!(&plugins);
-        let content = Self {
-            _config: CONFIG.to_owned(),
+        let (plugins, plugin_tasks) = load_plugins(&CONFIG);
+        let bar = Self {
             plugins,
             theme: get_derived_iced_theme(),
         };
-        (content, Task::batch(plugin_tasks))
+        (bar, Task::batch(plugin_tasks))
     }
 
     fn namespace() -> String {
@@ -135,39 +109,41 @@ impl OxiBar {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Exit => std::process::exit(0),
-            Message::PluginSubMsg(index, msg) => unsafe {
-                let plugin = self.plugins.get_mut(&index).unwrap();
-                let update_func = plugin.1.update.clone();
-                let task_opt = (update_func)(String::from(""), plugin.0.clone(), msg);
-                if let Some(task) = task_opt {
-                    task.map(move |msg| Message::PluginSubMsg(index, msg))
-                } else {
-                    Task::none()
+            Message::PluginSubMsg(plugin_id, msg) => {
+                let Some((model, funcs)) = self.plugins.get(&plugin_id) else {
+                    error!("message for unknown plugin `{plugin_id}`");
+                    return Task::none();
+                };
+                let task = dispatch_update(funcs, model.clone(), msg);
+                drain_errors(funcs, model);
+                match task {
+                    Some(task) => {
+                        let id = plugin_id.clone();
+                        task.map(move |msg| Message::PluginSubMsg(id.clone(), msg))
+                    }
+                    None => Task::none(),
                 }
-            },
+            }
         }
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         let plugin_views: Vec<Element<Message>> = self
             .plugins
             .iter()
-            .flat_map(|(index, (model, funcs))| {
-                let view_func = funcs.view.clone();
-                let view_res = unsafe { (view_func)(model.clone()) };
-                match view_res {
-                    Ok(view) => view
-                        .into_iter()
-                        .map(move |element| {
-                            element.map(|msg| Message::PluginSubMsg(*index, msg.clone()))
-                        })
-                        .collect(),
-                    Err(_) => Vec::new(),
-                }
+            .flat_map(|(plugin_id, (model, funcs))| {
+                let id = plugin_id.clone();
+                render_plugin(funcs, model)
+                    .into_iter()
+                    .map(move |el| {
+                        let id = id.clone();
+                        el.map(move |msg| Message::PluginSubMsg(id.clone(), msg))
+                    })
+                    .collect::<Vec<_>>()
             })
-            .collect::<Vec<_>>();
-        let what = Row::from_vec(plugin_views);
-        let row = Row::from_vec(vec![what.into()]).width(Length::Fill);
+            .collect();
+
+        let row = Row::from_vec(plugin_views).width(Length::Fill);
         Container::new(row)
             .style(OxiBar::box_style)
             .align_x(Alignment::Center)
@@ -190,22 +166,31 @@ impl OxiBar {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let plugin_subscriptions: Vec<Subscription<Message>> = self
+        // `Subscription::run_with` requires a bare `fn` pointer (so it can be
+        // hashed for identity) and `Subscription::map` requires a
+        // *non-capturing* closure. We can't capture the plugin id directly,
+        // so we attach it via `.with(id)` (which makes the items `(id, msg)`
+        // tuples) and then map a non-capturing closure that destructures.
+        //
+        // The plugin's `subscription` fn pointer is re-encoded as `usize`
+        // because raw fn pointers aren't `Hash`. Soundness: the backing
+        // `Library` is owned by `Arc<PluginFuncs>` in `self.plugins` and
+        // dropped only at shutdown, so the fn pointer remains valid for as
+        // long as iced may invoke this builder.
+        let subs: Vec<Subscription<Message>> = self
             .plugins
             .iter()
-            .map(|(index, (_model, funcs))| {
-                let subscription_fn: SubscriptionFn = unsafe { *funcs.subscription };
-                let index_clone = *index;
+            .map(|(plugin_id, (_model, funcs))| {
+                let sub_fn_addr = funcs.subscription as usize;
                 Subscription::run_with(
-                    (index_clone, subscription_fn as usize),
+                    (plugin_id.clone(), sub_fn_addr),
                     build_plugin_stream,
                 )
-                // Attach the index as context so the map closure is zero-sized (non-capturing).
-                .with(index_clone)
-                .map(|(idx, msg)| Message::PluginSubMsg(idx, msg))
+                .with(plugin_id.clone())
+                .map(|(id, msg): (String, PluginMsg)| Message::PluginSubMsg(id, msg))
             })
             .collect();
-        Subscription::batch(plugin_subscriptions)
+        Subscription::batch(subs)
     }
 
     fn style(&self, _: &Theme) -> Style {
@@ -217,13 +202,18 @@ impl OxiBar {
     }
 }
 
-/// Non-capturing builder fn required by `Subscription::run_with`.
-/// Receives (plugin_index, fn_ptr_as_usize), calls the plugin's subscription function,
-/// and reconstitutes the returned raw pointer as a pinned boxed stream on the host side.
-/// Only a raw `*mut dyn Stream` crosses the dylib boundary — no non-repr(C) Rust types.
-fn build_plugin_stream(
-    data: &(usize, usize),
-) -> impl Stream<Item = PluginMsg> + use<> {
-    let subscription_fn: SubscriptionFn = unsafe { std::mem::transmute(data.1) };
-    unsafe { Pin::new_unchecked(Box::from_raw((subscription_fn)())) }
+/// Reconstitute the plugin's boxed stream into a pinned `Box`. Required to
+/// be a bare `fn` (no captures) by `Subscription::run_with`.
+fn build_plugin_stream(data: &(String, usize)) -> Pin<Box<PluginStream>> {
+    // SAFETY: `data.1` was produced by casting a `SubscriptionFn` (an
+    // `unsafe extern "Rust" fn`) to `usize` in `subscription()`. The
+    // backing dylib outlives this call because `OxiBar.plugins` holds the
+    // `Arc<Library>` and is dropped only on shutdown. The returned raw
+    // pointer is a `Box<PluginStream>` from the plugin's allocator (same
+    // global allocator as the host, since both are built with the same
+    // toolchain and link the same `oxibar-plugin-api`).
+    let sub_fn: SubscriptionFn = unsafe { std::mem::transmute(data.1) };
+    let raw = unsafe { sub_fn() };
+    unsafe { Pin::new_unchecked(Box::from_raw(raw)) }
 }
+
