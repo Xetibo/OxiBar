@@ -26,8 +26,8 @@ use std::sync::Arc;
 
 use libloading::Library;
 use oxibar_plugin_api::{
-    ABI_VERSION, AbiVersionFn, ErrorsFn, LaunchFn, ModelFn, NameFn, PluginModel, PluginMsg,
-    SubscriptionFn, UpdateFn, ViewFn,
+    ABI_VERSION, AbiVersionFn, ErrorsFn, HOST_REQUEST_TOGGLE_POPUP, LaunchFn, ModelFn, NameFn,
+    PluginModel, PluginMsg, PopupViewFn, SubscriptionFn, UpdateFn, ViewFn,
 };
 use toml::Table;
 use tracing::{error, info, warn};
@@ -46,6 +46,7 @@ pub struct PluginFuncs {
     pub errors: ErrorsFn,
     pub name: NameFn,
     pub subscription: SubscriptionFn,
+    pub popup_view: Option<PopupViewFn>,
 }
 
 impl std::fmt::Debug for PluginFuncs {
@@ -102,6 +103,19 @@ unsafe fn resolve<T: Copy>(lib: &Library, symbol: &'static str) -> Result<T, Loa
     }
 }
 
+unsafe fn resolve_optional<T: Copy>(lib: &Library, symbol: &'static str) -> Option<T> {
+    debug_assert_eq!(
+        std::mem::size_of::<T>(),
+        std::mem::size_of::<*const ()>(),
+        "resolve_optional<T>() must be instantiated with a fn pointer type"
+    );
+    unsafe {
+        let sym: libloading::Symbol<'_, T> = lib.get(symbol.as_bytes()).ok()?;
+        let raw = sym.into_raw();
+        Some(*(&raw as *const _ as *const T))
+    }
+}
+
 unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), LoadError> {
     let lib = unsafe { Library::new(path) }.map_err(LoadError::Library)?;
 
@@ -122,6 +136,7 @@ unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), Load
     let errors: ErrorsFn = unsafe { resolve(&lib, "errors")? };
     let name: NameFn = unsafe { resolve(&lib, "name")? };
     let subscription: SubscriptionFn = unsafe { resolve(&lib, "subscription")? };
+    let popup_view: Option<PopupViewFn> = unsafe { resolve_optional(&lib, "popup_view") };
 
     let plugin_name = unsafe { name() }.to_owned();
 
@@ -136,6 +151,7 @@ unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), Load
             errors,
             name,
             subscription,
+            popup_view,
         },
     ))
 }
@@ -184,11 +200,16 @@ pub fn load_plugins(config: &Table) -> (PluginMap, Vec<iced::Task<crate::Message
                 let key = plugin_name.clone();
                 if let Some(task) = init_task {
                     let key_for_task = key.clone();
-                    tasks.push(
-                        task.map(move |msg| {
+                    tasks.push(task.map(move |msg| {
+                        if msg
+                            .downcast_ref::<String>()
+                            .is_some_and(|request| request == HOST_REQUEST_TOGGLE_POPUP)
+                        {
+                            crate::Message::TogglePluginPopup(key_for_task.clone())
+                        } else {
                             crate::Message::PluginSubMsg(key_for_task.clone(), msg)
-                        }),
-                    );
+                        }
+                    }));
                 }
                 info!("loaded plugin `{plugin_name}` from {}", path.display());
                 plugins.insert(key, (model, funcs));
@@ -210,6 +231,23 @@ pub fn render_plugin(
         Ok(elements) => elements,
         Err(e) => {
             warn!("plugin view error: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Render a plugin-provided popup body, if the plugin exposes one.
+pub fn render_plugin_popup(
+    funcs: &PluginFuncs,
+    model: &PluginModel,
+) -> Vec<iced::Element<'static, PluginMsg>> {
+    let Some(popup_view) = funcs.popup_view else {
+        return Vec::new();
+    };
+    match unsafe { popup_view(model.clone()) } {
+        Ok(elements) => elements,
+        Err(e) => {
+            warn!("plugin popup view error: {e}");
             Vec::new()
         }
     }

@@ -1,0 +1,17 @@
+[package]
+name = "clock"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+oxibar-plugin-api = { path = "../../crates/oxibar-plugin-api" }
+iced = { version = "0.14.0", features = [
+	"advanced",
+	"tokio",
+]}
+oxiced = { git = "https://github.com/Xetibo/oxiced", branch = "iced14" }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+tracing = "0.1"

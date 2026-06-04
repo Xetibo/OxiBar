@@ -10,14 +10,14 @@ use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
+pub use iced;
 use iced::{Element, Task, futures::Stream};
 pub use toml;
-pub use iced;
 
 /// ABI version. Bump on any breaking change to the function signatures or
 /// trait-object layouts crossing the dylib boundary. The host refuses to load
 /// a plugin whose `abi_version()` does not match.
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 3;
 
 /// Shared, downcastable, thread-safe trait object. Moved here from
 /// `oxiced::any_send` so plugins don't need oxiced just to participate in the
@@ -67,6 +67,13 @@ pub type PluginModel = Arc<RwLock<Box<dyn OxiAny>>>;
 /// Plugin → host (and host → plugin) message envelope.
 pub type PluginMsg = Arc<dyn OxiAny>;
 
+/// String payload a plugin can send through [`PluginMsg`] to request the host
+/// toggles that plugin's popup.
+pub const HOST_REQUEST_TOGGLE_POPUP: &str = "oxibar.host.toggle-popup";
+
+/// Backward-compatible name for the clock plugin's original popup request.
+pub const HOST_REQUEST_TOGGLE_CALENDAR_POPUP: &str = HOST_REQUEST_TOGGLE_POPUP;
+
 /// Boxed, pinned, `Send` stream of plugin messages.
 ///
 /// Crossing the dylib boundary as a raw pointer is technically unsound under a
@@ -97,14 +104,18 @@ pub type ModelFn = unsafe extern "Rust" fn(toml::Table) -> (PluginModel, Option<
 pub type UpdateFn =
     unsafe extern "Rust" fn(model: PluginModel, msg: PluginMsg) -> Option<Task<PluginMsg>>;
 
-pub type LaunchFn = unsafe extern "Rust" fn(
-    focused_index: usize,
-    model: PluginModel,
-) -> Option<Task<PluginMsg>>;
+pub type LaunchFn =
+    unsafe extern "Rust" fn(focused_index: usize, model: PluginModel) -> Option<Task<PluginMsg>>;
 
-pub type ViewFn = unsafe extern "Rust" fn(
-    model: PluginModel,
-) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
+pub type ViewFn =
+    unsafe extern "Rust" fn(
+        model: PluginModel,
+    ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
+
+pub type PopupViewFn =
+    unsafe extern "Rust" fn(
+        model: PluginModel,
+    ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
 
 pub type ErrorsFn = unsafe extern "Rust" fn(model: PluginModel) -> Vec<String>;
 

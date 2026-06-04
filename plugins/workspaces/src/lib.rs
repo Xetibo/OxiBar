@@ -21,9 +21,7 @@ use iced::{
     widget::{Row, text},
 };
 use iced_anim::AnimationBuilder;
-use oxibar_plugin_api::{
-    ABI_VERSION, OxiAny, PluginModel, PluginMsg, PluginStream, toml::Table,
-};
+use oxibar_plugin_api::{ABI_VERSION, OxiAny, PluginModel, PluginMsg, PluginStream, toml::Table};
 use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_button};
 
 #[derive(Debug, Default)]
@@ -86,10 +84,7 @@ pub extern "Rust" fn model(global_config: Table) -> (PluginModel, Option<Task<Pl
 }
 
 #[unsafe(no_mangle)]
-pub extern "Rust" fn update(
-    model: PluginModel,
-    msg_in: PluginMsg,
-) -> Option<Task<PluginMsg>> {
+pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Task<PluginMsg>> {
     let mut guard = model.try_write().ok()?;
     let model = guard.downcast_mut::<Model>()?;
     let m = msg_in.downcast_ref::<Message>()?.clone();
@@ -126,10 +121,7 @@ pub extern "Rust" fn update(
 }
 
 #[unsafe(no_mangle)]
-pub extern "Rust" fn launch(
-    focused_index: usize,
-    model: PluginModel,
-) -> Option<Task<PluginMsg>> {
+pub extern "Rust" fn launch(focused_index: usize, model: PluginModel) -> Option<Task<PluginMsg>> {
     // Treat `focused_index` as the position in the id-sorted workspace list:
     // a key binding "activate workspace #N" can call this without knowing
     // the workspace's stringly-typed name.
@@ -165,8 +157,7 @@ pub extern "Rust" fn view(
     })?;
 
     let palette = &OXITHEME;
-    let mut sorted: Vec<hyprland::data::Workspace> =
-        model.workspaces.values().cloned().collect();
+    let mut sorted: Vec<hyprland::data::Workspace> = model.workspaces.values().cloned().collect();
     sorted.sort_by_key(|w| w.id);
 
     let workspace_entries: Vec<Element<PluginMsg>> = sorted
@@ -205,19 +196,20 @@ pub extern "Rust" fn view(
                     },
                     snap: false,
                 };
-                let style = move |base: iced::widget::button::Style,
-                                  status: iced::widget::button::Status| match status {
-                    iced::widget::button::Status::Active => base,
-                    iced::widget::button::Status::Pressed => iced::widget::button::Style {
-                        background: Some(iced::Background::Color(palette.primary_active)),
-                        ..base
-                    },
-                    iced::widget::button::Status::Hovered => iced::widget::button::Style {
-                        background: Some(iced::Background::Color(palette.primary_hover)),
-                        ..base
-                    },
-                    iced::widget::button::Status::Disabled => base,
-                };
+                let style =
+                    move |base: iced::widget::button::Style,
+                          status: iced::widget::button::Status| match status {
+                        iced::widget::button::Status::Active => base,
+                        iced::widget::button::Status::Pressed => iced::widget::button::Style {
+                            background: Some(iced::Background::Color(palette.primary_active)),
+                            ..base
+                        },
+                        iced::widget::button::Status::Hovered => iced::widget::button::Style {
+                            background: Some(iced::Background::Color(palette.primary_hover)),
+                            ..base
+                        },
+                        iced::widget::button::Status::Disabled => base,
+                    };
                 oxi_button::button(
                     text(format!("{}", workspace.id))
                         .size(13)
@@ -298,18 +290,23 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
                 {
                     let output = output.clone();
                     listener.add_workspace_deleted_handler(move |workspace| {
-                        let _ = output.lock().unwrap().try_send(msg(
-                            Message::WorkspaceRemoved(workspace.name.to_string()),
-                        ));
+                        let _ = output
+                            .lock()
+                            .unwrap()
+                            .try_send(msg(Message::WorkspaceRemoved(workspace.name.to_string())));
                     });
                 }
 
                 {
                     let output = output.clone();
                     listener.add_workspace_changed_handler(move |workspace| {
-                        let _ = output.lock().unwrap().try_send(msg(
-                            Message::ActiveWorkspaceChanged(workspace.name.to_string()),
-                        ));
+                        let _ =
+                            output
+                                .lock()
+                                .unwrap()
+                                .try_send(msg(Message::ActiveWorkspaceChanged(
+                                    workspace.name.to_string(),
+                                )));
                     });
                 }
 
