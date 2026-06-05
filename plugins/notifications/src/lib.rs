@@ -1,60 +1,84 @@
 //! Notification center plugin implementing `org.freedesktop.Notifications`.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+mod oxinoti;
 
-use iced::{
-    Alignment, Background, Border, Color, Element, Length, Shadow, Task,
-    futures::Stream,
-    stream,
-    widget::{Column, Container, Row, Space, button, scrollable, text},
+use std::sync::{Arc, Mutex};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
 };
+
+use iced::{Element, Task, futures::Stream, stream};
 use oxibar_plugin_api::{
-    ABI_VERSION, HOST_REQUEST_TOGGLE_PANEL, OxiAny, PluginModel, PluginMsg, PluginStream,
-    toml::Table,
+    ABI_VERSION, HOST_REQUEST_TOGGLE_PANEL, HostToastRequest, PluginModel, PluginMsg, PluginStream,
+    drain_model_errors, plugin_model, toml::Table, with_model_read, with_model_write,
 };
-use oxiced::theme::theme_impl::OXITHEME;
-use zbus::{blocking::Connection, fdo::RequestNameFlags, interface, zvariant::OwnedValue};
 
-const BUS_NAME: &str = "org.freedesktop.Notifications";
-const OBJECT_PATH: &str = "/org/freedesktop/Notifications";
-const ICON: &str = "󰂚";
+use oxinoti::{Event, Notification};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Model {
     notifications: Vec<Notification>,
+    reply_texts: BTreeMap<u32, String>,
+    hovered_notifications: BTreeSet<u32>,
     do_not_disturb: bool,
+    timeout: Duration,
+    next_toast_generation: u64,
+    toast_generations: BTreeMap<u32, u64>,
     errors: Vec<String>,
 }
 
 impl Model {
-    fn new(_global_config: Table) -> Self {
-        Self::default()
+    fn new(global_config: Table) -> Self {
+        Self {
+            notifications: Vec::new(),
+            reply_texts: BTreeMap::new(),
+            hovered_notifications: BTreeSet::new(),
+            do_not_disturb: false,
+            timeout: oxinoti::read_timeout(&global_config),
+            next_toast_generation: 0,
+            toast_generations: BTreeMap::new(),
+            errors: Vec::new(),
+        }
     }
-}
 
-#[derive(Clone, Debug)]
-struct Notification {
-    id: u32,
-    app_name: String,
-    summary: String,
-    body: String,
-}
+    fn upsert(&mut self, notification: Notification) {
+        if !notification.allows_inline_reply() {
+            self.reply_texts.remove(&notification.id());
+        }
+        if let Some(existing) = self
+            .notifications
+            .iter_mut()
+            .find(|existing| existing.id() == notification.id())
+        {
+            *existing = notification;
+        } else {
+            self.notifications.insert(0, notification);
+        }
+    }
 
-#[derive(Clone, Debug)]
-enum Message {
-    TogglePanel,
-    ToggleDoNotDisturb,
-    ClearAll,
-    Add(Notification),
-    Remove(u32),
-    Error(String),
-}
+    fn remove(&mut self, id: u32) {
+        self.notifications
+            .retain(|notification| notification.id() != id);
+        self.toast_generations.remove(&id);
+        self.reply_texts.remove(&id);
+        self.hovered_notifications.remove(&id);
+    }
 
-fn msg(m: Message) -> PluginMsg {
-    Arc::new(m)
+    fn next_toast_generation(&mut self, id: u32) -> u64 {
+        self.next_toast_generation += 1;
+        self.toast_generations
+            .insert(id, self.next_toast_generation);
+        self.next_toast_generation
+    }
+
+    fn toast_timeout(&self, notification: &Notification) -> Duration {
+        if notification.expire_timeout > 0 {
+            Duration::from_millis(notification.expire_timeout as u64)
+        } else {
+            self.timeout
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -69,140 +93,211 @@ pub extern "Rust" fn name() -> &'static str {
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn model(global_config: Table) -> (PluginModel, Option<Task<PluginMsg>>) {
-    let m: Box<dyn OxiAny> = Box::new(Model::new(global_config));
-    (Arc::new(RwLock::new(m)), None)
+    (plugin_model(Model::new(global_config)), None)
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Task<PluginMsg>> {
-    let mut guard = model.try_write().ok()?;
-    let model = guard.downcast_mut::<Model>()?;
-    let m = msg_in.downcast_ref::<Message>()?.clone();
-    match m {
-        Message::TogglePanel => Some(Task::done(Arc::new(HOST_REQUEST_TOGGLE_PANEL.to_owned()))),
-        Message::ToggleDoNotDisturb => {
+    let event = msg_in.downcast_ref::<Event>()?.clone();
+    with_model_write::<Model, _>(&model, |model| match event {
+        Event::TogglePanel => Some(Task::done(
+            Arc::new(HOST_REQUEST_TOGGLE_PANEL.to_owned()) as PluginMsg
+        )),
+        Event::ToggleDoNotDisturb => {
             model.do_not_disturb = !model.do_not_disturb;
-            None
-        }
-        Message::ClearAll => {
-            model.notifications.clear();
-            None
-        }
-        Message::Add(notification) => {
-            if let Some(existing) = model
-                .notifications
-                .iter_mut()
-                .find(|existing| existing.id == notification.id)
-            {
-                *existing = notification;
+            if model.do_not_disturb {
+                Some(Task::batch(
+                    model
+                        .notifications
+                        .iter()
+                        .map(|notification| close_toast_task(notification.id())),
+                ))
             } else {
-                model.notifications.insert(0, notification);
+                None
+            }
+        }
+        Event::SetDoNotDisturb(enabled) => {
+            model.do_not_disturb = enabled;
+            if enabled {
+                Some(Task::batch(
+                    model
+                        .notifications
+                        .iter()
+                        .map(|notification| close_toast_task(notification.id())),
+                ))
+            } else {
+                None
+            }
+        }
+        Event::ClearAll => {
+            let close_tasks = model
+                .notifications
+                .iter()
+                .map(|notification| close_toast_task(notification.id()))
+                .collect::<Vec<_>>();
+            model.notifications.clear();
+            model.toast_generations.clear();
+            model.reply_texts.clear();
+            model.hovered_notifications.clear();
+            Some(Task::batch(close_tasks))
+        }
+        Event::Add(notification) => {
+            let notification = *notification;
+            let id = notification.id();
+            let generation = model.next_toast_generation(id);
+            let timeout = model.toast_timeout(&notification);
+            let (width, height) = notification.toast_size();
+            let toast_id = notification.toast_id();
+            model.upsert(notification);
+            if model.do_not_disturb {
+                None
+            } else {
+                Some(
+                    Task::done(Arc::new(
+                        HostToastRequest::show(toast_id, width, height).to_host_request_string(),
+                    ) as PluginMsg)
+                    .chain(Task::perform(
+                        async move {
+                            std::thread::sleep(timeout);
+                            (id, generation)
+                        },
+                        |(id, generation)| oxinoti::msg(Event::ToastExpired(id, generation)),
+                    )),
+                )
+            }
+        }
+        Event::Remove(id) => {
+            model.remove(id);
+            Some(close_toast_task(id))
+        }
+        Event::Close(id) => {
+            model.remove(id);
+            oxinoti::spawn_close_notification(id);
+            Some(close_toast_task(id))
+        }
+        Event::Invoke(id, action) => {
+            model.remove(id);
+            oxinoti::spawn_invoke_action(id, action);
+            Some(close_toast_task(id))
+        }
+        Event::ReplyChanged(id, text) => {
+            model.reply_texts.insert(id, text);
+            None
+        }
+        Event::SubmitReply(id) => {
+            let can_reply = model
+                .notifications
+                .iter()
+                .any(|notification| notification.id() == id && notification.allows_inline_reply());
+            if !can_reply {
+                model.reply_texts.remove(&id);
+                None
+            } else {
+                let text = model.reply_texts.remove(&id).unwrap_or_default();
+                let text = text.trim().to_owned();
+                if text.is_empty() {
+                    None
+                } else {
+                    model.remove(id);
+                    oxinoti::spawn_inline_reply(id, text);
+                    Some(close_toast_task(id))
+                }
+            }
+        }
+        Event::HoverChanged(id, hovered) => {
+            if hovered {
+                model.hovered_notifications.insert(id);
+            } else {
+                model.hovered_notifications.remove(&id);
             }
             None
         }
-        Message::Remove(id) => {
-            model
-                .notifications
-                .retain(|notification| notification.id != id);
-            None
+        Event::ToastExpired(id, generation) => {
+            if model.toast_generations.get(&id).copied() != Some(generation) {
+                None
+            } else {
+                let reply_capable = model.notifications.iter().any(|notification| {
+                    notification.id() == id && notification.allows_inline_reply()
+                });
+                if model.hovered_notifications.contains(&id)
+                    || model.reply_texts.contains_key(&id)
+                    || reply_capable
+                {
+                    None
+                } else {
+                    model.toast_generations.remove(&id);
+                    Some(close_toast_task(id))
+                }
+            }
         }
-        Message::Error(error) => {
+        Event::Error(error) => {
             model.errors.push(error);
             None
         }
-    }
+    })
+    .flatten()
+}
+
+fn close_toast_task(id: u32) -> Task<PluginMsg> {
+    Task::done(
+        Arc::new(HostToastRequest::close(id.to_string()).to_host_request_string()) as PluginMsg,
+    )
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn launch(_focused_index: usize, _model: PluginModel) -> Option<Task<PluginMsg>> {
-    Some(Task::done(msg(Message::TogglePanel)))
+    Some(Task::done(oxinoti::msg(Event::TogglePanel)))
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
-    let Ok(mut guard) = model.try_write() else {
-        return Vec::new();
-    };
-    let Some(m) = guard.downcast_mut::<Model>() else {
-        return Vec::new();
-    };
-    std::mem::take(&mut m.errors)
+    drain_model_errors::<Model>(&model, |model| &mut model.errors)
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
-    let count = model.notifications.len();
-    let label = if count == 0 {
-        ICON.to_owned()
-    } else {
-        format!("{ICON} {count}")
-    };
-    Ok(vec![bar_button(label).into()])
+    with_model_read::<Model, _>(&model, |model| {
+        let count = model.notifications.len();
+        let label = if count == 0 {
+            oxinoti::ICON.to_owned()
+        } else {
+            format!("{} {count}", oxinoti::ICON)
+        };
+        vec![oxinoti::bar_button(label).into()]
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn panel_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
+    with_model_read::<Model, _>(&model, |model| {
+        vec![oxinoti::panel_view(
+            &model.notifications,
+            &model.reply_texts,
+            &model.hovered_notifications,
+            model.do_not_disturb,
+        )]
+    })
+}
 
-    let dnd_label = if model.do_not_disturb {
-        "DND on"
-    } else {
-        "DND off"
-    };
-    let header = Row::new()
-        .push(
-            text("Notifications")
-                .size(18)
-                .style(|_| iced::widget::text::Style {
-                    color: Some(OXITHEME.primary),
-                }),
+#[unsafe(no_mangle)]
+pub extern "Rust" fn toast_view(
+    model: PluginModel,
+    toast_id: &str,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| {
+        oxinoti::toast_view(
+            &model.notifications,
+            &model.reply_texts,
+            &model.hovered_notifications,
+            toast_id,
         )
-        .push(Space::new().width(Length::Fill))
-        .push(settings_button(dnd_label, Message::ToggleDoNotDisturb))
-        .push(settings_button("Clear", Message::ClearAll))
-        .spacing(6)
-        .align_y(Alignment::Center);
-
-    let mut list = Column::new().spacing(8).width(Length::Fill);
-    if model.notifications.is_empty() {
-        list = list.push(
-            text("No notifications")
-                .size(13)
-                .style(|_| iced::widget::text::Style {
-                    color: Some(OXITHEME.text_muted),
-                }),
-        );
-    } else {
-        for notification in &model.notifications {
-            list = list.push(notification_card(notification));
-        }
-    }
-
-    Ok(vec![
-        Column::new()
-            .push(header)
-            .push(scrollable(list).height(Length::Fill))
-            .spacing(12)
-            .padding([14, 14])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into(),
-    ])
+        .into_iter()
+        .collect()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -211,245 +306,167 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
         64,
         move |output: iced::futures::channel::mpsc::Sender<PluginMsg>| async move {
             let output = Arc::new(Mutex::new(output));
-            std::thread::spawn(move || run_server(output));
+            std::thread::spawn(move || oxinoti::run_server(output));
             std::future::pending::<()>().await;
         },
     );
     Box::into_raw(Box::new(s)) as *mut PluginStream
 }
 
-fn bar_button(label: String) -> button::Button<'static, PluginMsg> {
-    button(
-        text(label)
-            .size(14)
-            .align_y(Alignment::Center)
-            .align_x(Alignment::Center),
-    )
-    .on_press(msg(Message::TogglePanel))
-    .style(bar_button_style)
-    .padding([0, 8])
-    .height(22.5)
-    .width(Length::Shrink)
-}
-
-fn settings_button(label: &'static str, message: Message) -> button::Button<'static, PluginMsg> {
-    button(text(label).size(11))
-        .on_press(msg(message))
-        .style(settings_button_style)
-        .padding([5, 8])
-}
-
-fn notification_card(notification: &Notification) -> Element<'static, PluginMsg> {
-    Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(text(ICON).size(14).style(text_primary))
-                    .push(
-                        text(notification.app_name.clone())
-                            .size(11)
-                            .style(text_muted)
-                            .width(Length::Fill),
-                    )
-                    .spacing(7)
-                    .align_y(Alignment::Center),
-            )
-            .push(
-                text(notification.summary.clone())
-                    .size(13)
-                    .style(text_primary),
-            )
-            .push(text(notification.body.clone()).size(11).style(text_muted))
-            .spacing(4),
-    )
-    .style(|_| iced::widget::container::Style {
-        background: Some(Background::Color(OXITHEME.mantle_hover)),
-        border: Border {
-            radius: 10.0.into(),
-            color: Color::TRANSPARENT,
-            width: 0.0,
-        },
-        shadow: Shadow::default(),
-        ..Default::default()
-    })
-    .padding(10)
-    .width(Length::Fill)
-    .into()
-}
-
-fn text_primary(_: &iced::Theme) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(OXITHEME.text),
-    }
-}
-
-fn text_muted(_: &iced::Theme) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(OXITHEME.text_muted),
-    }
-}
-
-fn bar_button_style(_: &iced::Theme, status: button::Status) -> button::Style {
-    let base = button::Style {
-        background: None,
-        text_color: OXITHEME.primary,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 8.0.into(),
-        },
-        shadow: Shadow::default(),
-        snap: false,
-    };
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_hover)),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_active)),
-            ..base
-        },
-        button::Status::Active | button::Status::Disabled => base,
-    }
-}
-
-fn settings_button_style(_: &iced::Theme, status: button::Status) -> button::Style {
-    let base = button::Style {
-        background: Some(Background::Color(OXITHEME.primary_bg)),
-        text_color: OXITHEME.primary,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 8.0.into(),
-        },
-        shadow: Shadow::default(),
-        snap: false,
-    };
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_hover)),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_active)),
-            ..base
-        },
-        button::Status::Active | button::Status::Disabled => base,
-    }
-}
-
-#[derive(Clone)]
-struct NotificationServer {
-    next_id: Arc<AtomicU32>,
-    output: Arc<Mutex<iced::futures::channel::mpsc::Sender<PluginMsg>>>,
-}
-
-#[interface(name = "org.freedesktop.Notifications")]
-impl NotificationServer {
-    #[zbus(name = "Notify")]
-    fn notify(
-        &self,
-        app_name: String,
-        replaces_id: u32,
-        _app_icon: String,
-        summary: String,
-        body: String,
-        _actions: Vec<String>,
-        _hints: HashMap<String, OwnedValue>,
-        _expire_timeout: i32,
-    ) -> u32 {
-        let id = if replaces_id == 0 {
-            self.next_id.fetch_add(1, Ordering::Relaxed)
-        } else {
-            replaces_id
-        };
-        let notification = Notification {
-            id,
-            app_name,
-            summary: strip_markup(&summary),
-            body: strip_markup(&body),
-        };
-        let _ = self
-            .output
-            .lock()
-            .unwrap()
-            .try_send(msg(Message::Add(notification)));
-        id
-    }
-
-    #[zbus(name = "CloseNotification")]
-    fn close_notification(&self, id: u32) {
-        let _ = self
-            .output
-            .lock()
-            .unwrap()
-            .try_send(msg(Message::Remove(id)));
-    }
-
-    #[zbus(name = "GetCapabilities")]
-    fn get_capabilities(&self) -> Vec<String> {
-        vec!["body".to_owned(), "body-markup".to_owned()]
-    }
-
-    #[zbus(name = "GetServerInformation")]
-    fn get_server_information(&self) -> (String, String, String, String) {
-        (
-            "Oxibar".to_owned(),
-            "Oxibar".to_owned(),
-            "0.1.0".to_owned(),
-            "1.2".to_owned(),
-        )
-    }
-}
-
-fn run_server(output: Arc<Mutex<iced::futures::channel::mpsc::Sender<PluginMsg>>>) {
-    let connection = match Connection::session() {
-        Ok(connection) => connection,
-        Err(e) => {
-            let _ = output.lock().unwrap().try_send(msg(Message::Error(format!(
-                "notifications: could not connect to session bus: {e}"
-            ))));
-            return;
-        }
-    };
-    let server = NotificationServer {
-        next_id: Arc::new(AtomicU32::new(1)),
-        output: output.clone(),
-    };
-    if let Err(e) = connection.object_server().at(OBJECT_PATH, server) {
-        let _ = output.lock().unwrap().try_send(msg(Message::Error(format!(
-            "notifications: could not register object: {e}"
-        ))));
-        return;
-    }
-    let flags = RequestNameFlags::DoNotQueue | RequestNameFlags::ReplaceExisting;
-    if let Err(e) = connection.request_name_with_flags(BUS_NAME, flags) {
-        let _ = output.lock().unwrap().try_send(msg(Message::Error(format!(
-            "notifications: could not own {BUS_NAME}: {e}"
-        ))));
-        return;
-    }
-    loop {
-        std::thread::sleep(Duration::from_secs(30));
-    }
-}
-
-fn strip_markup(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut in_tag = false;
-    for ch in input.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(ch),
-            _ => {}
-        }
-    }
-    out
-}
-
 const _: fn() = || {
     fn assert_stream<S: Stream<Item = PluginMsg> + Send + 'static>(_: &S) {}
     let _ = |s: &iced::futures::stream::BoxStream<'static, PluginMsg>| assert_stream(s);
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::fdo::RequestNameReply;
+
+    fn notification(id: u32, summary: &str) -> Notification {
+        Notification::new_for_test(id, summary)
+    }
+
+    #[test]
+    fn strip_markup_removes_simple_tags_and_entities() {
+        assert_eq!(oxinoti::clean_markup("<b>Hello</b> world"), "Hello world");
+        assert_eq!(oxinoti::clean_markup("plain"), "plain");
+        assert_eq!(oxinoti::clean_markup("Tom &amp; Jerry"), "Tom & Jerry");
+    }
+
+    #[test]
+    fn request_name_reply_reports_conflicting_notification_daemon() {
+        assert!(oxinoti::request_name_error(RequestNameReply::PrimaryOwner).is_none());
+        assert!(oxinoti::request_name_error(RequestNameReply::AlreadyOwner).is_none());
+
+        let exists_error = oxinoti::request_name_error(RequestNameReply::Exists).unwrap();
+        assert!(exists_error.contains("another notification daemon"));
+        assert!(oxinoti::request_name_error(RequestNameReply::InQueue).is_some());
+    }
+
+    #[test]
+    fn notification_primary_action_prefers_default_then_first_non_reply() {
+        let mut default_action = notification(1, "default");
+        default_action.actions = vec!["default".to_owned(), "Open".to_owned()];
+        assert_eq!(default_action.primary_action().as_deref(), Some("default"));
+        assert!(!default_action.allows_inline_reply());
+
+        let mut named_action = notification(2, "named");
+        named_action.actions = vec!["open".to_owned(), "Open".to_owned()];
+        assert_eq!(named_action.primary_action().as_deref(), Some("open"));
+
+        let mut reply_action = notification(3, "reply");
+        reply_action.actions = vec!["inline-reply".to_owned(), "Reply".to_owned()];
+        assert_eq!(reply_action.primary_action(), None);
+        assert!(reply_action.allows_inline_reply());
+    }
+
+    #[test]
+    fn update_adds_replaces_removes_and_clears_notifications() {
+        let (plugin_model, init_task) = model(Table::new());
+        assert!(init_task.is_none());
+        assert_eq!(name(), "Notifications");
+        assert_eq!(abi_version(), ABI_VERSION);
+
+        let _ = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::Add(Box::new(notification(1, "first")))),
+        );
+        let _ = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::Add(Box::new(notification(1, "replaced")))),
+        );
+        {
+            let guard = plugin_model.read().unwrap();
+            let model = guard.downcast_ref::<Model>().unwrap();
+            assert_eq!(model.notifications.len(), 1);
+            assert_eq!(model.notifications[0].summary, "replaced");
+        }
+
+        let _ = update(plugin_model.clone(), oxinoti::msg(Event::Remove(1)));
+        {
+            let guard = plugin_model.read().unwrap();
+            let model = guard.downcast_ref::<Model>().unwrap();
+            assert!(model.notifications.is_empty());
+        }
+
+        let _ = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::Add(Box::new(notification(2, "second")))),
+        );
+        let _ = update(plugin_model.clone(), oxinoti::msg(Event::ClearAll));
+        let guard = plugin_model.read().unwrap();
+        let model = guard.downcast_ref::<Model>().unwrap();
+        assert!(model.notifications.is_empty());
+    }
+
+    #[test]
+    fn dnd_suppresses_toast_task_but_keeps_notification() {
+        let (plugin_model, _) = model(Table::new());
+        assert!(
+            update(
+                plugin_model.clone(),
+                oxinoti::msg(Event::ToggleDoNotDisturb)
+            )
+            .is_some()
+        );
+
+        let task = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::Add(Box::new(notification(7, "quiet")))),
+        );
+
+        assert!(task.is_none());
+        let guard = plugin_model.read().unwrap();
+        let model = guard.downcast_ref::<Model>().unwrap();
+        assert_eq!(model.notifications.len(), 1);
+        assert!(model.do_not_disturb);
+    }
+
+    #[test]
+    fn hovered_notification_does_not_expire_toast_generation() {
+        let (plugin_model, _) = model(Table::new());
+        let _ = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::Add(Box::new(notification(9, "hovered")))),
+        );
+        let _ = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::HoverChanged(9, true)),
+        );
+
+        let task = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::ToastExpired(9, 1)),
+        );
+
+        assert!(task.is_none());
+        let guard = plugin_model.read().unwrap();
+        let model = guard.downcast_ref::<Model>().unwrap();
+        assert_eq!(model.toast_generations.get(&9), Some(&1));
+    }
+
+    #[test]
+    fn views_and_error_drain_are_deterministic() {
+        let (plugin_model, _) = model(Table::new());
+        assert_eq!(view(plugin_model.clone()).unwrap().len(), 1);
+        assert_eq!(panel_view(plugin_model.clone()).unwrap().len(), 1);
+
+        let _ = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::ToggleDoNotDisturb),
+        );
+        {
+            let guard = plugin_model.read().unwrap();
+            let model = guard.downcast_ref::<Model>().unwrap();
+            assert!(model.do_not_disturb);
+        }
+
+        let _ = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::Error("dbus failed".to_owned())),
+        );
+        assert_eq!(errors(plugin_model.clone()), vec!["dbus failed"]);
+        assert!(errors(plugin_model).is_empty());
+    }
+}

@@ -1,8 +1,6 @@
 //! Network plugin backed by NetworkManager's `nmcli`.
 
-use std::collections::BTreeMap;
-use std::process::Command;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use iced::{
@@ -14,11 +12,21 @@ use iced::{
 use iced_anim::{AnimationBuilder, Motion};
 use oxibar_plugin_api::{
     ABI_VERSION, HOST_REQUEST_CLOSE_MODAL, HOST_REQUEST_OPEN_MODAL, HOST_REQUEST_TOGGLE_POPUP,
-    OxiAny, PluginModel, PluginMsg, PluginStream, toml::Table,
+    PluginMetadata, PluginModel, PluginMsg, PluginStream, drain_model_errors, plugin_model,
+    toml::Table, with_model_read, with_model_write,
 };
 use oxiced::{
     theme::theme_impl::OXITHEME,
-    widgets::{oxi_button, oxi_text_input},
+    widgets::{
+        oxi_button, oxi_plugin, oxi_plugin::text_muted, oxi_plugin::text_primary, oxi_text_input,
+    },
+};
+
+mod system;
+
+use system::{
+    ActiveNetwork, NetworkAction, SavedConnection, Snapshot, WifiNetwork, run_network_action,
+    scan_networks,
 };
 
 const DEFAULT_SCAN_SECONDS: u64 = 15;
@@ -56,38 +64,6 @@ impl Model {
 }
 
 #[derive(Clone, Debug)]
-struct Snapshot {
-    connected: Vec<ActiveNetwork>,
-    saved: Vec<SavedConnection>,
-    wifi: Vec<WifiNetwork>,
-}
-
-#[derive(Clone, Debug)]
-struct ActiveNetwork {
-    name: String,
-    uuid: String,
-    kind: String,
-    device: String,
-}
-
-#[derive(Clone, Debug)]
-struct SavedConnection {
-    name: String,
-    uuid: String,
-    kind: String,
-}
-
-#[derive(Clone, Debug)]
-struct WifiNetwork {
-    ssid: String,
-    bssid: String,
-    signal: u8,
-    security: String,
-    connected: bool,
-    active_uuid: Option<String>,
-}
-
-#[derive(Clone, Debug)]
 struct EditState {
     label: String,
     target: EditTarget,
@@ -98,15 +74,6 @@ struct EditState {
 enum EditTarget {
     Wifi { ssid: String },
     Connection { uuid: String },
-}
-
-#[derive(Clone, Debug)]
-enum NetworkAction {
-    ConnectWifi { ssid: String },
-    ConnectConnection { uuid: String },
-    Disconnect { uuid: String },
-    SaveWifi { ssid: String, password: String },
-    SaveConnection { uuid: String, password: String },
 }
 
 #[derive(Clone, Debug)]
@@ -148,21 +115,28 @@ pub extern "Rust" fn name() -> &'static str {
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn metadata() -> PluginMetadata {
+    PluginMetadata {
+        popup_size: Some((460, 420)),
+        ..PluginMetadata::default()
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn model(global_config: Table) -> (PluginModel, Option<Task<PluginMsg>>) {
-    let m: Box<dyn OxiAny> = Box::new(Model::new(global_config));
     (
-        Arc::new(RwLock::new(m)),
+        plugin_model(Model::new(global_config)),
         Some(Task::done(msg(Message::Refresh))),
     )
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Task<PluginMsg>> {
-    let mut guard = model.try_write().ok()?;
-    let model = guard.downcast_mut::<Model>()?;
     let m = msg_in.downcast_ref::<Message>()?.clone();
-    match m {
-        Message::TogglePopup => Some(Task::done(Arc::new(HOST_REQUEST_TOGGLE_POPUP.to_owned()))),
+    with_model_write::<Model, _>(&model, |model| match m {
+        Message::TogglePopup => Some(Task::done(
+            Arc::new(HOST_REQUEST_TOGGLE_POPUP.to_owned()) as PluginMsg
+        )),
         Message::Refresh => Some(Task::perform(async { scan_networks() }, |result| {
             msg(Message::ScanResult(result))
         })),
@@ -196,7 +170,9 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
                 target: EditTarget::Wifi { ssid },
                 password: String::new(),
             });
-            Some(Task::done(Arc::new(HOST_REQUEST_OPEN_MODAL.to_owned())))
+            Some(Task::done(
+                Arc::new(HOST_REQUEST_OPEN_MODAL.to_owned()) as PluginMsg
+            ))
         }
         Message::EditConnection { uuid, name } => {
             model.editing = Some(EditState {
@@ -204,7 +180,9 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
                 target: EditTarget::Connection { uuid },
                 password: String::new(),
             });
-            Some(Task::done(Arc::new(HOST_REQUEST_OPEN_MODAL.to_owned())))
+            Some(Task::done(
+                Arc::new(HOST_REQUEST_OPEN_MODAL.to_owned()) as PluginMsg
+            ))
         }
         Message::PasswordChanged(password) => {
             if let Some(editing) = model.editing.as_mut() {
@@ -213,9 +191,7 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             None
         }
         Message::SaveEdit => {
-            let Some(editing) = model.editing.clone() else {
-                return None;
-            };
+            let editing = model.editing.clone()?;
             let action = match editing.target {
                 EditTarget::Wifi { ssid } => NetworkAction::SaveWifi {
                     ssid,
@@ -230,7 +206,9 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
         }
         Message::CancelEdit => {
             model.editing = None;
-            Some(Task::done(Arc::new(HOST_REQUEST_CLOSE_MODAL.to_owned())))
+            Some(Task::done(
+                Arc::new(HOST_REQUEST_CLOSE_MODAL.to_owned()) as PluginMsg
+            ))
         }
         Message::ActionDone {
             result,
@@ -253,7 +231,8 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
                 }
             }
         }
-    }
+    })
+    .flatten()
 }
 
 #[unsafe(no_mangle)]
@@ -263,189 +242,166 @@ pub extern "Rust" fn launch(_focused_index: usize, _model: PluginModel) -> Optio
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
-    let Ok(mut guard) = model.try_write() else {
-        return Vec::new();
-    };
-    let Some(m) = guard.downcast_mut::<Model>() else {
-        return Vec::new();
-    };
-    std::mem::take(&mut m.errors)
+    drain_model_errors::<Model>(&model, |model| &mut model.errors)
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
+    with_model_read::<Model, _>(&model, |model| {
+        let connected = model.connected.len();
+        let label = if connected == 0 {
+            WIFI_ICON.to_owned()
+        } else {
+            format!("{WIFI_ICON} {connected}")
+        };
+        let btn = oxi_plugin::bar_button(
+            text(label)
+                .size(14)
+                .align_y(Alignment::Center)
+                .align_x(Alignment::Center),
+        )
+        .on_press(msg(Message::TogglePopup));
 
-    let connected = model.connected.len();
-    let label = if connected == 0 {
-        WIFI_ICON.to_owned()
-    } else {
-        format!("{WIFI_ICON} {connected}")
-    };
-    let btn = button(
-        text(label)
-            .size(14)
-            .align_y(Alignment::Center)
-            .align_x(Alignment::Center),
-    )
-    .on_press(msg(Message::TogglePopup))
-    .style(bar_button_style)
-    .padding([0, 8])
-    .height(22.5)
-    .width(Length::Shrink);
-
-    Ok(vec![btn.into()])
+        vec![btn.into()]
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn popup_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
+    with_model_read::<Model, _>(&model, |model| {
+        let mut content = Column::new()
+            .spacing(8)
+            .padding([12, 14])
+            .width(Length::Fill);
 
-    let mut content = Column::new()
-        .spacing(8)
-        .padding([12, 14])
-        .width(Length::Fill);
+        let refresh = oxi_button::button(
+            text(if model.pending.is_some() {
+                "Working..."
+            } else {
+                "Refresh"
+            })
+            .size(12),
+            oxi_button::ButtonVariant::SecondaryBg,
+        )
+        .on_press(msg(Message::Refresh))
+        .padding([5, 8]);
+        content = content.push(
+            Row::new()
+                .push(section_title("Connected"))
+                .push(Space::new().width(Length::Fill))
+                .push(refresh)
+                .align_y(Alignment::Center),
+        );
 
-    let refresh = oxi_button::button(
-        text(if model.pending.is_some() {
-            "Working..."
+        if model.connected.is_empty() {
+            content = content.push(empty_text("No active connections"));
         } else {
-            "Refresh"
-        })
-        .size(12),
-        oxi_button::ButtonVariant::SecondaryBg,
-    )
-    .on_press(msg(Message::Refresh))
-    .padding([5, 8]);
-    content = content.push(
-        Row::new()
-            .push(section_title("Connected"))
-            .push(Space::new().width(Length::Fill))
-            .push(refresh)
-            .align_y(Alignment::Center),
-    );
-
-    if model.connected.is_empty() {
-        content = content.push(empty_text("No active connections"));
-    } else {
-        for network in &model.connected {
-            content = content.push(active_row(
-                network,
-                model.pending.is_some(),
-                model.hovered_entry.as_deref() == Some(entry_key("active", &network.uuid).as_str()),
-            ));
+            for network in &model.connected {
+                content = content.push(active_row(
+                    network,
+                    model.pending.is_some(),
+                    model.hovered_entry.as_deref()
+                        == Some(entry_key("active", &network.uuid).as_str()),
+                ));
+            }
         }
-    }
 
-    content = content.push(section_title("Available Wi-Fi"));
-    if model.wifi.is_empty() {
-        content = content.push(empty_text("No Wi-Fi networks found"));
-    } else {
-        for network in &model.wifi {
-            content = content.push(wifi_row(
-                network,
-                model.pending.is_some(),
-                model.hovered_entry.as_deref() == Some(entry_key("wifi", &network.ssid).as_str()),
-            ));
+        content = content.push(section_title("Available Wi-Fi"));
+        if model.wifi.is_empty() {
+            content = content.push(empty_text("No Wi-Fi networks found"));
+        } else {
+            for network in &model.wifi {
+                content = content.push(wifi_row(
+                    network,
+                    model.pending.is_some(),
+                    model.hovered_entry.as_deref()
+                        == Some(entry_key("wifi", &network.ssid).as_str()),
+                ));
+            }
         }
-    }
 
-    content = content.push(saved_connections_accordion(model));
-    if model.saved_expanded {
-        for connection in &model.saved {
-            content = content.push(saved_row(
-                connection,
-                model.pending.is_some(),
-                model.hovered_entry.as_deref()
-                    == Some(entry_key("saved", &connection.uuid).as_str()),
-            ));
+        content = content.push(saved_connections_accordion(model));
+        if model.saved_expanded {
+            for connection in &model.saved {
+                content = content.push(saved_row(
+                    connection,
+                    model.pending.is_some(),
+                    model.hovered_entry.as_deref()
+                        == Some(entry_key("saved", &connection.uuid).as_str()),
+                ));
+            }
         }
-    }
 
-    Ok(vec![scrollable(content).height(Length::Fill).into()])
+        vec![scrollable(content).height(Length::Fill).into()]
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn modal_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
+    with_model_read::<Model, _>(&model, |model| {
+        let Some(editing) = model.editing.clone() else {
+            return vec![
+                Column::new()
+                    .push(section_title("No network selected"))
+                    .push(cancel_button("Close"))
+                    .spacing(12)
+                    .into(),
+            ];
+        };
 
-    let Some(editing) = model.editing.clone() else {
-        return Ok(vec![
-            Column::new()
-                .push(section_title("No network selected"))
-                .push(cancel_button("Close"))
-                .spacing(12)
-                .into(),
-        ]);
-    };
+        let password = oxi_text_input::text_input("Password", &editing.password, |value| {
+            msg(Message::PasswordChanged(value))
+        })
+        .secure(true)
+        .width(Length::Fill);
+        let save = oxi_button::button(text("Save").size(13), oxi_button::ButtonVariant::Primary)
+            .on_press(msg(Message::SaveEdit))
+            .padding([8, 12]);
+        let cancel = cancel_button("Cancel");
 
-    let password = oxi_text_input::text_input("Password", &editing.password, |value| {
-        msg(Message::PasswordChanged(value))
+        let body = Column::new()
+            .push(
+                text("Network Settings")
+                    .size(18)
+                    .style(|_| iced::widget::text::Style {
+                        color: Some(OXITHEME.primary),
+                    }),
+            )
+            .push(
+                text(editing.label)
+                    .size(14)
+                    .style(|_| iced::widget::text::Style {
+                        color: Some(OXITHEME.text),
+                    }),
+            )
+            .push(
+                text("Leave password empty to reuse the saved NetworkManager profile.")
+                    .size(11)
+                    .style(|_| iced::widget::text::Style {
+                        color: Some(OXITHEME.text_muted),
+                    }),
+            )
+            .push(password)
+            .push(
+                Row::new()
+                    .push(Space::new().width(Length::Fill))
+                    .push(cancel)
+                    .push(save)
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            )
+            .spacing(12)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        vec![body.into()]
     })
-    .secure(true)
-    .width(Length::Fill);
-    let save = oxi_button::button(text("Save").size(13), oxi_button::ButtonVariant::Primary)
-        .on_press(msg(Message::SaveEdit))
-        .padding([8, 12]);
-    let cancel = cancel_button("Cancel");
-
-    let body = Column::new()
-        .push(
-            text("Network Settings")
-                .size(18)
-                .style(|_| iced::widget::text::Style {
-                    color: Some(OXITHEME.primary),
-                }),
-        )
-        .push(
-            text(editing.label)
-                .size(14)
-                .style(|_| iced::widget::text::Style {
-                    color: Some(OXITHEME.text),
-                }),
-        )
-        .push(
-            text("Leave password empty to reuse the saved NetworkManager profile.")
-                .size(11)
-                .style(|_| iced::widget::text::Style {
-                    color: Some(OXITHEME.text_muted),
-                }),
-        )
-        .push(password)
-        .push(
-            Row::new()
-                .push(Space::new().width(Length::Fill))
-                .push(cancel)
-                .push(save)
-                .spacing(8)
-                .align_y(Alignment::Center),
-        )
-        .spacing(12)
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-    Ok(vec![body.into()])
 }
 
 #[unsafe(no_mangle)]
@@ -486,18 +442,6 @@ fn run_action(
     ))
 }
 
-impl NetworkAction {
-    fn label(&self) -> String {
-        match self {
-            NetworkAction::ConnectWifi { ssid } => format!("Connecting to {ssid}"),
-            NetworkAction::ConnectConnection { .. } => "Connecting".to_owned(),
-            NetworkAction::Disconnect { .. } => "Disconnecting".to_owned(),
-            NetworkAction::SaveWifi { ssid, .. } => format!("Saving {ssid}"),
-            NetworkAction::SaveConnection { .. } => "Saving connection".to_owned(),
-        }
-    }
-}
-
 fn section_title(label: &'static str) -> Element<'static, PluginMsg> {
     text(label)
         .size(12)
@@ -514,43 +458,6 @@ fn empty_text(label: &'static str) -> Element<'static, PluginMsg> {
             color: Some(OXITHEME.text_muted),
         })
         .into()
-}
-
-fn text_primary(_: &iced::Theme) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(OXITHEME.text),
-    }
-}
-
-fn text_muted(_: &iced::Theme) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(OXITHEME.text_muted),
-    }
-}
-
-fn bar_button_style(_: &iced::Theme, status: button::Status) -> button::Style {
-    let base = button::Style {
-        background: None,
-        text_color: OXITHEME.primary,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 8.0.into(),
-        },
-        shadow: Shadow::default(),
-        snap: false,
-    };
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_hover)),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_active)),
-            ..base
-        },
-        button::Status::Active | button::Status::Disabled => base,
-    }
 }
 
 fn network_row_button_style(_: &iced::Theme, status: button::Status) -> button::Style {
@@ -839,229 +746,58 @@ fn read_scan_interval(global: &Table) -> u64 {
         .unwrap_or(DEFAULT_SCAN_SECONDS)
 }
 
-fn scan_networks() -> Result<Snapshot, String> {
-    let connected = scan_active_connections()?;
-    let saved = scan_saved_connections(&connected)?;
-    let wifi = scan_wifi_networks(&connected)?;
-    Ok(Snapshot {
-        connected,
-        saved,
-        wifi,
-    })
-}
-
-fn scan_active_connections() -> Result<Vec<ActiveNetwork>, String> {
-    let output = run_nmcli(&[
-        "-t",
-        "-f",
-        "NAME,UUID,TYPE,DEVICE",
-        "connection",
-        "show",
-        "--active",
-    ])?;
-    let mut networks = Vec::new();
-    for line in output.lines().filter(|line| !line.trim().is_empty()) {
-        let fields = split_nmcli_line(line);
-        if fields.len() < 4 || fields[1].is_empty() {
-            continue;
-        }
-        networks.push(ActiveNetwork {
-            name: fields[0].clone(),
-            uuid: fields[1].clone(),
-            kind: fields[2].clone(),
-            device: fields[3].clone(),
-        });
-    }
-    Ok(networks)
-}
-
-fn scan_saved_connections(active: &[ActiveNetwork]) -> Result<Vec<SavedConnection>, String> {
-    let output = run_nmcli(&["-t", "-f", "NAME,UUID,TYPE", "connection", "show"])?;
-    let mut connections = Vec::new();
-    for line in output.lines().filter(|line| !line.trim().is_empty()) {
-        let fields = split_nmcli_line(line);
-        if fields.len() < 3 || fields[1].is_empty() {
-            continue;
-        }
-        if active.iter().any(|network| network.uuid == fields[1]) {
-            continue;
-        }
-        let kind = fields[2].clone();
-        if kind == "loopback" {
-            continue;
-        }
-        connections.push(SavedConnection {
-            name: fields[0].clone(),
-            uuid: fields[1].clone(),
-            kind,
-        });
-    }
-    connections.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(connections)
-}
-
-fn scan_wifi_networks(active: &[ActiveNetwork]) -> Result<Vec<WifiNetwork>, String> {
-    let output = run_nmcli(&[
-        "-t",
-        "-f",
-        "IN-USE,SSID,BSSID,SIGNAL,SECURITY",
-        "device",
-        "wifi",
-        "list",
-        "--rescan",
-        "auto",
-    ])?;
-    let mut by_ssid = BTreeMap::<String, WifiNetwork>::new();
-    for line in output.lines().filter(|line| !line.trim().is_empty()) {
-        let fields = split_nmcli_line(line);
-        if fields.len() < 5 || fields[1].trim().is_empty() {
-            continue;
-        }
-        let ssid = fields[1].clone();
-        let signal = fields[3].parse::<u8>().unwrap_or_default();
-        let connected = fields[0].trim() == "*";
-        let active_uuid = active
-            .iter()
-            .find(|network| network.name == ssid && network.kind.contains("wireless"))
-            .map(|network| network.uuid.clone());
-        let network = WifiNetwork {
-            ssid: ssid.clone(),
-            bssid: fields[2].clone(),
-            signal,
-            security: fields[4].clone(),
-            connected,
-            active_uuid,
-        };
-        match by_ssid.get(&ssid) {
-            Some(existing) if existing.signal >= signal => {}
-            _ => {
-                by_ssid.insert(ssid, network);
-            }
-        }
-    }
-    let mut networks = by_ssid.into_values().collect::<Vec<_>>();
-    networks.sort_by(|a, b| b.connected.cmp(&a.connected).then(b.signal.cmp(&a.signal)));
-    Ok(networks)
-}
-
-fn run_network_action(action: NetworkAction) -> Result<String, String> {
-    match action {
-        NetworkAction::ConnectWifi { ssid } => connect_wifi(&ssid),
-        NetworkAction::ConnectConnection { uuid } => run_nmcli_owned(vec![
-            "connection".to_owned(),
-            "up".to_owned(),
-            "uuid".to_owned(),
-            uuid,
-        ]),
-        NetworkAction::Disconnect { uuid } => run_nmcli_owned(vec![
-            "connection".to_owned(),
-            "down".to_owned(),
-            "uuid".to_owned(),
-            uuid,
-        ]),
-        NetworkAction::SaveWifi { ssid, password } => connect_wifi_with_password(&ssid, &password),
-        NetworkAction::SaveConnection { uuid, password } => {
-            if !password.is_empty() {
-                run_nmcli_owned(vec![
-                    "connection".to_owned(),
-                    "modify".to_owned(),
-                    "uuid".to_owned(),
-                    uuid.clone(),
-                    "802-11-wireless-security.psk".to_owned(),
-                    password,
-                ])?;
-            }
-            run_nmcli_owned(vec![
-                "connection".to_owned(),
-                "up".to_owned(),
-                "uuid".to_owned(),
-                uuid,
-            ])
-        }
-    }
-}
-
-fn connect_wifi(ssid: &str) -> Result<String, String> {
-    run_nmcli_owned(vec![
-        "connection".to_owned(),
-        "up".to_owned(),
-        "id".to_owned(),
-        ssid.to_owned(),
-    ])
-    .or_else(|_| {
-        run_nmcli_owned(vec![
-            "device".to_owned(),
-            "wifi".to_owned(),
-            "connect".to_owned(),
-            ssid.to_owned(),
-        ])
-    })
-}
-
-fn connect_wifi_with_password(ssid: &str, password: &str) -> Result<String, String> {
-    let mut args = vec![
-        "device".to_owned(),
-        "wifi".to_owned(),
-        "connect".to_owned(),
-        ssid.to_owned(),
-    ];
-    if !password.is_empty() {
-        args.push("password".to_owned());
-        args.push(password.to_owned());
-    }
-    run_nmcli_owned(args)
-}
-
-fn run_nmcli(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("nmcli")
-        .args(args)
-        .output()
-        .map_err(|e| format!("network: failed to run nmcli: {e}"))?;
-    command_output(output)
-}
-
-fn run_nmcli_owned(args: Vec<String>) -> Result<String, String> {
-    let output = Command::new("nmcli")
-        .args(&args)
-        .output()
-        .map_err(|e| format!("network: failed to run nmcli: {e}"))?;
-    command_output(output)
-}
-
-fn command_output(output: std::process::Output) -> Result<String, String> {
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    if output.status.success() {
-        Ok(stdout)
-    } else if stderr.is_empty() {
-        Err(format!("network: nmcli failed: {stdout}"))
-    } else {
-        Err(format!("network: nmcli failed: {stderr}"))
-    }
-}
-
-fn split_nmcli_line(line: &str) -> Vec<String> {
-    let mut fields = Vec::new();
-    let mut field = String::new();
-    let mut escaped = false;
-    for ch in line.chars() {
-        if escaped {
-            field.push(ch);
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == ':' {
-            fields.push(field);
-            field = String::new();
-        } else {
-            field.push(ch);
-        }
-    }
-    fields.push(field);
-    fields
-}
-
 const _: fn() = || {
     fn assert_stream<S: Stream<Item = PluginMsg> + Send + 'static>(_: &S) {}
     let _ = |s: &iced::futures::stream::BoxStream<'static, PluginMsg>| assert_stream(s);
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_scan_interval_from_config() {
+        let mut network = Table::new();
+        network.insert(
+            "scan_seconds".to_owned(),
+            oxibar_plugin_api::toml::Value::Integer(3),
+        );
+        let mut global = Table::new();
+        global.insert(
+            "network".to_owned(),
+            oxibar_plugin_api::toml::Value::Table(network),
+        );
+
+        assert_eq!(read_scan_interval(&global), 3);
+        assert_eq!(read_scan_interval(&Table::new()), DEFAULT_SCAN_SECONDS);
+    }
+
+    #[test]
+    fn helper_labels_are_stable() {
+        assert_eq!(signal_icon(true), "󰤨");
+        assert_eq!(signal_icon(false), "󰤯");
+        assert_eq!(connection_icon("802-11-wireless"), "󰤨");
+        assert_eq!(connection_icon("ethernet"), "󰈀");
+        assert_eq!(entry_key("wifi", "home"), "wifi:home");
+    }
+
+    #[test]
+    fn model_views_and_error_drain_are_deterministic() {
+        let (plugin_model, init_task) = model(Table::new());
+        assert!(init_task.is_some());
+        assert_eq!(name(), "Network");
+        assert_eq!(abi_version(), ABI_VERSION);
+        assert_eq!(metadata().popup_size, Some((460, 420)));
+        assert_eq!(view(plugin_model.clone()).unwrap().len(), 1);
+        assert_eq!(popup_view(plugin_model.clone()).unwrap().len(), 1);
+        assert_eq!(modal_view(plugin_model.clone()).unwrap().len(), 1);
+
+        let task = update(
+            plugin_model.clone(),
+            msg(Message::ScanResult(Err("network failed".to_owned()))),
+        );
+        assert!(task.is_none());
+        assert_eq!(errors(plugin_model.clone()), vec!["network failed"]);
+        assert!(errors(plugin_model).is_empty());
+    }
+}

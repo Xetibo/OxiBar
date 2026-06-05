@@ -5,7 +5,7 @@
 //! and pushes events through a sync `try_send` bridge into iced's stream.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 use hyprland::{
     data::Workspace,
@@ -19,7 +19,10 @@ use iced::{
     stream,
     widget::{Row, text},
 };
-use oxibar_plugin_api::{ABI_VERSION, OxiAny, PluginModel, PluginMsg, PluginStream, toml::Table};
+use oxibar_plugin_api::{
+    ABI_VERSION, PluginModel, PluginMsg, PluginStream, drain_model_errors, plugin_model,
+    toml::Table, with_model_read, with_model_write,
+};
 use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_button};
 
 #[derive(Debug, Default)]
@@ -106,16 +109,13 @@ pub extern "Rust" fn name() -> &'static str {
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn model(global_config: Table) -> (PluginModel, Option<Task<PluginMsg>>) {
-    let m: Box<dyn OxiAny> = Box::new(Model::new(global_config));
-    (Arc::new(RwLock::new(m)), None)
+    (plugin_model(Model::new(global_config)), None)
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Task<PluginMsg>> {
-    let mut guard = model.try_write().ok()?;
-    let model = guard.downcast_mut::<Model>()?;
     let m = msg_in.downcast_ref::<Message>()?.clone();
-    match m {
+    with_model_write::<Model, _>(&model, |model| match m {
         Message::WorkspacesInit(workspaces) => {
             model.workspaces = workspaces;
             None
@@ -141,7 +141,8 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             model.active_workspace_name = name;
             None
         }
-    }
+    })
+    .flatten()
 }
 
 fn dispatch_workspace(id: hyprland::shared::WorkspaceId) -> Result<(), String> {
@@ -167,115 +168,108 @@ pub extern "Rust" fn launch(focused_index: usize, model: PluginModel) -> Option<
     // Treat `focused_index` as the position in the id-sorted workspace list:
     // a key binding "activate workspace #N" can call this without knowing
     // the workspace's stringly-typed name.
-    let guard = model.try_read().ok()?;
-    let m = guard.downcast_ref::<Model>()?;
-    let mut sorted: Vec<&hyprland::data::Workspace> = m.workspaces.values().collect();
-    sorted.sort_by_key(|w| w.id);
-    let target = sorted.get(focused_index)?;
-    Some(Task::done(msg(Message::ActivateWorkspace(target.id))))
+    with_model_read::<Model, _>(&model, |model| {
+        let mut sorted: Vec<&hyprland::data::Workspace> = model.workspaces.values().collect();
+        sorted.sort_by_key(|w| w.id);
+        let target = sorted.get(focused_index)?;
+        Some(Task::done(msg(Message::ActivateWorkspace(target.id))))
+    })
+    .ok()
+    .flatten()
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
-    let Ok(mut guard) = model.try_write() else {
-        return Vec::new();
-    };
-    let Some(m) = guard.downcast_mut::<Model>() else {
-        return Vec::new();
-    };
-    std::mem::take(&mut m.errors)
+    drain_model_errors::<Model>(&model, |model| &mut model.errors)
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
+    with_model_read::<Model, _>(&model, |model| {
+        let palette = &OXITHEME;
+        let mut sorted: Vec<hyprland::data::Workspace> =
+            model.workspaces.values().cloned().collect();
+        sorted.sort_by_key(|w| w.id);
 
-    let palette = &OXITHEME;
-    let mut sorted: Vec<hyprland::data::Workspace> = model.workspaces.values().cloned().collect();
-    sorted.sort_by_key(|w| w.id);
+        let workspace_entries: Vec<Element<PluginMsg>> = sorted
+            .into_iter()
+            .map(|workspace| {
+                let is_active = model.active_workspace_name == workspace.name;
+                let bg_color = if is_active {
+                    iced::Background::Color(palette.primary)
+                } else {
+                    iced::Background::Color(palette.primary_bg)
+                };
+                let fg_color = if is_active {
+                    palette.primary_contrast
+                } else {
+                    palette.primary
+                };
+                let base_font = match model.font_family {
+                    Some(name) => Font::with_name(name),
+                    None => Font::DEFAULT,
+                };
+                let font = Font {
+                    weight: iced::font::Weight::Semibold,
+                    ..base_font
+                };
 
-    let workspace_entries: Vec<Element<PluginMsg>> = sorted
-        .into_iter()
-        .map(|workspace| {
-            let is_active = model.active_workspace_name == workspace.name;
-            let bg_color = if is_active {
-                iced::Background::Color(palette.primary)
-            } else {
-                iced::Background::Color(palette.primary_bg)
-            };
-            let fg_color = if is_active {
-                palette.primary_contrast
-            } else {
-                palette.primary
-            };
-            let base_font = match model.font_family {
-                Some(name) => Font::with_name(name),
-                None => Font::DEFAULT,
-            };
-            let font = Font {
-                weight: iced::font::Weight::Semibold,
-                ..base_font
-            };
-
-            let base = iced::widget::button::Style {
-                background: Some(bg_color),
-                text_color: fg_color,
-                border: Border {
-                    color: iced::Color::TRANSPARENT,
-                    width: 0.0,
-                    radius: Radius::new(360 / 4),
-                },
-                shadow: Shadow {
-                    blur_radius: 2.0,
-                    ..Shadow::default()
-                },
-                snap: false,
-            };
-            let style = move |base: iced::widget::button::Style,
-                              status: iced::widget::button::Status| {
-                match status {
-                    iced::widget::button::Status::Active => base,
-                    iced::widget::button::Status::Pressed => iced::widget::button::Style {
-                        background: Some(iced::Background::Color(palette.primary_active)),
-                        ..base
+                let base = iced::widget::button::Style {
+                    background: Some(bg_color),
+                    text_color: fg_color,
+                    border: Border {
+                        color: iced::Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: Radius::new(360 / 4),
                     },
-                    iced::widget::button::Status::Hovered => iced::widget::button::Style {
-                        background: Some(iced::Background::Color(palette.primary_hover)),
-                        ..base
+                    shadow: Shadow {
+                        blur_radius: 2.0,
+                        ..Shadow::default()
                     },
-                    iced::widget::button::Status::Disabled => base,
-                }
-            };
-            oxi_button::button(
-                text(format!("{}", workspace.id))
-                    .size(13)
-                    .font(font)
-                    .align_y(Alignment::Center)
-                    .align_x(Alignment::Center),
-                oxi_button::ButtonVariant::PrimaryBg,
-            )
-            .on_press(msg(Message::ActivateWorkspace(workspace.id)))
-            .style(move |&_, status| (style)(base, status))
-            .padding(0)
-            .height(22.5)
-            .width(22.5)
-            .into()
-        })
-        .collect();
+                    snap: false,
+                };
+                let style =
+                    move |base: iced::widget::button::Style,
+                          status: iced::widget::button::Status| {
+                        match status {
+                            iced::widget::button::Status::Active => base,
+                            iced::widget::button::Status::Pressed => iced::widget::button::Style {
+                                background: Some(iced::Background::Color(palette.primary_active)),
+                                ..base
+                            },
+                            iced::widget::button::Status::Hovered => iced::widget::button::Style {
+                                background: Some(iced::Background::Color(palette.primary_hover)),
+                                ..base
+                            },
+                            iced::widget::button::Status::Disabled => base,
+                        }
+                    };
+                oxi_button::button(
+                    text(format!("{}", workspace.id))
+                        .size(13)
+                        .font(font)
+                        .align_y(Alignment::Center)
+                        .align_x(Alignment::Center),
+                    oxi_button::ButtonVariant::PrimaryBg,
+                )
+                .on_press(msg(Message::ActivateWorkspace(workspace.id)))
+                .style(move |&_, status| (style)(base, status))
+                .padding(0)
+                .height(22.5)
+                .width(22.5)
+                .into()
+            })
+            .collect();
 
-    Ok(vec![
-        Row::from_vec(workspace_entries)
-            .align_y(Alignment::Center)
-            .spacing(5)
-            .into(),
-    ])
+        vec![
+            Row::from_vec(workspace_entries)
+                .align_y(Alignment::Center)
+                .spacing(5)
+                .into(),
+        ]
+    })
 }
 
 /// Returns a raw pointer to a boxed stream of plugin messages.
@@ -384,3 +378,50 @@ const _: fn() = || {
     fn assert_stream<S: Stream<Item = PluginMsg> + Send + 'static>(_: &S) {}
     let _ = |s: &iced::futures::stream::BoxStream<'static, PluginMsg>| assert_stream(s);
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_model() -> PluginModel {
+        plugin_model(Model {
+            workspaces: HashMap::new(),
+            active_workspace_name: String::new(),
+            font_family: None,
+            errors: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn update_tracks_active_workspace_without_hyprland() {
+        let plugin_model = test_model();
+        assert_eq!(name(), "Workspaces");
+        assert_eq!(abi_version(), ABI_VERSION);
+
+        let task = update(
+            plugin_model.clone(),
+            msg(Message::ActiveWorkspaceChanged("dev".to_owned())),
+        );
+        assert!(task.is_none());
+
+        let guard = plugin_model.read().unwrap();
+        let model = guard.downcast_ref::<Model>().unwrap();
+        assert_eq!(model.active_workspace_name, "dev");
+    }
+
+    #[test]
+    fn empty_view_launch_and_error_drain_are_deterministic() {
+        let plugin_model = test_model();
+        assert!(launch(0, plugin_model.clone()).is_none());
+        assert_eq!(view(plugin_model.clone()).unwrap().len(), 1);
+
+        {
+            let mut guard = plugin_model.write().unwrap();
+            let model = guard.downcast_mut::<Model>().unwrap();
+            model.errors.push("hyprland failed".to_owned());
+        }
+
+        assert_eq!(errors(plugin_model.clone()), vec!["hyprland failed"]);
+        assert!(errors(plugin_model).is_empty());
+    }
+}

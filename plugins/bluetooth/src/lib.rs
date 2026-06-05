@@ -1,8 +1,6 @@
 //! Bluetooth plugin backed by `bluetoothctl`.
 
-use std::io::Write;
-use std::process::{Command, Stdio};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use iced::{
@@ -14,11 +12,20 @@ use iced::{
 use iced_anim::{AnimationBuilder, Motion};
 use oxibar_plugin_api::{
     ABI_VERSION, HOST_REQUEST_CLOSE_MODAL, HOST_REQUEST_OPEN_MODAL, HOST_REQUEST_TOGGLE_POPUP,
-    OxiAny, PluginModel, PluginMsg, PluginStream, toml::Table,
+    PluginMetadata, PluginModel, PluginMsg, PluginStream, drain_model_errors, plugin_model,
+    toml::Table, with_model_read, with_model_write,
 };
 use oxiced::{
     theme::theme_impl::OXITHEME,
-    widgets::{oxi_button, oxi_text_input},
+    widgets::{
+        oxi_button, oxi_plugin, oxi_plugin::text_muted, oxi_plugin::text_primary, oxi_text_input,
+    },
+};
+
+mod system;
+
+use system::{
+    BluetoothAction, BluetoothDevice, PairOutcome, Snapshot, run_bluetooth_action, scan_devices,
 };
 
 const DEFAULT_REFRESH_SECONDS: u64 = 20;
@@ -59,35 +66,9 @@ impl Model {
 }
 
 #[derive(Clone, Debug)]
-struct BluetoothDevice {
-    mac: String,
-    name: String,
-    icon: String,
-    paired: bool,
-}
-
-#[derive(Clone, Debug)]
-struct Snapshot {
-    connected: Vec<BluetoothDevice>,
-    available: Vec<BluetoothDevice>,
-}
-
-#[derive(Clone, Debug)]
 struct PairingState {
     device: BluetoothDevice,
     code: String,
-}
-
-#[derive(Clone, Debug)]
-enum PairOutcome {
-    Done,
-    NeedsCode,
-}
-
-#[derive(Clone, Debug)]
-enum BluetoothAction {
-    Pair { mac: String, code: Option<String> },
-    Disconnect { mac: String },
 }
 
 #[derive(Clone, Debug)]
@@ -123,21 +104,28 @@ pub extern "Rust" fn name() -> &'static str {
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn metadata() -> PluginMetadata {
+    PluginMetadata {
+        popup_size: Some((460, 420)),
+        ..PluginMetadata::default()
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn model(global_config: Table) -> (PluginModel, Option<Task<PluginMsg>>) {
-    let m: Box<dyn OxiAny> = Box::new(Model::new(global_config));
     (
-        Arc::new(RwLock::new(m)),
+        plugin_model(Model::new(global_config)),
         Some(Task::done(msg(Message::Refresh))),
     )
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Task<PluginMsg>> {
-    let mut guard = model.try_write().ok()?;
-    let model = guard.downcast_mut::<Model>()?;
     let m = msg_in.downcast_ref::<Message>()?.clone();
-    match m {
-        Message::TogglePopup => Some(Task::done(Arc::new(HOST_REQUEST_TOGGLE_POPUP.to_owned()))),
+    with_model_write::<Model, _>(&model, |model| match m {
+        Message::TogglePopup => Some(Task::done(
+            Arc::new(HOST_REQUEST_TOGGLE_POPUP.to_owned()) as PluginMsg
+        )),
         Message::Refresh => Some(Task::perform(async { scan_devices(false) }, |result| {
             msg(Message::ScanResult(result))
         })),
@@ -175,15 +163,15 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             match result {
                 Ok(PairOutcome::Done) => Some(Task::done(msg(Message::Refresh))),
                 Ok(PairOutcome::NeedsCode) => {
-                    let Some(mac) = mac else {
-                        return None;
-                    };
+                    let mac = mac?;
                     if let Some(device) = find_device(model, &mac) {
                         model.pairing = Some(PairingState {
                             device,
                             code: String::new(),
                         });
-                        Some(Task::done(Arc::new(HOST_REQUEST_OPEN_MODAL.to_owned())))
+                        Some(Task::done(
+                            Arc::new(HOST_REQUEST_OPEN_MODAL.to_owned()) as PluginMsg
+                        ))
                     } else {
                         model
                             .errors
@@ -204,9 +192,7 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             None
         }
         Message::SubmitCode => {
-            let Some(pairing) = model.pairing.clone() else {
-                return None;
-            };
+            let pairing = model.pairing.clone()?;
             model.pending = Some(format!("Pairing {}", pairing.device.name));
             Some(run_action(BluetoothAction::Pair {
                 mac: pairing.device.mac,
@@ -215,9 +201,12 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
         }
         Message::CancelCode => {
             model.pairing = None;
-            Some(Task::done(Arc::new(HOST_REQUEST_CLOSE_MODAL.to_owned())))
+            Some(Task::done(
+                Arc::new(HOST_REQUEST_CLOSE_MODAL.to_owned()) as PluginMsg
+            ))
         }
-    }
+    })
+    .flatten()
 }
 
 #[unsafe(no_mangle)]
@@ -227,151 +216,132 @@ pub extern "Rust" fn launch(_focused_index: usize, _model: PluginModel) -> Optio
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
-    let Ok(mut guard) = model.try_write() else {
-        return Vec::new();
-    };
-    let Some(m) = guard.downcast_mut::<Model>() else {
-        return Vec::new();
-    };
-    std::mem::take(&mut m.errors)
+    drain_model_errors::<Model>(&model, |model| &mut model.errors)
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
-    let count = model.connected.len();
-    let label = if count == 0 {
-        ICON.to_owned()
-    } else {
-        format!("{ICON} {count}")
-    };
-    Ok(vec![bar_button(label).into()])
+    with_model_read::<Model, _>(&model, |model| {
+        let count = model.connected.len();
+        let label = if count == 0 {
+            ICON.to_owned()
+        } else {
+            format!("{ICON} {count}")
+        };
+        vec![bar_button(label).into()]
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn popup_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
+    with_model_read::<Model, _>(&model, |model| {
+        let mut content = Column::new()
+            .spacing(8)
+            .padding([12, 14])
+            .width(Length::Fill);
+        let scan = oxi_button::button(
+            text(if model.pending.is_some() {
+                "Working..."
+            } else {
+                "Scan"
+            })
+            .size(12),
+            oxi_button::ButtonVariant::SecondaryBg,
+        )
+        .on_press(msg(Message::Scan))
+        .padding([5, 8]);
+        content = content.push(
+            Row::new()
+                .push(section_title("Bluetooth"))
+                .push(Space::new().width(Length::Fill))
+                .push(scan)
+                .align_y(Alignment::Center),
+        );
 
-    let mut content = Column::new()
-        .spacing(8)
-        .padding([12, 14])
-        .width(Length::Fill);
-    let scan = oxi_button::button(
-        text(if model.pending.is_some() {
-            "Working..."
+        content = content.push(section_title("Connected Devices"));
+        if model.connected.is_empty() {
+            content = content.push(empty_text("No connected devices"));
         } else {
-            "Scan"
-        })
-        .size(12),
-        oxi_button::ButtonVariant::SecondaryBg,
-    )
-    .on_press(msg(Message::Scan))
-    .padding([5, 8]);
-    content = content.push(
-        Row::new()
-            .push(section_title("Bluetooth"))
-            .push(Space::new().width(Length::Fill))
-            .push(scan)
-            .align_y(Alignment::Center),
-    );
-
-    content = content.push(section_title("Connected Devices"));
-    if model.connected.is_empty() {
-        content = content.push(empty_text("No connected devices"));
-    } else {
-        for device in &model.connected {
-            content = content.push(device_card(
-                device,
-                true,
-                model.pending.is_some(),
-                model.hovered.as_deref() == Some(device.mac.as_str()),
-            ));
+            for device in &model.connected {
+                content = content.push(device_card(
+                    device,
+                    true,
+                    model.pending.is_some(),
+                    model.hovered.as_deref() == Some(device.mac.as_str()),
+                ));
+            }
         }
-    }
 
-    content = content.push(section_title("Available Devices"));
-    if model.available.is_empty() {
-        content = content.push(empty_text("No pairable devices found"));
-    } else {
-        for device in &model.available {
-            content = content.push(device_card(
-                device,
-                false,
-                model.pending.is_some(),
-                model.hovered.as_deref() == Some(device.mac.as_str()),
-            ));
+        content = content.push(section_title("Available Devices"));
+        if model.available.is_empty() {
+            content = content.push(empty_text("No pairable devices found"));
+        } else {
+            for device in &model.available {
+                content = content.push(device_card(
+                    device,
+                    false,
+                    model.pending.is_some(),
+                    model.hovered.as_deref() == Some(device.mac.as_str()),
+                ));
+            }
         }
-    }
 
-    Ok(vec![scrollable(content).height(Length::Fill).into()])
+        vec![scrollable(content).height(Length::Fill).into()]
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn modal_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
-    let Some(pairing) = model.pairing.clone() else {
-        return Ok(vec![
-            Column::new()
-                .push(section_title("No pairing request"))
-                .into(),
-        ]);
-    };
-    let input = oxi_text_input::text_input("PIN / pairing code", &pairing.code, |value| {
-        msg(Message::CodeChanged(value))
-    })
-    .width(Length::Fill);
-    let submit = oxi_button::button(text("Pair").size(13), oxi_button::ButtonVariant::Primary)
-        .on_press(msg(Message::SubmitCode))
+    with_model_read::<Model, _>(&model, |model| {
+        let Some(pairing) = model.pairing.clone() else {
+            return vec![
+                Column::new()
+                    .push(section_title("No pairing request"))
+                    .into(),
+            ];
+        };
+        let input = oxi_text_input::text_input("PIN / pairing code", &pairing.code, |value| {
+            msg(Message::CodeChanged(value))
+        })
+        .width(Length::Fill);
+        let submit = oxi_button::button(text("Pair").size(13), oxi_button::ButtonVariant::Primary)
+            .on_press(msg(Message::SubmitCode))
+            .padding([8, 12]);
+        let cancel = oxi_button::button(
+            text("Cancel").size(13),
+            oxi_button::ButtonVariant::SecondaryBg,
+        )
+        .on_press(msg(Message::CancelCode))
         .padding([8, 12]);
-    let cancel = oxi_button::button(
-        text("Cancel").size(13),
-        oxi_button::ButtonVariant::SecondaryBg,
-    )
-    .on_press(msg(Message::CancelCode))
-    .padding([8, 12]);
-    Ok(vec![
-        Column::new()
-            .push(section_title("Bluetooth Pairing"))
-            .push(text(pairing.device.name).size(14).style(text_primary))
-            .push(
-                text("Enter the PIN or pairing code shown by the device.")
-                    .size(11)
-                    .style(text_muted),
-            )
-            .push(input)
-            .push(
-                Row::new()
-                    .push(Space::new().width(Length::Fill))
-                    .push(cancel)
-                    .push(submit)
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-            )
-            .spacing(12)
-            .width(Length::Fill)
-            .into(),
-    ])
+        vec![
+            Column::new()
+                .push(section_title("Bluetooth Pairing"))
+                .push(text(pairing.device.name).size(14).style(text_primary))
+                .push(
+                    text("Enter the PIN or pairing code shown by the device.")
+                        .size(11)
+                        .style(text_muted),
+                )
+                .push(input)
+                .push(
+                    Row::new()
+                        .push(Space::new().width(Length::Fill))
+                        .push(cancel)
+                        .push(submit)
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                )
+                .spacing(12)
+                .width(Length::Fill)
+                .into(),
+        ]
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -395,17 +365,13 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
 }
 
 fn bar_button(label: String) -> button::Button<'static, PluginMsg> {
-    button(
+    oxi_plugin::bar_button(
         text(label)
             .size(14)
             .align_y(Alignment::Center)
             .align_x(Alignment::Center),
     )
     .on_press(msg(Message::TogglePopup))
-    .style(bar_button_style)
-    .padding([0, 8])
-    .height(22.5)
-    .width(Length::Shrink)
 }
 
 fn device_card(
@@ -493,43 +459,6 @@ fn empty_text(label: &'static str) -> Element<'static, PluginMsg> {
     text(label).size(12).style(text_muted).into()
 }
 
-fn text_primary(_: &iced::Theme) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(OXITHEME.text),
-    }
-}
-
-fn text_muted(_: &iced::Theme) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(OXITHEME.text_muted),
-    }
-}
-
-fn bar_button_style(_: &iced::Theme, status: button::Status) -> button::Style {
-    let base = button::Style {
-        background: None,
-        text_color: OXITHEME.primary,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 8.0.into(),
-        },
-        shadow: Shadow::default(),
-        snap: false,
-    };
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_hover)),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_active)),
-            ..base
-        },
-        button::Status::Active | button::Status::Disabled => base,
-    }
-}
-
 fn card_button_style(status: button::Status, bg: Color) -> button::Style {
     let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
@@ -584,190 +513,46 @@ fn run_action(action: BluetoothAction) -> Task<PluginMsg> {
     })
 }
 
-fn scan_devices(active_scan: bool) -> Result<Snapshot, String> {
-    if active_scan {
-        let _ = run_bluetoothctl_script("scan on\n", Some(Duration::from_secs(4)));
-    }
-    let all = parse_devices(&run_bluetoothctl(&["devices"])?);
-    let connected_macs = parse_devices(&run_bluetoothctl(&["devices", "Connected"])?)
-        .into_iter()
-        .map(|device| device.mac)
-        .collect::<Vec<_>>();
-    let mut connected = Vec::new();
-    let mut available = Vec::new();
-    for basic in all {
-        let info = device_info(&basic.mac).unwrap_or_default();
-        let is_connected = connected_macs.contains(&basic.mac) || info.connected;
-        let device = BluetoothDevice {
-            mac: basic.mac,
-            name: basic.name,
-            icon: info.icon,
-            paired: info.paired,
-        };
-        if is_connected {
-            connected.push(device);
-        } else if !is_noise(&device) {
-            available.push(device);
-        }
-    }
-    connected.sort_by(|a, b| a.name.cmp(&b.name));
-    available.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(Snapshot {
-        connected,
-        available,
-    })
-}
-
-#[derive(Default)]
-struct DeviceInfo {
-    icon: String,
-    paired: bool,
-    connected: bool,
-}
-
-fn device_info(mac: &str) -> Result<DeviceInfo, String> {
-    let output = run_bluetoothctl(&["info", mac])?;
-    let mut info = DeviceInfo::default();
-    for line in output.lines().map(str::trim) {
-        if let Some(icon) = line.strip_prefix("Icon:") {
-            info.icon = icon.trim().to_owned();
-        } else if let Some(paired) = line.strip_prefix("Paired:") {
-            info.paired = paired.trim() == "yes";
-        } else if let Some(connected) = line.strip_prefix("Connected:") {
-            info.connected = connected.trim() == "yes";
-        }
-    }
-    Ok(info)
-}
-
-fn parse_devices(output: &str) -> Vec<BluetoothDevice> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let rest = line.trim().strip_prefix("Device ")?;
-            let (mac, name) = rest.split_once(' ')?;
-            Some(BluetoothDevice {
-                mac: mac.to_owned(),
-                name: name.trim().to_owned(),
-                icon: String::new(),
-                paired: false,
-            })
-        })
-        .collect()
-}
-
-fn is_noise(device: &BluetoothDevice) -> bool {
-    device.name.is_empty()
-        || device.name.eq_ignore_ascii_case(&device.mac)
-        || looks_like_mac(&device.name)
-        || device.icon.is_empty()
-}
-
-fn looks_like_mac(value: &str) -> bool {
-    let parts = value.split(':').collect::<Vec<_>>();
-    parts.len() == 6
-        && parts
-            .iter()
-            .all(|part| part.len() == 2 && part.chars().all(|ch| ch.is_ascii_hexdigit()))
-}
-
-fn run_bluetooth_action(action: BluetoothAction) -> Result<PairOutcome, String> {
-    match action {
-        BluetoothAction::Pair { mac, code } => pair_device(&mac, code),
-        BluetoothAction::Disconnect { mac } => {
-            run_bluetoothctl(&["disconnect", &mac])?;
-            Ok(PairOutcome::Done)
-        }
-    }
-}
-
-fn pair_device(mac: &str, code: Option<String>) -> Result<PairOutcome, String> {
-    let has_code = code.is_some();
-    let script = if let Some(code) = code {
-        format!(
-            "agent KeyboardDisplay\ndefault-agent\npair {mac}\n{code}\nyes\ntrust {mac}\nconnect {mac}\nquit\n"
-        )
-    } else {
-        format!(
-            "agent KeyboardDisplay\ndefault-agent\npair {mac}\ntrust {mac}\nconnect {mac}\nquit\n"
-        )
-    };
-    match run_bluetoothctl_script(&script, Some(Duration::from_secs(20))) {
-        Ok(_) => Ok(PairOutcome::Done),
-        Err(error) if needs_code(&error) && !has_code => Ok(PairOutcome::NeedsCode),
-        Err(error) => Err(error),
-    }
-}
-
-fn needs_code(error: &str) -> bool {
-    let lower = error.to_ascii_lowercase();
-    lower.contains("pin")
-        || lower.contains("passkey")
-        || lower.contains("code")
-        || lower.contains("agent")
-}
-
-fn run_bluetoothctl(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("bluetoothctl")
-        .args(args)
-        .output()
-        .map_err(|e| format!("bluetooth: failed to run bluetoothctl: {e}"))?;
-    command_output(output)
-}
-
-fn run_bluetoothctl_script(script: &str, timeout: Option<Duration>) -> Result<String, String> {
-    let mut child = Command::new("bluetoothctl")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("bluetooth: failed to run bluetoothctl: {e}"))?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or_else(|| "bluetooth: could not open bluetoothctl stdin".to_owned())?
-        .write_all(script.as_bytes())
-        .map_err(|e| format!("bluetooth: failed to write bluetoothctl script: {e}"))?;
-    if let Some(timeout) = timeout {
-        let start = std::time::Instant::now();
-        loop {
-            if let Some(_status) = child
-                .try_wait()
-                .map_err(|e| format!("bluetooth: bluetoothctl wait failed: {e}"))?
-            {
-                break;
-            }
-            if start.elapsed() > timeout {
-                let _ = child.kill();
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("bluetooth: bluetoothctl output failed: {e}"))?;
-    command_output(output)
-}
-
-fn command_output(output: std::process::Output) -> Result<String, String> {
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    if output.status.success()
-        && !stdout.to_ascii_lowercase().contains("failed")
-        && !stderr.to_ascii_lowercase().contains("failed")
-    {
-        Ok(stdout)
-    } else if stderr.is_empty() {
-        Err(format!("bluetooth: bluetoothctl failed: {stdout}"))
-    } else {
-        Err(format!(
-            "bluetooth: bluetoothctl failed: {stderr}\n{stdout}"
-        ))
-    }
-}
-
 const _: fn() = || {
     fn assert_stream<S: Stream<Item = PluginMsg> + Send + 'static>(_: &S) {}
     let _ = |s: &iced::futures::stream::BoxStream<'static, PluginMsg>| assert_stream(s);
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn icon_for_detects_audio_devices() {
+        let usable = BluetoothDevice {
+            mac: "AA:BB:CC:DD:EE:FF".to_owned(),
+            name: "Headphones".to_owned(),
+            icon: "audio-card".to_owned(),
+            paired: false,
+        };
+        assert_eq!(icon_for(&usable), "󰥰");
+    }
+
+    #[test]
+    fn model_views_and_error_drain_are_deterministic() {
+        let (plugin_model, init_task) = model(Table::new());
+        assert!(init_task.is_some());
+        assert_eq!(name(), "Bluetooth");
+        assert_eq!(abi_version(), ABI_VERSION);
+        assert_eq!(metadata().popup_size, Some((460, 420)));
+        assert_eq!(view(plugin_model.clone()).unwrap().len(), 1);
+        assert_eq!(popup_view(plugin_model.clone()).unwrap().len(), 1);
+        assert_eq!(modal_view(plugin_model.clone()).unwrap().len(), 1);
+
+        let task = update(
+            plugin_model.clone(),
+            msg(Message::ActionDone {
+                mac: None,
+                result: Err("bluetooth failed".to_owned()),
+            }),
+        );
+        assert!(task.is_none());
+        assert_eq!(errors(plugin_model.clone()), vec!["bluetooth failed"]);
+        assert!(errors(plugin_model).is_empty());
+    }
+}

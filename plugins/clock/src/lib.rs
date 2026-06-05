@@ -12,7 +12,7 @@
 //! Clicking the time toggles a host-owned calendar popup.
 
 use std::process::Command;
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate};
@@ -22,13 +22,18 @@ use iced::{
     font::Weight,
     futures::Stream,
     stream,
-    widget::{Column, Row, button, text},
+    widget::{Column, Row, button, container, text, tooltip},
 };
 use oxibar_plugin_api::{
-    ABI_VERSION, HOST_REQUEST_TOGGLE_POPUP, OxiAny, PluginModel, PluginMsg, PluginStream,
-    toml::Table,
+    ABI_VERSION, HOST_REQUEST_TOGGLE_POPUP, PluginMetadata, PluginModel, PluginMsg, PluginStream,
+    drain_model_errors, plugin_model, toml::Table, with_model_read, with_model_write,
 };
 use oxiced::theme::theme_impl::OXITHEME;
+use oxiced::widgets::oxi_plugin;
+
+mod caldav;
+
+use caldav::{CaldavConfig, CalendarEvent, load_events};
 
 const DEFAULT_FORMAT: &str = "%H:%M";
 const DEFAULT_TICK_SECONDS: u64 = 60;
@@ -38,6 +43,7 @@ const DEFAULT_BOLD: bool = false;
 /// Tick interval shared with `subscription()`. Set during `model()` so the
 /// subscription thread can read it without the model being passed in.
 static TICK: OnceLock<Duration> = OnceLock::new();
+static CALDAV_REFRESH: OnceLock<Duration> = OnceLock::new();
 
 #[derive(Debug)]
 pub struct Model {
@@ -48,6 +54,11 @@ pub struct Model {
     /// default). Leaked to `&'static str` because [`iced::Font`] requires it.
     font_family: Option<&'static str>,
     calendar_command: Option<String>,
+    caldav_config: Option<CaldavConfig>,
+    calendar_events: Vec<CalendarEvent>,
+    calendar_pending: bool,
+    calendar_sync_error: Option<String>,
+    calendar_sync_count: Option<usize>,
     now: DateTime<Local>,
     calendar_month: NaiveDate,
     calendar_open: bool,
@@ -60,6 +71,9 @@ impl Model {
         // First setter wins; if the dylib is reloaded in-process the old
         // value sticks, which is fine — interval changes need a restart.
         let _ = TICK.set(Duration::from_secs(cfg.tick_seconds));
+        if let Some(caldav) = cfg.caldav_config.as_ref() {
+            let _ = CALDAV_REFRESH.set(Duration::from_secs(caldav.refresh_minutes * 60));
+        }
         // Read the bar-wide font so bold rendering doesn't lose the family.
         let font_family = global_config
             .get("bar")
@@ -74,6 +88,11 @@ impl Model {
             bold: cfg.bold,
             font_family,
             calendar_command: cfg.calendar_command,
+            caldav_config: cfg.caldav_config,
+            calendar_events: Vec::new(),
+            calendar_pending: false,
+            calendar_sync_error: cfg.caldav_config_error,
+            calendar_sync_count: None,
             now: Local::now(),
             calendar_month: current_month_start(),
             calendar_open: false,
@@ -88,6 +107,8 @@ struct ClockConfig {
     font_size: f32,
     bold: bool,
     calendar_command: Option<String>,
+    caldav_config: Option<CaldavConfig>,
+    caldav_config_error: Option<String>,
 }
 
 fn read_config(global: &Table) -> ClockConfig {
@@ -111,6 +132,8 @@ fn read_config(global: &Table) -> ClockConfig {
             font_size: DEFAULT_FONT_SIZE,
             bold: DEFAULT_BOLD,
             calendar_command: None,
+            caldav_config: None,
+            caldav_config_error: None,
         };
     };
 
@@ -138,14 +161,35 @@ fn read_config(global: &Table) -> ClockConfig {
     let calendar_command = plugins
         .get("calendar_command")
         .and_then(|v| v.as_str())
-        .map(ToOwned::to_owned);
+        .map(ToOwned::to_owned)
+        .or_else(
+            || match plugins.get("calendar_app").and_then(|v| v.as_str()) {
+                Some("thunderbird") => Some("thunderbird --calendar".to_owned()),
+                _ => None,
+            },
+        );
+    let caldav_config = caldav::read_config(table);
+    let caldav_config_error = caldav_config_missing_error(plugins, caldav_config.is_some());
     ClockConfig {
         format,
         tick_seconds,
         font_size,
         bold,
         calendar_command,
+        caldav_config,
+        caldav_config_error,
     }
+}
+
+fn caldav_config_missing_error(clock: &Table, configured: bool) -> Option<String> {
+    if configured {
+        return None;
+    }
+    let caldav = clock.get("caldav")?.as_table()?;
+    if caldav.get("enabled").and_then(|value| value.as_bool()) == Some(false) {
+        return None;
+    }
+    Some("clock: [clock.caldav] requires url and username".to_owned())
 }
 
 fn resolve_font_family(configured: &str) -> String {
@@ -175,6 +219,8 @@ pub enum Message {
     PreviousMonth,
     NextMonth,
     OpenDay(NaiveDate),
+    RefreshCalendar,
+    CalendarLoaded(Result<Vec<CalendarEvent>, String>),
     CalendarOpenResult(Result<(), String>),
 }
 
@@ -195,20 +241,29 @@ pub extern "Rust" fn name() -> &'static str {
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn metadata() -> PluginMetadata {
+    PluginMetadata {
+        popup_size: Some((360, 320)),
+        ..PluginMetadata::default()
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn model(global_config: Table) -> (PluginModel, Option<Task<PluginMsg>>) {
-    let m: Box<dyn OxiAny> = Box::new(Model::new(global_config));
     // Seed with an immediate tick so the bar shows the time before the
     // first subscription wakeup.
-    let task = Task::done(msg(Message::Tick(Local::now())));
-    (Arc::new(RwLock::new(m)), Some(task))
+    let model = Model::new(global_config);
+    let mut tasks = vec![Task::done(msg(Message::Tick(Local::now())))];
+    if model.caldav_config.is_some() {
+        tasks.push(Task::done(msg(Message::RefreshCalendar)));
+    }
+    (plugin_model(model), Some(Task::batch(tasks)))
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Task<PluginMsg>> {
-    let mut guard = model.try_write().ok()?;
-    let model = guard.downcast_mut::<Model>()?;
     let m = msg_in.downcast_ref::<Message>()?.clone();
-    match m {
+    with_model_write::<Model, _>(&model, |model| match m {
         Message::Tick(now) => {
             model.now = now;
             None
@@ -219,7 +274,16 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
                 model.calendar_month = current_month_start();
             }
             let request: PluginMsg = Arc::new(HOST_REQUEST_TOGGLE_POPUP.to_owned());
-            Some(Task::done(request))
+            let request = Task::done(request);
+            if model.calendar_open {
+                if let Some(refresh) = start_caldav_refresh(model) {
+                    Some(Task::batch(vec![request, refresh]))
+                } else {
+                    Some(request)
+                }
+            } else {
+                Some(request)
+            }
         }
         Message::PreviousMonth => {
             model.calendar_month = add_months(model.calendar_month, -1);
@@ -236,13 +300,42 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
                 |result| msg(Message::CalendarOpenResult(result)),
             ))
         }
+        Message::RefreshCalendar => start_caldav_refresh(model),
+        Message::CalendarLoaded(result) => {
+            model.calendar_pending = false;
+            match result {
+                Ok(events) => {
+                    model.calendar_sync_count = Some(events.len());
+                    model.calendar_sync_error = None;
+                    model.calendar_events = events;
+                }
+                Err(error) => {
+                    model.calendar_sync_error = Some(error.clone());
+                    model.errors.push(error);
+                }
+            }
+            None
+        }
         Message::CalendarOpenResult(result) => {
             if let Err(error) = result {
                 model.errors.push(error);
             }
             None
         }
+    })
+    .flatten()
+}
+
+fn start_caldav_refresh(model: &mut Model) -> Option<Task<PluginMsg>> {
+    if model.calendar_pending {
+        return None;
     }
+    let config = model.caldav_config.clone()?;
+    model.calendar_pending = true;
+    Some(Task::perform(
+        async move { load_events(config) },
+        |result| msg(Message::CalendarLoaded(result)),
+    ))
 }
 
 #[unsafe(no_mangle)]
@@ -254,143 +347,101 @@ pub extern "Rust" fn launch(_focused_index: usize, _model: PluginModel) -> Optio
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
-    let Ok(mut guard) = model.try_write() else {
-        return Vec::new();
-    };
-    let Some(m) = guard.downcast_mut::<Model>() else {
-        return Vec::new();
-    };
-    std::mem::take(&mut m.errors)
+    drain_model_errors::<Model>(&model, |model| &mut model.errors)
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
-
-    // chrono's `format` panics on invalid specifiers at render time, not
-    // parse time. Guard with `format_with_items` would be cleaner, but
-    // catching errors per-frame and surfacing once is good enough.
-    let label = format_time(&model.now, &model.format);
-    let font_size = model.font_size;
-    let label_text = text(label)
-        .size(font_size)
-        .align_y(Alignment::Center)
-        .align_x(Alignment::Center);
-    let label_text = if model.bold && model.font_family.is_none() {
-        label_text.font(Font {
-            weight: Weight::Bold,
-            ..Font::DEFAULT
-        })
-    } else {
-        label_text
-    };
-
-    // Transparent button: text in the primary accent color, no background
-    // until hovered. Hover paints a subtle `primary_bg_hover` so the user
-    // knows it's clickable. Pressed darkens slightly via `primary_bg_active`.
-    let style = |_: &iced::Theme, status: button::Status| -> button::Style {
-        let palette = &OXITHEME;
-        let base = button::Style {
-            background: None,
-            text_color: palette.primary,
-            border: Border {
-                color: Color::TRANSPARENT,
-                width: 0.0,
-                radius: Radius::from(palette.border_radius),
-            },
-            shadow: Shadow::default(),
-            snap: false,
+    with_model_read::<Model, _>(&model, |model| {
+        // chrono's `format` panics on invalid specifiers at render time, not
+        // parse time. Guard with `format_with_items` would be cleaner, but
+        // catching errors per-frame and surfacing once is good enough.
+        let label = format_time(&model.now, &model.format);
+        let font_size = model.font_size;
+        let label_text = text(label)
+            .size(font_size)
+            .align_y(Alignment::Center)
+            .align_x(Alignment::Center);
+        let label_text = if model.bold && model.font_family.is_none() {
+            label_text.font(Font {
+                weight: Weight::Bold,
+                ..Font::DEFAULT
+            })
+        } else {
+            label_text
         };
-        match status {
-            button::Status::Active | button::Status::Disabled => base,
-            button::Status::Hovered => button::Style {
-                background: Some(Background::Color(palette.primary_bg_hover)),
-                ..base
-            },
-            button::Status::Pressed => button::Style {
-                background: Some(Background::Color(palette.primary_bg_active)),
-                ..base
-            },
-        }
-    };
 
-    let btn = button(label_text)
-        .on_press(msg(Message::ToggleCalendar))
-        .style(style)
-        .padding([0, 8])
-        .height(22.5)
-        .width(Length::Shrink);
+        let btn = oxi_plugin::bar_button(label_text).on_press(msg(Message::ToggleCalendar));
 
-    Ok(vec![btn.into()])
+        vec![btn.into()]
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn popup_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
-    let now = Local::now().date_naive();
-    let month_start = model.calendar_month;
-    let title = month_start.format("%B %Y").to_string();
-    let palette = &OXITHEME;
+    with_model_read::<Model, _>(&model, |model| {
+        let now = Local::now().date_naive();
+        let month_start = model.calendar_month;
+        let title = month_start.format("%B %Y").to_string();
+        let palette = &OXITHEME;
 
-    let header = Row::new()
-        .push(calendar_nav_button("‹", Message::PreviousMonth))
-        .push(
-            text(title)
-                .size(18)
-                .style(move |_| iced::widget::text::Style {
-                    color: Some(palette.primary),
-                })
-                .align_x(Alignment::Center)
-                .width(Length::Fill),
-        )
-        .push(calendar_nav_button("›", Message::NextMonth))
-        .align_y(Alignment::Center)
-        .width(Length::Fill);
+        let header = Row::new()
+            .push(calendar_nav_button("‹", Message::PreviousMonth))
+            .push(
+                text(title)
+                    .size(18)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(palette.primary),
+                    })
+                    .align_x(Alignment::Center)
+                    .width(Length::Fill),
+            )
+            .push(calendar_nav_button("›", Message::NextMonth))
+            .align_y(Alignment::Center)
+            .width(Length::Fill);
 
-    let mut column = Column::new().spacing(8).padding([12, 14]).push(header);
+        let mut column = Column::new().spacing(8).padding([12, 14]).push(header);
 
-    let mut weekdays = Row::new().spacing(4).width(Length::Fill);
-    for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
-        weekdays = weekdays.push(
-            text(day)
-                .size(12)
-                .style(move |_| iced::widget::text::Style {
-                    color: Some(palette.primary),
-                })
-                .align_x(Alignment::Center)
-                .width(Length::Fill),
-        );
-    }
-    column = column.push(weekdays);
-
-    let first_offset = month_start.weekday().num_days_from_monday() as i64;
-    let grid_start = month_start - ChronoDuration::days(first_offset);
-    for week in 0..6 {
-        let mut row = Row::new().spacing(4).width(Length::Fill);
-        for day in 0..7 {
-            let date = grid_start + ChronoDuration::days(week * 7 + day);
-            let is_current_month = date.month() == now.month();
-            let is_today = date == now;
-            row = row.push(day_cell(date, is_current_month, is_today));
+        let mut weekdays = Row::new().spacing(4).width(Length::Fill);
+        for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
+            weekdays = weekdays.push(
+                text(day)
+                    .size(12)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(palette.primary),
+                    })
+                    .align_x(Alignment::Center)
+                    .width(Length::Fill),
+            );
         }
-        column = column.push(row);
-    }
+        column = column.push(weekdays);
 
-    Ok(vec![column.width(Length::Fill).height(Length::Fill).into()])
+        let first_offset = month_start.weekday().num_days_from_monday() as i64;
+        let grid_start = month_start - ChronoDuration::days(first_offset);
+        for week in 0..6 {
+            let mut row = Row::new().spacing(4).width(Length::Fill);
+            for day in 0..7 {
+                let date = grid_start + ChronoDuration::days(week * 7 + day);
+                let is_current_month =
+                    date.year() == month_start.year() && date.month() == month_start.month();
+                let is_today = date == now;
+                let events = model
+                    .calendar_events
+                    .iter()
+                    .filter(|event| event.date == date)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                row = row.push(day_cell(date, is_current_month, is_today, events));
+            }
+            column = column.push(row);
+        }
+
+        vec![column.width(Length::Fill).height(Length::Fill).into()]
+    })
 }
 
 fn calendar_nav_button(label: &'static str, message: Message) -> Element<'static, PluginMsg> {
@@ -401,7 +452,7 @@ fn calendar_nav_button(label: &'static str, message: Message) -> Element<'static
             .align_y(Alignment::Center),
     )
     .on_press(msg(message))
-    .style(clock_button_style)
+    .style(oxi_plugin::bar_button_style)
     .padding([2, 10])
     .height(28)
     .into()
@@ -411,8 +462,10 @@ fn day_cell(
     date: NaiveDate,
     is_current_month: bool,
     is_today: bool,
+    events: Vec<CalendarEvent>,
 ) -> Element<'static, PluginMsg> {
     let palette = &OXITHEME;
+    let has_event = !events.is_empty();
     let text_color = if is_current_month {
         palette.primary
     } else {
@@ -423,11 +476,13 @@ fn day_cell(
     };
     let background = if is_today {
         Some(Background::Color(palette.primary_bg_hover))
+    } else if has_event && is_current_month {
+        Some(Background::Color(palette.primary_bg))
     } else {
         None
     };
 
-    button(
+    let cell = button(
         text(date.day().to_string())
             .size(13)
             .align_x(Alignment::Center)
@@ -456,32 +511,88 @@ fn day_cell(
     })
     .padding(0)
     .width(Length::Fill)
-    .height(30)
-    .into()
+    .height(30);
+
+    if events.is_empty() {
+        cell.into()
+    } else {
+        tooltip(
+            cell,
+            calendar_event_tooltip(date, &events),
+            tooltip::Position::FollowCursor,
+        )
+        .gap(8)
+        .into()
+    }
 }
 
-fn clock_button_style(_: &iced::Theme, status: button::Status) -> button::Style {
-    let base = button::Style {
-        background: None,
-        text_color: OXITHEME.primary,
+fn calendar_event_tooltip(
+    date: NaiveDate,
+    events: &[CalendarEvent],
+) -> Element<'static, PluginMsg> {
+    let palette = &OXITHEME;
+    let mut content = Column::new().spacing(6).width(240).push(
+        text(date.format("%A, %Y-%m-%d").to_string())
+            .size(12)
+            .style(move |_| iced::widget::text::Style {
+                color: Some(palette.primary),
+            }),
+    );
+
+    for event in events {
+        let mut item = Column::new().spacing(2).width(Length::Fill).push(
+            text(event.summary.clone())
+                .size(12)
+                .style(move |_| iced::widget::text::Style {
+                    color: Some(palette.text),
+                })
+                .wrapping(iced::widget::text::Wrapping::Word),
+        );
+        if let Some(location) = event.location.as_ref() {
+            item = item.push(
+                text(location.clone())
+                    .size(10)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(palette.text_muted),
+                    })
+                    .wrapping(iced::widget::text::Wrapping::Word),
+            );
+        }
+        if let Some(description) = event.description.as_ref() {
+            item = item.push(
+                text(description.clone())
+                    .size(10)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(palette.text_muted),
+                    })
+                    .wrapping(iced::widget::text::Wrapping::Word),
+            );
+        }
+        content = content.push(item);
+    }
+
+    container(content)
+        .padding([8, 10])
+        .style(calendar_tooltip_style)
+        .into()
+}
+
+fn calendar_tooltip_style(_: &iced::Theme) -> container::Style {
+    let palette = &OXITHEME;
+    container::Style {
+        background: Some(Background::Color(palette.mantle)),
+        text_color: Some(palette.text),
         border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 8.0.into(),
+            color: palette.primary_bg_hover,
+            width: 1.0,
+            radius: 10.0.into(),
         },
-        shadow: Shadow::default(),
-        snap: false,
-    };
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_hover)),
-            ..base
+        shadow: Shadow {
+            color: Color::BLACK.scale_alpha(0.35),
+            offset: iced::Vector::new(0.0, 8.0),
+            blur_radius: 18.0,
         },
-        button::Status::Pressed => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_active)),
-            ..base
-        },
-        button::Status::Active | button::Status::Disabled => base,
+        ..Default::default()
     }
 }
 
@@ -500,7 +611,7 @@ fn add_months(date: NaiveDate, delta: i32) -> NaiveDate {
 fn open_calendar_day(date: NaiveDate, command: Option<String>) -> Result<(), String> {
     let Some(command) = command else {
         return Err(
-            "clock: set [clock] calendar_command, e.g. `gnome-calendar --date {date}`".to_owned(),
+            "clock: set [clock] calendar_command, e.g. `gnome-calendar --date {date}`, or calendar_app = \"thunderbird\"".to_owned(),
         );
     };
     let date_string = date.format("%Y-%m-%d").to_string();
@@ -551,10 +662,11 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
         8,
         move |output: iced::futures::channel::mpsc::Sender<PluginMsg>| async move {
             let output = Arc::new(Mutex::new(output));
+            let tick_output = output.clone();
             std::thread::spawn(move || {
                 loop {
                     let now = Local::now();
-                    if output
+                    if tick_output
                         .lock()
                         .unwrap()
                         .try_send(msg(Message::Tick(now)))
@@ -567,6 +679,18 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
                     std::thread::sleep(interval);
                 }
             });
+            if let Some(interval) = CALDAV_REFRESH.get().copied() {
+                let caldav_output = output.clone();
+                std::thread::spawn(move || {
+                    loop {
+                        std::thread::sleep(interval);
+                        let _ = caldav_output
+                            .lock()
+                            .unwrap()
+                            .try_send(msg(Message::RefreshCalendar));
+                    }
+                });
+            }
             // Keep the async task alive forever so iced doesn't drop the stream
             // (and with it the receiving end of the mpsc).
             std::future::pending::<()>().await;
@@ -582,3 +706,193 @@ const _: fn() = || {
     fn assert_stream<S: Stream<Item = PluginMsg> + Send + 'static>(_: &S) {}
     let _ = |s: &iced::futures::stream::BoxStream<'static, PluginMsg>| assert_stream(s);
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_clock_config_from_top_level_table() {
+        let mut clock = Table::new();
+        clock.insert(
+            "format".to_owned(),
+            oxibar_plugin_api::toml::Value::String("%S".to_owned()),
+        );
+        clock.insert(
+            "tick_seconds".to_owned(),
+            oxibar_plugin_api::toml::Value::Integer(5),
+        );
+        clock.insert(
+            "font_size".to_owned(),
+            oxibar_plugin_api::toml::Value::Float(16.5),
+        );
+        clock.insert(
+            "bold".to_owned(),
+            oxibar_plugin_api::toml::Value::Boolean(true),
+        );
+        clock.insert(
+            "calendar_command".to_owned(),
+            oxibar_plugin_api::toml::Value::String("calendar {date}".to_owned()),
+        );
+        let mut global = Table::new();
+        global.insert(
+            "clock".to_owned(),
+            oxibar_plugin_api::toml::Value::Table(clock),
+        );
+
+        let config = read_config(&global);
+
+        assert_eq!(config.format, "%S");
+        assert_eq!(config.tick_seconds, 5);
+        assert_eq!(config.font_size, 16.5);
+        assert!(config.bold);
+        assert_eq!(config.calendar_command.as_deref(), Some("calendar {date}"));
+    }
+
+    #[test]
+    fn invalid_clock_config_uses_defaults() {
+        let mut clock = Table::new();
+        clock.insert(
+            "tick_seconds".to_owned(),
+            oxibar_plugin_api::toml::Value::Integer(0),
+        );
+        clock.insert(
+            "font_size".to_owned(),
+            oxibar_plugin_api::toml::Value::Float(-1.0),
+        );
+        let mut global = Table::new();
+        global.insert(
+            "clock".to_owned(),
+            oxibar_plugin_api::toml::Value::Table(clock),
+        );
+
+        let config = read_config(&global);
+
+        assert_eq!(config.tick_seconds, DEFAULT_TICK_SECONDS);
+        assert_eq!(config.font_size, DEFAULT_FONT_SIZE);
+    }
+
+    #[test]
+    fn thunderbird_calendar_app_maps_to_calendar_command() {
+        let mut clock = Table::new();
+        clock.insert(
+            "calendar_app".to_owned(),
+            oxibar_plugin_api::toml::Value::String("thunderbird".to_owned()),
+        );
+        let mut global = Table::new();
+        global.insert(
+            "clock".to_owned(),
+            oxibar_plugin_api::toml::Value::Table(clock),
+        );
+
+        let config = read_config(&global);
+
+        assert_eq!(
+            config.calendar_command.as_deref(),
+            Some("thunderbird --calendar")
+        );
+    }
+
+    #[test]
+    fn reads_caldav_config_and_schedules_initial_refresh() {
+        let mut caldav = Table::new();
+        caldav.insert(
+            "url".to_owned(),
+            oxibar_plugin_api::toml::Value::String(
+                "https://cloud.example.com/remote.php/dav/calendars/alice/personal/".to_owned(),
+            ),
+        );
+        caldav.insert(
+            "username".to_owned(),
+            oxibar_plugin_api::toml::Value::String("alice".to_owned()),
+        );
+        let mut clock = Table::new();
+        clock.insert(
+            "caldav".to_owned(),
+            oxibar_plugin_api::toml::Value::Table(caldav),
+        );
+        let mut global = Table::new();
+        global.insert(
+            "clock".to_owned(),
+            oxibar_plugin_api::toml::Value::Table(clock),
+        );
+
+        let config = read_config(&global);
+        let (_plugin_model, init_task) = model(global);
+
+        assert!(config.caldav_config.is_some());
+        assert!(config.caldav_config_error.is_none());
+        assert!(init_task.is_some());
+    }
+
+    #[test]
+    fn incomplete_caldav_config_is_visible_state_error() {
+        let mut clock = Table::new();
+        clock.insert(
+            "caldav".to_owned(),
+            oxibar_plugin_api::toml::Value::Table(Table::new()),
+        );
+        let mut global = Table::new();
+        global.insert(
+            "clock".to_owned(),
+            oxibar_plugin_api::toml::Value::Table(clock),
+        );
+
+        let (plugin_model, _init_task) = model(global);
+
+        let guard = plugin_model.read().unwrap();
+        let model = guard.downcast_ref::<Model>().unwrap();
+        assert!(model.caldav_config.is_none());
+        assert!(model.calendar_sync_error.is_some());
+    }
+
+    #[test]
+    fn calendar_loaded_tracks_visible_sync_status() {
+        let (plugin_model, _init_task) = model(Table::new());
+        let event = CalendarEvent {
+            date: NaiveDate::from_ymd_opt(2026, 6, 5).unwrap(),
+            summary: "demo".to_owned(),
+            description: None,
+            location: None,
+        };
+
+        let task = update(
+            plugin_model.clone(),
+            msg(Message::CalendarLoaded(Ok(vec![event]))),
+        );
+
+        assert!(task.is_none());
+        let guard = plugin_model.read().unwrap();
+        let model = guard.downcast_ref::<Model>().unwrap();
+        assert_eq!(model.calendar_sync_count, Some(1));
+        assert!(model.calendar_sync_error.is_none());
+        assert_eq!(model.calendar_events.len(), 1);
+    }
+
+    #[test]
+    fn month_arithmetic_crosses_year_boundaries() {
+        let jan = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let dec = NaiveDate::from_ymd_opt(2023, 12, 1).unwrap();
+        let feb = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
+
+        assert_eq!(add_months(jan, -1), dec);
+        assert_eq!(add_months(jan, 1), feb);
+    }
+
+    #[test]
+    fn update_errors_are_drained() {
+        let (plugin_model, init_task) = model(Table::new());
+        assert!(init_task.is_some());
+        assert_eq!(name(), "Clock");
+        assert_eq!(abi_version(), ABI_VERSION);
+
+        let task = update(
+            plugin_model.clone(),
+            msg(Message::CalendarOpenResult(Err("boom".to_owned()))),
+        );
+        assert!(task.is_none());
+
+        assert_eq!(errors(plugin_model.clone()), vec!["boom"]);
+        assert!(errors(plugin_model).is_empty());
+    }
+}

@@ -3144,6 +3144,7 @@ dependencies = [
  "iced",
  "iced_anim",
  "iced_layershell",
+ "iced_runtime",
  "libloading",
  "once_cell",
  "oxibar-plugin-api",
@@ -3165,7 +3166,7 @@ dependencies = [
 [[package]]
 name = "oxiced"
 version = "0.5.1"
-source = "git+https://github.com/Xetibo/oxiced?branch=iced14#22d86a99ab8f4d62d6f9acca35a336424301fab6"
+source = "git+https://github.com/Xetibo/oxiced?branch=iced14#735181be7340e5916795642efa95a11e08d8f32f"
 dependencies = [
  "iced",
  "iced_layershell",

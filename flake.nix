@@ -37,6 +37,7 @@
             rust-analyzer
             clippy
             rustfmt
+            curl
           ];
           # Fonts shipped into the dev shell. Fontconfig is the canonical
           # discovery mechanism on Linux; `adwaita-fonts` provides the
@@ -114,21 +115,30 @@
             VK_ICD_FILENAMES = vkIcdFiles;
           };
 
-        # packages = let
-        #   lockFile = ./oxirun/Cargo.lock;
-        # in rec {
-        #   oxirun = pkgs.callPackage ./nix/default.nix {inherit inputs lockFile;};
-        #   oxirun-applications = pkgs.callPackage ./nix/applications.nix {inherit inputs;};
-        #   # TODO check if this can be improved to immediately use plugins as well?
-        #   default = oxirun;
-        # };
+        packages = let
+          lockFile = ./Cargo.lock;
+          pluginPackage = plugin:
+            pkgs.callPackage ./nix/plugin.nix {
+              inherit lockFile plugin;
+            };
+        in rec {
+          oxibar = pkgs.callPackage ./nix/default.nix {inherit inputs lockFile;};
+          oxibar-audio = pluginPackage "audio";
+          oxibar-bluetooth = pluginPackage "bluetooth";
+          oxibar-clock = pluginPackage "clock";
+          oxibar-network = pluginPackage "network";
+          oxibar-notifications = pluginPackage "notifications";
+          oxibar-tray = pluginPackage "tray";
+          oxibar-workspaces = pluginPackage "workspaces";
+          default = oxibar;
+        };
       };
-      # flake = _: rec {
-      #   nixosModules.home-manager = homeManagerModules.default;
-      #   homeManagerModules = rec {
-      #     oxirun = import ./nix/hm.nix inputs.self;
-      #     default = oxirun;
-      #   };
-      # };
+      flake = _: rec {
+        nixosModules.home-manager = homeManagerModules.default;
+        homeManagerModules = rec {
+          oxibar = import ./nix/hm.nix inputs.self;
+          default = oxibar;
+        };
+      };
     };
 }

@@ -1,35 +1,37 @@
 //! Audio management plugin backed by PulseAudio/PipeWire `pactl` and MPRIS.
 
-use std::collections::{BTreeMap, HashMap};
-use std::process::Command;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use iced::{
     Alignment, Background, Border, Color, ContentFit, Element, Length, Shadow, Task,
     futures::Stream,
     stream,
-    widget::{Column, Container, Row, Space, button, image, text},
+    widget::{Column, Container, Row, Space, image, text},
 };
 use iced_anim::{AnimationBuilder, Motion};
 use oxibar_plugin_api::{
-    ABI_VERSION, HOST_REQUEST_TOGGLE_POPUP, OxiAny, PluginModel, PluginMsg, PluginStream,
-    toml::Table,
+    ABI_VERSION, HOST_REQUEST_TOGGLE_POPUP, PluginMetadata, PluginModel, PluginMsg, PluginStream,
+    drain_model_errors, plugin_model, toml::Table, with_model_read, with_model_write,
 };
 use oxiced::{
     theme::theme_impl::OXITHEME,
-    widgets::{oxi_button, oxi_picklist, oxi_slider},
+    widgets::{
+        oxi_button, oxi_picklist, oxi_plugin, oxi_plugin::text_muted, oxi_plugin::text_primary,
+        oxi_slider,
+    },
 };
-use zbus::{
-    blocking::{Connection, Proxy, fdo::DBusProxy},
-    zvariant::OwnedValue,
+
+mod system;
+
+use system::{
+    AudioDevice, AudioSnapshot, DeviceChoice, DeviceKind, PlayerAction, PlayerInfo, control_player,
+    load_snapshot, local_art_path, selected_device, set_default_device, set_device_volume,
+    set_player_volume,
 };
 
 const DEFAULT_POLL_SECONDS: u64 = 4;
 const AUDIO_ICON: &str = "󰕾";
-const PLAYER_PATH: &str = "/org/mpris/MediaPlayer2";
-const PLAYER_IFACE: &str = "org.mpris.MediaPlayer2.Player";
-const ROOT_IFACE: &str = "org.mpris.MediaPlayer2";
 
 static POLL_INTERVAL: OnceLock<Duration> = OnceLock::new();
 
@@ -50,67 +52,6 @@ impl Model {
             errors: Vec::new(),
         }
     }
-}
-
-#[derive(Clone, Debug, Default)]
-struct AudioSnapshot {
-    player: Option<PlayerInfo>,
-    outputs: Vec<AudioDevice>,
-    inputs: Vec<AudioDevice>,
-    default_output: Option<String>,
-    default_input: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-struct PlayerInfo {
-    service: String,
-    identity: String,
-    title: String,
-    artist: String,
-    status: String,
-    volume: u8,
-    art_url: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-struct AudioDevice {
-    name: String,
-    label: String,
-    volume: u8,
-}
-
-impl AudioDevice {
-    fn choice(&self) -> DeviceChoice {
-        DeviceChoice {
-            name: self.name.clone(),
-            label: self.label.clone(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct DeviceChoice {
-    name: String,
-    label: String,
-}
-
-impl std::fmt::Display for DeviceChoice {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.label)
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum DeviceKind {
-    Output,
-    Input,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum PlayerAction {
-    Previous,
-    PlayPause,
-    Next,
 }
 
 #[derive(Clone, Debug)]
@@ -145,21 +86,28 @@ pub extern "Rust" fn name() -> &'static str {
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn metadata() -> PluginMetadata {
+    PluginMetadata {
+        popup_size: Some((460, 420)),
+        ..PluginMetadata::default()
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn model(global_config: Table) -> (PluginModel, Option<Task<PluginMsg>>) {
-    let m: Box<dyn OxiAny> = Box::new(Model::new(global_config));
     (
-        Arc::new(RwLock::new(m)),
+        plugin_model(Model::new(global_config)),
         Some(Task::done(msg(Message::Refresh))),
     )
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Task<PluginMsg>> {
-    let mut guard = model.try_write().ok()?;
-    let model = guard.downcast_mut::<Model>()?;
     let m = msg_in.downcast_ref::<Message>()?.clone();
-    match m {
-        Message::TogglePopup => Some(Task::done(Arc::new(HOST_REQUEST_TOGGLE_POPUP.to_owned()))),
+    with_model_write::<Model, _>(&model, |model| match m {
+        Message::TogglePopup => Some(Task::done(
+            Arc::new(HOST_REQUEST_TOGGLE_POPUP.to_owned()) as PluginMsg
+        )),
         Message::Refresh => Some(Task::perform(async { load_snapshot() }, |result| {
             msg(Message::Snapshot(result))
         })),
@@ -171,17 +119,13 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             None
         }
         Message::PlayerControl(action) => {
-            let Some(player) = model.snapshot.player.clone() else {
-                return None;
-            };
+            let player = model.snapshot.player.clone()?;
             run_action(model, format!("media {action:?}"), true, move || {
                 control_player(&player.service, action)
             })
         }
         Message::PlayerVolumeChanged(volume) => {
-            let Some(player) = model.snapshot.player.as_mut() else {
-                return None;
-            };
+            let player = model.snapshot.player.as_mut()?;
             player.volume = volume;
             let service = player.service.clone();
             run_action(model, "media volume".to_owned(), false, move || {
@@ -201,9 +145,7 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             })
         }
         Message::OutputVolumeChanged(volume) => {
-            let Some(name) = model.snapshot.default_output.clone() else {
-                return None;
-            };
+            let name = model.snapshot.default_output.clone()?;
             if let Some(device) = model.snapshot.outputs.iter_mut().find(|d| d.name == name) {
                 device.volume = volume;
             }
@@ -212,9 +154,7 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             })
         }
         Message::InputVolumeChanged(volume) => {
-            let Some(name) = model.snapshot.default_input.clone() else {
-                return None;
-            };
+            let name = model.snapshot.default_input.clone()?;
             if let Some(device) = model.snapshot.inputs.iter_mut().find(|d| d.name == name) {
                 device.volume = volume;
             }
@@ -233,7 +173,8 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
                 }
             }
         }
-    }
+    })
+    .flatten()
 }
 
 #[unsafe(no_mangle)]
@@ -243,72 +184,52 @@ pub extern "Rust" fn launch(_focused_index: usize, _model: PluginModel) -> Optio
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
-    let Ok(mut guard) = model.try_write() else {
-        return Vec::new();
-    };
-    let Some(m) = guard.downcast_mut::<Model>() else {
-        return Vec::new();
-    };
-    std::mem::take(&mut m.errors)
+    drain_model_errors::<Model>(&model, |model| &mut model.errors)
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
+    with_model_read::<Model, _>(&model, |model| {
+        let volume = selected_device(
+            &model.snapshot.outputs,
+            model.snapshot.default_output.as_deref(),
+        )
+        .map(|device| device.volume);
+        let label = volume
+            .map(|volume| format!("{AUDIO_ICON} {volume}%"))
+            .unwrap_or_else(|| AUDIO_ICON.to_owned());
+        let btn = oxi_plugin::bar_button(
+            text(label)
+                .size(14)
+                .align_y(Alignment::Center)
+                .align_x(Alignment::Center),
+        )
+        .on_press(msg(Message::TogglePopup));
 
-    let volume = selected_device(
-        &model.snapshot.outputs,
-        model.snapshot.default_output.as_deref(),
-    )
-    .map(|device| device.volume);
-    let label = volume
-        .map(|volume| format!("{AUDIO_ICON} {volume}%"))
-        .unwrap_or_else(|| AUDIO_ICON.to_owned());
-    let btn = button(
-        text(label)
-            .size(14)
-            .align_y(Alignment::Center)
-            .align_x(Alignment::Center),
-    )
-    .on_press(msg(Message::TogglePopup))
-    .style(bar_button_style)
-    .padding([0, 8])
-    .height(22.5)
-    .width(Length::Shrink);
-
-    Ok(vec![btn.into()])
+        vec![btn.into()]
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn popup_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    let lock = model.try_read().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
-    })?;
-    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
-    })?;
+    with_model_read::<Model, _>(&model, |model| {
+        let mut content = Column::new()
+            .spacing(10)
+            .padding([12, 14])
+            .width(Length::Fill);
+        content = content.push(media_card(
+            model.snapshot.player.as_ref(),
+            model.pending.is_some(),
+        ));
+        content = content.push(output_section(&model.snapshot));
+        content = content.push(input_section(&model.snapshot));
 
-    let mut content = Column::new()
-        .spacing(10)
-        .padding([12, 14])
-        .width(Length::Fill);
-    content = content.push(media_card(
-        model.snapshot.player.as_ref(),
-        model.pending.is_some(),
-    ));
-    content = content.push(output_section(&model.snapshot));
-    content = content.push(input_section(&model.snapshot));
-
-    Ok(vec![content.height(Length::Fill).into()])
+        vec![content.height(Length::Fill).into()]
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -474,38 +395,6 @@ fn artwork_preview(art_url: Option<&str>) -> Element<'static, PluginMsg> {
         .into()
 }
 
-fn local_art_path(url: &str) -> Option<String> {
-    let path = if let Some(rest) = url.strip_prefix("file://") {
-        percent_decode(rest.strip_prefix("localhost").unwrap_or(rest))
-    } else if url.starts_with('/') {
-        url.to_owned()
-    } else {
-        return None;
-    };
-    std::fs::metadata(&path).ok()?;
-    Some(path)
-}
-
-fn percent_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
-            && let Ok(value) = u8::from_str_radix(hex, 16)
-        {
-            out.push(value);
-            i += 3;
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
 fn output_section(snapshot: &AudioSnapshot) -> Element<'static, PluginMsg> {
     device_section(
         "Output Device",
@@ -573,31 +462,6 @@ fn media_button(
     }
 }
 
-fn bar_button_style(_: &iced::Theme, status: button::Status) -> button::Style {
-    let base = button::Style {
-        background: None,
-        text_color: OXITHEME.primary,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 8.0.into(),
-        },
-        shadow: Shadow::default(),
-        snap: false,
-    };
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_hover)),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(Background::Color(OXITHEME.primary_bg_active)),
-            ..base
-        },
-        button::Status::Active | button::Status::Disabled => base,
-    }
-}
-
 fn card<'a>(content: Element<'a, PluginMsg>, bg: Color) -> Container<'a, PluginMsg> {
     Container::new(content)
         .style(move |_| iced::widget::container::Style {
@@ -614,27 +478,6 @@ fn card<'a>(content: Element<'a, PluginMsg>, bg: Color) -> Container<'a, PluginM
         .width(Length::Fill)
 }
 
-fn text_primary(_: &iced::Theme) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(OXITHEME.text),
-    }
-}
-
-fn text_muted(_: &iced::Theme) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(OXITHEME.text_muted),
-    }
-}
-
-fn selected_device<'a>(
-    devices: &'a [AudioDevice],
-    default: Option<&str>,
-) -> Option<&'a AudioDevice> {
-    default
-        .and_then(|name| devices.iter().find(|device| device.name == name))
-        .or_else(|| devices.first())
-}
-
 fn read_poll_interval(global: &Table) -> u64 {
     global
         .get("audio")
@@ -646,234 +489,48 @@ fn read_poll_interval(global: &Table) -> u64 {
         .unwrap_or(DEFAULT_POLL_SECONDS)
 }
 
-fn load_snapshot() -> Result<AudioSnapshot, String> {
-    let default_output = run_pactl(&["get-default-sink"]).ok();
-    let default_input = run_pactl(&["get-default-source"]).ok();
-    let outputs = list_devices(DeviceKind::Output)?;
-    let inputs = list_devices(DeviceKind::Input)?;
-    let player = current_player().ok().flatten();
-    Ok(AudioSnapshot {
-        player,
-        outputs,
-        inputs,
-        default_output,
-        default_input,
-    })
-}
-
-fn list_devices(kind: DeviceKind) -> Result<Vec<AudioDevice>, String> {
-    let list_kind = match kind {
-        DeviceKind::Output => "sinks",
-        DeviceKind::Input => "sources",
-    };
-    let short = run_pactl(&["list", "short", list_kind])?;
-    let descriptions = device_descriptions(kind).unwrap_or_default();
-    let default = match kind {
-        DeviceKind::Output => run_pactl(&["get-default-sink"]).ok(),
-        DeviceKind::Input => run_pactl(&["get-default-source"]).ok(),
-    };
-
-    let mut devices = Vec::new();
-    for line in short.lines().filter(|line| !line.trim().is_empty()) {
-        let fields = line.split('\t').collect::<Vec<_>>();
-        let Some(name) = fields
-            .get(1)
-            .map(|name| name.trim())
-            .filter(|name| !name.is_empty())
-        else {
-            continue;
-        };
-        if matches!(kind, DeviceKind::Input) && name.ends_with(".monitor") {
-            continue;
-        }
-        let label = descriptions
-            .get(name)
-            .filter(|label| !label.is_empty())
-            .cloned()
-            .unwrap_or_else(|| name.replace(['_', '-'], " "));
-        let volume = device_volume(kind, name).unwrap_or(0);
-        devices.push(AudioDevice {
-            name: name.to_owned(),
-            label,
-            volume,
-        });
-    }
-
-    devices.sort_by(|a, b| {
-        let a_default = default.as_deref() == Some(a.name.as_str());
-        let b_default = default.as_deref() == Some(b.name.as_str());
-        b_default.cmp(&a_default).then(a.label.cmp(&b.label))
-    });
-    Ok(devices)
-}
-
-fn device_descriptions(kind: DeviceKind) -> Result<BTreeMap<String, String>, String> {
-    let list_kind = match kind {
-        DeviceKind::Output => "sinks",
-        DeviceKind::Input => "sources",
-    };
-    let output = run_pactl(&["list", list_kind])?;
-    let mut descriptions = BTreeMap::new();
-    let mut current_name: Option<String> = None;
-    for line in output.lines() {
-        let trimmed = line.trim();
-        if let Some(name) = trimmed.strip_prefix("Name: ") {
-            current_name = Some(name.to_owned());
-        } else if let Some(description) = trimmed.strip_prefix("Description: ")
-            && let Some(name) = current_name.take()
-        {
-            descriptions.insert(name, description.to_owned());
-        }
-    }
-    Ok(descriptions)
-}
-
-fn device_volume(kind: DeviceKind, name: &str) -> Result<u8, String> {
-    let command = match kind {
-        DeviceKind::Output => "get-sink-volume",
-        DeviceKind::Input => "get-source-volume",
-    };
-    let output = run_pactl(&[command, name])?;
-    parse_percent(&output).ok_or_else(|| format!("audio: could not parse volume for {name}"))
-}
-
-fn set_default_device(kind: DeviceKind, name: &str) -> Result<(), String> {
-    let command = match kind {
-        DeviceKind::Output => "set-default-sink",
-        DeviceKind::Input => "set-default-source",
-    };
-    run_pactl(&[command, name]).map(|_| ())
-}
-
-fn set_device_volume(kind: DeviceKind, name: &str, volume: u8) -> Result<(), String> {
-    let command = match kind {
-        DeviceKind::Output => "set-sink-volume",
-        DeviceKind::Input => "set-source-volume",
-    };
-    let value = format!("{volume}%");
-    run_pactl(&[command, name, &value]).map(|_| ())
-}
-
-fn current_player() -> Result<Option<PlayerInfo>, String> {
-    let connection =
-        Connection::session().map_err(|e| format!("audio: DBus session failed: {e}"))?;
-    let dbus = DBusProxy::new(&connection).map_err(|e| format!("audio: DBus proxy failed: {e}"))?;
-    let mut players = Vec::new();
-    for name in dbus
-        .list_names()
-        .map_err(|e| format!("audio: DBus list names failed: {e}"))?
-    {
-        let service = name.to_string();
-        if !service.starts_with("org.mpris.MediaPlayer2.") {
-            continue;
-        }
-        if let Ok(player) = read_player(&connection, &service) {
-            players.push(player);
-        }
-    }
-    players.sort_by_key(|player| match player.status.as_str() {
-        "Playing" => 0,
-        "Paused" => 1,
-        _ => 2,
-    });
-    Ok(players.into_iter().next())
-}
-
-fn read_player(connection: &Connection, service: &str) -> Result<PlayerInfo, String> {
-    let player = Proxy::new(connection, service, PLAYER_PATH, PLAYER_IFACE)
-        .map_err(|e| format!("audio: MPRIS player proxy failed: {e}"))?;
-    let root = Proxy::new(connection, service, PLAYER_PATH, ROOT_IFACE)
-        .map_err(|e| format!("audio: MPRIS root proxy failed: {e}"))?;
-    let identity = root.get_property::<String>("Identity").unwrap_or_else(|_| {
-        service
-            .trim_start_matches("org.mpris.MediaPlayer2.")
-            .to_owned()
-    });
-    let status = player
-        .get_property::<String>("PlaybackStatus")
-        .unwrap_or_else(|_| "Unknown".to_owned());
-    let volume = player
-        .get_property::<f64>("Volume")
-        .map(|volume| (volume * 100.0).round().clamp(0.0, 100.0) as u8)
-        .unwrap_or(100);
-    let metadata = player
-        .get_property::<HashMap<String, OwnedValue>>("Metadata")
-        .unwrap_or_default();
-    let title = metadata_string(&metadata, "xesam:title").unwrap_or_default();
-    let artist = metadata
-        .get("xesam:artist")
-        .and_then(|value| Vec::<String>::try_from(value.clone()).ok())
-        .map(|artists| artists.join(", "))
-        .unwrap_or_default();
-    let art_url = metadata_string(&metadata, "mpris:artUrl");
-    Ok(PlayerInfo {
-        service: service.to_owned(),
-        identity,
-        title,
-        artist,
-        status,
-        volume,
-        art_url,
-    })
-}
-
-fn metadata_string(metadata: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
-    metadata
-        .get(key)
-        .and_then(|value| String::try_from(value.clone()).ok())
-}
-
-fn control_player(service: &str, action: PlayerAction) -> Result<(), String> {
-    let connection =
-        Connection::session().map_err(|e| format!("audio: DBus session failed: {e}"))?;
-    let player = Proxy::new(&connection, service, PLAYER_PATH, PLAYER_IFACE)
-        .map_err(|e| format!("audio: MPRIS player proxy failed: {e}"))?;
-    let method = match action {
-        PlayerAction::Previous => "Previous",
-        PlayerAction::PlayPause => "PlayPause",
-        PlayerAction::Next => "Next",
-    };
-    player
-        .call::<_, _, ()>(method, &())
-        .map_err(|e| format!("audio: MPRIS {method} failed: {e}"))
-}
-
-fn set_player_volume(service: &str, volume: u8) -> Result<(), String> {
-    let connection =
-        Connection::session().map_err(|e| format!("audio: DBus session failed: {e}"))?;
-    let player = Proxy::new(&connection, service, PLAYER_PATH, PLAYER_IFACE)
-        .map_err(|e| format!("audio: MPRIS player proxy failed: {e}"))?;
-    player
-        .set_property("Volume", (volume as f64 / 100.0).clamp(0.0, 1.0))
-        .map_err(|e| format!("audio: MPRIS volume failed: {e}"))
-}
-
-fn run_pactl(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("pactl")
-        .args(args)
-        .output()
-        .map_err(|e| format!("audio: failed to run pactl: {e}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    if output.status.success() {
-        Ok(stdout)
-    } else if stderr.is_empty() {
-        Err(format!("audio: pactl failed: {stdout}"))
-    } else {
-        Err(format!("audio: pactl failed: {stderr}"))
-    }
-}
-
-fn parse_percent(output: &str) -> Option<u8> {
-    output.split_whitespace().find_map(|token| {
-        token
-            .strip_suffix('%')
-            .and_then(|value| value.parse::<u16>().ok())
-            .map(|value| value.min(150) as u8)
-    })
-}
-
 const _: fn() = || {
     fn assert_stream<S: Stream<Item = PluginMsg> + Send + 'static>(_: &S) {}
     let _ = |s: &iced::futures::stream::BoxStream<'static, PluginMsg>| assert_stream(s);
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_poll_interval_from_config() {
+        let mut audio = Table::new();
+        audio.insert(
+            "poll_seconds".to_owned(),
+            oxibar_plugin_api::toml::Value::Integer(9),
+        );
+        let mut global = Table::new();
+        global.insert(
+            "audio".to_owned(),
+            oxibar_plugin_api::toml::Value::Table(audio),
+        );
+
+        assert_eq!(read_poll_interval(&global), 9);
+        assert_eq!(read_poll_interval(&Table::new()), DEFAULT_POLL_SECONDS);
+    }
+
+    #[test]
+    fn model_views_and_error_drain_are_deterministic() {
+        let (plugin_model, init_task) = model(Table::new());
+        assert!(init_task.is_some());
+        assert_eq!(name(), "Audio");
+        assert_eq!(abi_version(), ABI_VERSION);
+        assert_eq!(metadata().popup_size, Some((460, 420)));
+        assert_eq!(view(plugin_model.clone()).unwrap().len(), 1);
+        assert_eq!(popup_view(plugin_model.clone()).unwrap().len(), 1);
+
+        let task = update(
+            plugin_model.clone(),
+            msg(Message::Snapshot(Err("audio failed".to_owned()))),
+        );
+        assert!(task.is_none());
+        assert_eq!(errors(plugin_model.clone()), vec!["audio failed"]);
+        assert!(errors(plugin_model).is_empty());
+    }
+}

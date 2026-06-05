@@ -4,37 +4,32 @@ This file tracks accepted deviations from the current UI contract in `UI.md`. Th
 
 ## UI Theme Debt
 
-### Missing Flat Button Variants In `oxiced`
+### Missing Additional Flat Button Variants In `oxiced`
 
-- Status: accepted temporary exception.
-- Affected code: `plugins/audio/src/lib.rs`, `plugins/bluetooth/src/lib.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, `plugins/tray/src/lib.rs`, `plugins/workspaces/src/lib.rs`.
-- Current state: plugins either duplicate local flat button styles or use `oxi_button::button`, whose default style includes a small shadow.
-- Why accepted: `oxiced::widgets::oxi_button` does not currently expose a shadowless compact/bar variant or flat row-action variant.
-- Target fix: add shadowless `oxiced` button variants for bar controls, compact actions, and row actions; migrate plugins to those helpers.
+- Status: partially resolved.
+- Affected code: popup row actions in `plugins/bluetooth/src/lib.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, `plugins/tray/src/lib.rs`, plus workspace pills in `plugins/workspaces/src/lib.rs`.
+- Current state: `oxiced::widgets::oxi_plugin` provides shadowless bar buttons and flat background styles. Some popup row/action buttons still use local styles or `oxi_button::button`.
+- Target fix: migrate remaining compact popup row/action buttons to `oxi_plugin` helpers or add more helper variants as needed.
 
 ### Duplicated Bar Button Styling
 
-- Status: accepted temporary exception.
-- Affected code: `plugins/audio/src/lib.rs`, `plugins/bluetooth/src/lib.rs`, `plugins/clock/src/lib.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, `plugins/tray/src/lib.rs`.
-- Current state: each plugin defines a near-identical bar button style using `OXITHEME.primary`, `OXITHEME.primary_bg_hover`, and `OXITHEME.primary_bg_active`.
-- Why accepted: `oxiced` does not currently provide an Oxibar bar control helper with 22.5 height, `[0, 8]` padding, transparent idle background, and theme hover/pressed states.
-- Target fix: add an `oxiced` bar button helper or style function, then replace plugin-local copies.
+- Status: resolved.
+- Current state: `plugins/audio/src/lib.rs`, `plugins/bluetooth/src/lib.rs`, `plugins/clock/src/lib.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, and `plugins/tray/src/lib.rs` use `oxiced::widgets::oxi_plugin::bar_button` or `bar_button_style`.
 
 ### Missing Compact List Row/Card Helpers
 
 - Status: accepted temporary exception.
 - Affected code: `plugins/audio/src/lib.rs`, `plugins/bluetooth/src/lib.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, `plugins/tray/src/lib.rs`.
 - Current state: plugins build compact row/card containers with local `container::Style` or `button::Style` closures while still using `OXITHEME` colors.
-- Why accepted: `oxiced::widgets::oxi_card` is a general card abstraction, not a compact popup list-row/card primitive with the padding, hover, and radius rules from `UI.md`.
-- Target fix: add compact row/card helpers to `oxiced` for popup lists, selectable rows, and accent cards.
+- Current state: `oxiced::widgets::oxi_plugin` includes `compact_card` and `compact_card_style`, but remaining plugin-local list-row styles have not all been migrated yet.
+- Target fix: migrate popup list-row/card wrappers to `oxi_plugin` helpers.
 
 ### Missing Text Role Helpers
 
-- Status: accepted temporary exception.
+- Status: partially resolved.
 - Affected code: most plugin popup/panel/modal views.
-- Current state: plugins repeat local text style closures for primary, muted, section, and title text.
-- Why accepted: `oxiced` exposes theme colors but not reusable text role helpers for `primary`, `text`, and `text_muted` styling.
-- Target fix: add `oxiced` text helpers or style functions for title, section, primary, muted, and empty-state text.
+- Current state: `oxiced::widgets::oxi_plugin` provides `text_primary`, `text_muted`, and `text_accent`; several plugin-local title/section closures remain.
+- Target fix: migrate remaining section/title text closures and add more semantic text helpers only where needed.
 
 ### Calendar Adjacent-Month Color
 
@@ -51,3 +46,18 @@ This file tracks accepted deviations from the current UI contract in `UI.md`. Th
 - Current state: workspace buttons use a custom 22.5x22.5 pill style with active/inactive theme colors and a small shadow.
 - Why accepted: `oxiced` does not currently provide a compact workspace/pill/bar-item helper that supports active, hover, pressed, and fixed square sizing.
 - Target fix: add a compact pill/bar-item helper to `oxiced`; remove local workspace style and shadow.
+
+### Tray DBusMenu Completeness
+
+- Status: accepted temporary limitation.
+- Affected code: `plugins/tray/src/lib.rs`, `plugins/tray/src/system.rs`.
+- Current state: tray rows render `com.canonical.dbusmenu` `GetLayout` entries in a right-click context menu and dispatch selected entries through `Event(id, "clicked", ...)`. Items without DBusMenu fall back to StatusNotifier `Activate`, `SecondaryActivate`, and `ContextMenu` actions.
+- Limitation: advanced DBusMenu properties such as icons, keyboard shortcuts, toggle/check/radio state, and lazy submenu refresh are not rendered yet.
+- Target fix: extend DBusMenu rendering to cover icons, shortcuts, toggles, and `AboutToShow` submenu refresh behavior.
+
+### Clock CalDAV Transport
+
+- Status: accepted temporary implementation detail.
+- Affected code: `plugins/clock/src/caldav.rs`.
+- Current state: CalDAV sync shells out to `curl`, requires `https://`, forces HTTPS protocol use, and stores credentials in a temporary `0600` curl config rather than command-line arguments.
+- Target fix: consider a native minimal HTTP/TLS client if the workspace adopts a stable HTTP dependency.

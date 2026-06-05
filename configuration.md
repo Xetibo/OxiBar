@@ -35,6 +35,7 @@ host's are also skipped with a warning — rebuild them against the current
 | `start`       | array of string | `[]`             | Plugin names to render in the **start** (left) section, in the given order.                                                                                          |
 | `center`      | array of string | `[]`             | Plugin names to render in the **center** section, in the given order.                                                                                                |
 | `end`         | array of string | `[]`             | Plugin names to render in the **end** (right) section, in the given order.                                                                                           |
+| `popup_sizes` | table of arrays  | `{}`             | Optional popup size overrides by plugin name. Each value is `[width, height]`; matching is case-insensitive.                                                         |
 
 The bar is divided into three equal-width sections — start, center, end —
 each aligning its widgets to its own edge. A plugin is rendered only if it
@@ -47,7 +48,12 @@ same plugin. Names that don't match a loaded plugin are skipped with a
 
 As a backward-compat shortcut, if **all three** of `start`, `center` and
 `end` are omitted (or empty), every loaded plugin is placed in `start` in
-load order — the old single-row layout.
+the same order as the top-level `plugins = [...]` array — the old single-row
+layout, now deterministic.
+
+Popup size precedence is: `[bar.popup_sizes]` override, plugin metadata,
+then the host default `320 × 300`. `audio`, `bluetooth`, and `network`
+declare `460 × 420` via metadata.
 
 Example:
 
@@ -59,6 +65,9 @@ font_file = "/run/current-system/sw/share/fonts/Adwaita/AdwaitaSans-Regular.ttf"
 start  = ["workspaces"]
 center = ["clock"]
 end    = ["bluetooth", "notifications"]
+
+[bar.popup_sizes]
+clock = [340, 320]
 ```
 
 ### Not yet configurable
@@ -95,6 +104,7 @@ internal `calendar_open` flag and opens a popup calendar.
 | `font_size`    | number (`> 0`)  | `14.0`    | Time-label font size in iced units. Accepts integers or floats.                                                                                                                          |
 | `bold`         | bool            | `false`   | When `true`, the time label is rendered with a bold font weight. Falls back to a sans-serif family when bold is enabled.                                                                 |
 | `calendar_command` | string | _unset_ | Shell command run when clicking a calendar day. Supports `{date}`, `{year}`, `{month}`, `{day}` placeholders, e.g. `gnome-calendar --date {date}`. |
+| `calendar_app` | string | _unset_ | Convenience integration. `"thunderbird"` maps to `thunderbird --calendar`; Thunderbird does not provide reliable date-focused CLI navigation, so use `calendar_command` for custom behavior. |
 
 Example:
 
@@ -105,6 +115,24 @@ tick_seconds = 60
 font_size    = 16
 bold         = true
 calendar_command = "gnome-calendar --date {date}"
+```
+
+For Thunderbird:
+
+```toml
+[clock]
+calendar_app = "thunderbird"
+```
+
+For Nextcloud/CalDAV event sync, configure an HTTPS CalDAV collection URL and put the app password in an environment variable. Oxibar rejects non-HTTPS URLs, forces curl to use HTTPS protocols, verifies TLS certificates by default, and passes credentials through a temporary `0600` curl config instead of command-line arguments. Sync starts at current month start, expands common recurring `VEVENT` rules, and marks event days in the calendar popup. Hover an event day to see summary, location, and description.
+
+```toml
+[clock.caldav]
+url = "https://cloud.example.com/remote.php/dav/calendars/alice/personal/"
+username = "alice"
+password_env = "OXIBAR_CALDAV_PASSWORD"
+refresh_minutes = 15
+days_ahead = 30
 ```
 
 ### `[workspaces]` — Hyprland workspaces plugin

@@ -86,6 +86,9 @@ This file is the styling contract for Oxibar plugins. New plugins and UI changes
 ## Interaction States
 
 - Every clickable bar item, card, and row must have a hover state.
+- Notification cards are clickable surfaces: click invokes the primary notification action, or dismisses the notification when it has no action. Child controls such as close buttons, action buttons, and inline reply inputs must remain usable.
+- Toast notifications with hover or inline reply focus/draft must not expire while the user is interacting with them.
+- Tray rows should keep one primary visible row action. Secondary actions and DBusMenu entries belong in the row context menu, opened by right-click.
 - Pressed state should darken or strengthen the same color family, not switch palettes.
 - Selected/current state should be visually distinct from hover. Use filled primary for active workspace-style pills, or `primary_bg`/`primary_bg_hover` for selected cards.
 - Busy state should preserve layout and prevent duplicate actions.

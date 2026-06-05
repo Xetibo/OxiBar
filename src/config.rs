@@ -65,3 +65,40 @@ pub fn anchor_from_strings(anchor_strs: Vec<&str>) -> Anchor {
     }
     anchor
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allowed_plugins_reads_only_string_entries() {
+        let mut config = Table::new();
+        config.insert(
+            "plugins".to_owned(),
+            toml::Value::Array(vec![
+                toml::Value::String("libclock.so".to_owned()),
+                toml::Value::Integer(7),
+                toml::Value::String("libnetwork.so".to_owned()),
+            ]),
+        );
+
+        assert_eq!(
+            get_allowed_plugins(&config),
+            vec!["libclock.so", "libnetwork.so"]
+        );
+    }
+
+    #[test]
+    fn allowed_plugins_defaults_empty() {
+        assert!(get_allowed_plugins(&Table::new()).is_empty());
+    }
+
+    #[test]
+    fn anchors_combine_known_values_and_default_unknown_to_top() {
+        assert_eq!(
+            anchor_from_strings(vec!["left", "right"]),
+            Anchor::Left | Anchor::Right
+        );
+        assert_eq!(anchor_from_strings(vec!["wat"]), Anchor::Top);
+    }
+}

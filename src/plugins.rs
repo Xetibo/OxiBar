@@ -21,14 +21,14 @@
 //! - Replace the raw-pointer `Stream` handoff with an `extern "C"` callback
 //!   channel so the ABI is fully `#[repr(C)]`.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use libloading::Library;
 use oxibar_plugin_api::{
-    ABI_VERSION, AbiVersionFn, ErrorsFn, HOST_REQUEST_CLOSE_MODAL, HOST_REQUEST_OPEN_MODAL,
-    HOST_REQUEST_TOGGLE_PANEL, HOST_REQUEST_TOGGLE_POPUP, LaunchFn, ModalViewFn, ModelFn, NameFn,
-    PanelViewFn, PluginModel, PluginMsg, PopupViewFn, SubscriptionFn, UpdateFn, ViewFn,
+    ABI_VERSION, AbiVersionFn, ErrorsFn, LaunchFn, MetadataFn, ModalViewFn, ModelFn, NameFn,
+    PanelViewFn, PluginMetadata, PluginModel, PluginMsg, PopupViewFn, SubscriptionFn, ToastViewFn,
+    UpdateFn, ViewFn,
 };
 use toml::Table;
 use tracing::{error, info, warn};
@@ -39,17 +39,19 @@ use crate::config::{get_allowed_plugins, get_oxirun_dir};
 /// alive via the `Arc` so that the raw fn pointers remain valid for the
 /// lifetime of this struct.
 pub struct PluginFuncs {
-    _lib: Arc<Library>,
+    pub(crate) _lib: Arc<Library>,
     pub model: ModelFn,
     pub update: UpdateFn,
     pub launch: LaunchFn,
     pub view: ViewFn,
     pub errors: ErrorsFn,
     pub name: NameFn,
+    pub metadata: PluginMetadata,
     pub subscription: SubscriptionFn,
     pub popup_view: Option<PopupViewFn>,
     pub modal_view: Option<ModalViewFn>,
     pub panel_view: Option<PanelViewFn>,
+    pub toast_view: Option<ToastViewFn>,
 }
 
 impl std::fmt::Debug for PluginFuncs {
@@ -60,10 +62,16 @@ impl std::fmt::Debug for PluginFuncs {
     }
 }
 
-/// Plugins keyed by their declared name. Switched from `usize` (read_dir
-/// index) so renaming a `.so` doesn't shuffle ids and break persisted state
-/// once we add any.
-pub type PluginMap = HashMap<String, (PluginModel, Arc<PluginFuncs>)>;
+/// Plugins keyed by their declared name. Load order is tracked separately in
+/// [`LoadedPlugins::order`] so fallback layout follows config order while
+/// lookup stays deterministic.
+pub type PluginMap = BTreeMap<String, (PluginModel, Arc<PluginFuncs>)>;
+
+pub struct LoadedPlugins {
+    pub plugins: PluginMap,
+    pub tasks: Vec<iced::Task<crate::Message>>,
+    pub order: Vec<String>,
+}
 
 /// Errors that can occur while attempting to load a single plugin. Bubbled up
 /// to a `tracing::warn!` rather than aborting the whole bar.
@@ -134,10 +142,14 @@ unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), Load
     let view: ViewFn = unsafe { resolve(&lib, "view")? };
     let errors: ErrorsFn = unsafe { resolve(&lib, "errors")? };
     let name: NameFn = unsafe { resolve(&lib, "name")? };
+    let metadata: PluginMetadata = unsafe { resolve_optional::<MetadataFn>(&lib, "metadata") }
+        .map(|metadata| unsafe { metadata() })
+        .unwrap_or_default();
     let subscription: SubscriptionFn = unsafe { resolve(&lib, "subscription")? };
     let popup_view: Option<PopupViewFn> = unsafe { resolve_optional(&lib, "popup_view") };
     let modal_view: Option<ModalViewFn> = unsafe { resolve_optional(&lib, "modal_view") };
     let panel_view: Option<PanelViewFn> = unsafe { resolve_optional(&lib, "panel_view") };
+    let toast_view: Option<ToastViewFn> = unsafe { resolve_optional(&lib, "toast_view") };
 
     let plugin_name = unsafe { name() }.to_owned();
 
@@ -151,47 +163,42 @@ unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), Load
             view,
             errors,
             name,
+            metadata,
             subscription,
             popup_view,
             modal_view,
             panel_view,
+            toast_view,
         },
     ))
 }
 
-/// Discover, load and instantiate every allowed plugin. Failures are logged
-/// and skipped — never fatal.
-pub fn load_plugins(config: &Table) -> (PluginMap, Vec<iced::Task<crate::Message>>) {
+/// Load and instantiate plugins in the order listed by `plugins = [...]`.
+/// Failures are logged and skipped — never fatal.
+pub fn load_plugins(config: &Table) -> LoadedPlugins {
     let mut plugins = PluginMap::new();
     let mut tasks = Vec::new();
+    let mut order = Vec::new();
 
     let plugin_dir = get_oxirun_dir().join("plugins");
     if !plugin_dir.is_dir()
         && let Err(e) = std::fs::create_dir(&plugin_dir)
     {
         error!("could not create plugin dir {}: {e}", plugin_dir.display());
-        return (plugins, tasks);
+        return LoadedPlugins {
+            plugins,
+            tasks,
+            order,
+        };
     }
 
     let allowed = get_allowed_plugins(config);
-    let entries = match plugin_dir.read_dir() {
-        Ok(e) => e,
-        Err(e) => {
-            error!("could not read plugin dir: {e}");
-            return (plugins, tasks);
-        }
-    };
-
-    for entry in entries.flatten() {
-        let file_name = entry.file_name();
-        let Some(name_str) = file_name.to_str() else {
-            continue;
-        };
-        if !allowed.contains(&name_str) {
+    for name_str in allowed {
+        let path = plugin_dir.join(name_str);
+        if !path.is_file() {
+            warn!("configured plugin {} was not found", path.display());
             continue;
         }
-
-        let path = entry.path();
         match unsafe { load_one(&path) } {
             Ok((plugin_name, funcs)) => {
                 if plugins.contains_key(&plugin_name) {
@@ -203,40 +210,23 @@ pub fn load_plugins(config: &Table) -> (PluginMap, Vec<iced::Task<crate::Message
                 let key = plugin_name.clone();
                 if let Some(task) = init_task {
                     let key_for_task = key.clone();
-                    tasks.push(task.map(move |msg| {
-                        if msg
-                            .downcast_ref::<String>()
-                            .is_some_and(|request| request == HOST_REQUEST_TOGGLE_POPUP)
-                        {
-                            crate::Message::TogglePluginPopup(key_for_task.clone())
-                        } else if msg
-                            .downcast_ref::<String>()
-                            .is_some_and(|request| request == HOST_REQUEST_OPEN_MODAL)
-                        {
-                            crate::Message::OpenPluginModal(key_for_task.clone())
-                        } else if msg
-                            .downcast_ref::<String>()
-                            .is_some_and(|request| request == HOST_REQUEST_CLOSE_MODAL)
-                        {
-                            crate::Message::ClosePluginModal(key_for_task.clone())
-                        } else if msg
-                            .downcast_ref::<String>()
-                            .is_some_and(|request| request == HOST_REQUEST_TOGGLE_PANEL)
-                        {
-                            crate::Message::TogglePluginPanel(key_for_task.clone())
-                        } else {
-                            crate::Message::PluginSubMsg(key_for_task.clone(), msg)
-                        }
-                    }));
+                    tasks.push(
+                        task.map(move |msg| crate::map_plugin_message(key_for_task.clone(), msg)),
+                    );
                 }
                 info!("loaded plugin `{plugin_name}` from {}", path.display());
+                order.push(key.clone());
                 plugins.insert(key, (model, funcs));
             }
             Err(e) => warn!("skipping {}: {e}", path.display()),
         }
     }
 
-    (plugins, tasks)
+    LoadedPlugins {
+        plugins,
+        tasks,
+        order,
+    }
 }
 
 /// Helper used by the `view` path to render a single plugin without leaking
@@ -300,6 +290,24 @@ pub fn render_plugin_panel(
         Ok(elements) => elements,
         Err(e) => {
             warn!("plugin panel view error: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Render a plugin-provided toast body, if the plugin exposes one.
+pub fn render_plugin_toast(
+    funcs: &PluginFuncs,
+    model: &PluginModel,
+    toast_id: &str,
+) -> Vec<iced::Element<'static, PluginMsg>> {
+    let Some(toast_view) = funcs.toast_view else {
+        return Vec::new();
+    };
+    match unsafe { toast_view(model.clone(), toast_id) } {
+        Ok(elements) => elements,
+        Err(e) => {
+            warn!(toast_id, "plugin toast view error: {e}");
             Vec::new()
         }
     }
