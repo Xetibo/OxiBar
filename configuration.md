@@ -17,7 +17,7 @@ names you want enabled in the top-level `plugins` array.
 Example:
 
 ```toml
-plugins = ["libclock.so", "libworkspaces.so"]
+plugins = ["libclock.so", "libworkspaces.so", "libbluetooth.so", "libnotifications.so"]
 ```
 
 A plugin file present on disk but not listed here is ignored. Unknown names
@@ -30,8 +30,8 @@ host's are also skipped with a warning — rebuild them against the current
 | Key           | Type            | Default          | Description                                                                                                                                                          |
 | ------------- | --------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `transparent` | bool            | `false`          | When `true`, the bar's container background is fully transparent. Plugins still render their own backgrounds. Useful with a wallpaper or a compositor blur effect. |
-| `font`        | string          | `"Adwaita Sans"` | Default font *family name* used across the entire bar. Applied via iced's `default_font`, so plugins that don't override their own font inherit it. The clock plugin also uses this as the base family when `[clock] bold = true`, so bold rendering preserves your chosen family. **Note:** this only names a family — iced still has to find it via `fontdb`. See `font_file` below if your font isn't being picked up. |
-| `font_file`   | string          | _unset_          | Absolute path to a `.ttf` / `.otf` file. When set, the file's bytes are loaded and registered with iced/cosmic-text at startup, bypassing `fontdb`'s directory scan entirely. Use this when `[bar] font` "doesn't seem to load" — typically on Nix / home-manager setups, where fonts live under paths like `~/.nix-profile/share/fonts/...` or `/nix/store/.../home-manager-path/share/fonts/...` that `fontdb` doesn't scan and that `fontconfig-parser` may fail to follow. The value of `font` must still match the family name *inside* the file. |
+| `font`        | string          | `"Adwaita Sans"` | Default font *family name* used across the entire bar. Oxibar resolves it through `fc-match`, loads the matched font file into iced/cosmic-text, then uses the matched family name as iced's `default_font`. Plugins that don't override their own font inherit it. |
+| `font_file`   | string          | _unset_          | Absolute path to a `.ttf` / `.otf` file. When set, this explicit file is loaded instead of the `fc-match` result. The `font` value must still match the family name inside the file. |
 | `start`       | array of string | `[]`             | Plugin names to render in the **start** (left) section, in the given order.                                                                                          |
 | `center`      | array of string | `[]`             | Plugin names to render in the **center** section, in the given order.                                                                                                |
 | `end`         | array of string | `[]`             | Plugin names to render in the **end** (right) section, in the given order.                                                                                           |
@@ -58,7 +58,7 @@ font      = "Adwaita Sans"
 font_file = "/run/current-system/sw/share/fonts/Adwaita/AdwaitaSans-Regular.ttf"
 start  = ["workspaces"]
 center = ["clock"]
-end    = []
+end    = ["bluetooth", "notifications"]
 ```
 
 ### Not yet configurable
@@ -66,14 +66,14 @@ end    = []
 These are currently hardcoded in `src/main.rs` and will move to `[bar]` in a
 later pass:
 
-- Window size — `3440 × 25`. Will be derived from the active wayland output
+- Window size — `3440 × 31`. Will be derived from the active wayland output
   or a `[bar] width` / `[bar] height` knob.
 - Anchor — `Top`. Will become `[bar] anchor = ["top"]` (array because layer
   shell anchors are bitflags).
-- Layer — `Background`. Will become `[bar] layer = "background" | "bottom" | "top" | "overlay"`.
+- Layer — `Top`. Will become `[bar] layer = "background" | "bottom" | "top" | "overlay"`.
 - Margins — `(0, 0, 0, 0)`. Will become `[bar] margin = [t, r, b, l]`.
-- Exclusive zone — `25`. Will become `[bar] exclusive_zone = N`.
-- Keyboard interactivity — `OnDemand`. Will become `[bar] keyboard = "none" | "on-demand" | "exclusive"`.
+- Exclusive zone — `31`. Will become `[bar] exclusive_zone = N`.
+- Keyboard interactivity — `None` for the main bar/popup layer; modal dialogs use `Exclusive`. Will become `[bar] keyboard = "none" | "on-demand" | "exclusive"`.
 - Scale factor — `1.0`. Will become `[bar] scale = ...`.
 
 ## Plugin configuration
@@ -86,8 +86,7 @@ extracts what it needs.
 ### `[clock]` — clock plugin
 
 Renders the current local time as a transparent button. Click toggles an
-internal `calendar_open` flag — the actual calendar popup is not yet wired
-(it requires the host's planned switch to `iced_layershell::daemon` mode).
+internal `calendar_open` flag and opens a popup calendar.
 
 | Key            | Type            | Default   | Description                                                                                                                                                                              |
 | -------------- | --------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -95,6 +94,7 @@ internal `calendar_open` flag — the actual calendar popup is not yet wired
 | `tick_seconds` | integer (`> 0`) | `60`      | How often the clock refreshes, in whole seconds. Use `1` if your `format` includes seconds (`%S`). Read once at startup; changes require a restart.                                      |
 | `font_size`    | number (`> 0`)  | `14.0`    | Time-label font size in iced units. Accepts integers or floats.                                                                                                                          |
 | `bold`         | bool            | `false`   | When `true`, the time label is rendered with a bold font weight. Falls back to a sans-serif family when bold is enabled.                                                                 |
+| `calendar_command` | string | _unset_ | Shell command run when clicking a calendar day. Supports `{date}`, `{year}`, `{month}`, `{day}` placeholders, e.g. `gnome-calendar --date {date}`. |
 
 Example:
 
@@ -104,6 +104,7 @@ format       = "%a %H:%M"
 tick_seconds = 60
 font_size    = 16
 bold         = true
+calendar_command = "gnome-calendar --date {date}"
 ```
 
 ### `[workspaces]` — Hyprland workspaces plugin
@@ -118,6 +119,25 @@ variable is missing it logs an error to its `errors()` channel on startup.
 The host-level `launch(focused_index)` ABI hook is implemented: index `N`
 into the id-sorted workspace list activates that workspace. There is no
 default keybinding for this yet — wire one up via your compositor.
+
+### `[bluetooth]` — Bluetooth plugin
+
+Uses `bluetoothctl`. Click opens a popup with connected devices and available
+devices. Available devices with no type/icon and names that are just MAC IDs
+are hidden as noise. Clicking an available device starts pairing; if the CLI
+reports that a PIN/passkey/code is needed, Oxibar opens a modal for it.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `refresh_seconds` | integer (`> 0`) | `20` | Background refresh interval. The popup `Scan` button triggers an active scan. |
+
+### `[notifications]` — notification center plugin
+
+Owns `org.freedesktop.Notifications` and stores notifications until they are
+closed or cleared. Click the bar button to open a right-side full-height panel.
+The panel top row has `DND` and `Clear` controls. If another notification daemon
+already owns the DBus name, this plugin logs a warning and cannot receive
+notifications until that daemon is stopped.
 
 ## Logging
 
@@ -136,7 +156,7 @@ plugin error queues, and view/update failures all surface here.
 ## Full example
 
 ```toml
-plugins = ["libclock.so", "libworkspaces.so"]
+plugins = ["libclock.so", "libworkspaces.so", "libbluetooth.so", "libnotifications.so"]
 
 [bar]
 transparent = true
@@ -144,7 +164,7 @@ font      = "Adwaita Sans"
 font_file = "/run/current-system/sw/share/fonts/Adwaita/AdwaitaSans-Regular.ttf"
 start  = ["workspaces"]
 center = ["clock"]
-end    = []
+end    = ["bluetooth", "notifications"]
 
 [clock]
 format       = "%H:%M"

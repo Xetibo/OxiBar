@@ -1,6 +1,6 @@
 [package]
-name = "workspaces"
-version = "0.2.0"
+name = "tray"
+version = "0.1.0"
 edition = "2024"
 
 [lib]
@@ -10,11 +10,11 @@ crate-type = ["dylib"]
 oxibar-plugin-api = { path = "../../crates/oxibar-plugin-api" }
 iced = { version = "0.14.0", features = [
 	"advanced",
-	"canvas",
 	"image",
 	"svg",
 	"tokio",
 ]}
 oxiced = { git = "https://github.com/Xetibo/oxiced", branch = "iced14" }
-hyprland = "0.4.0-beta.3"
+serde = "1.0"
 tracing = "0.1"
+zbus = "5.14.0"

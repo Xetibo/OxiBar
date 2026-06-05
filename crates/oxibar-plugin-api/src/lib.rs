@@ -17,7 +17,7 @@ pub use toml;
 /// ABI version. Bump on any breaking change to the function signatures or
 /// trait-object layouts crossing the dylib boundary. The host refuses to load
 /// a plugin whose `abi_version()` does not match.
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 5;
 
 /// Shared, downcastable, thread-safe trait object. Moved here from
 /// `oxiced::any_send` so plugins don't need oxiced just to participate in the
@@ -71,6 +71,18 @@ pub type PluginMsg = Arc<dyn OxiAny>;
 /// toggles that plugin's popup.
 pub const HOST_REQUEST_TOGGLE_POPUP: &str = "oxibar.host.toggle-popup";
 
+/// String payload a plugin can send through [`PluginMsg`] to request that the
+/// host opens that plugin's center-screen modal surface.
+pub const HOST_REQUEST_OPEN_MODAL: &str = "oxibar.host.open-modal";
+
+/// String payload a plugin can send through [`PluginMsg`] to request that the
+/// host closes that plugin's center-screen modal surface.
+pub const HOST_REQUEST_CLOSE_MODAL: &str = "oxibar.host.close-modal";
+
+/// String payload a plugin can send through [`PluginMsg`] to request that the
+/// host toggles that plugin's right-side panel surface.
+pub const HOST_REQUEST_TOGGLE_PANEL: &str = "oxibar.host.toggle-panel";
+
 /// Backward-compatible name for the clock plugin's original popup request.
 pub const HOST_REQUEST_TOGGLE_CALENDAR_POPUP: &str = HOST_REQUEST_TOGGLE_POPUP;
 
@@ -95,9 +107,9 @@ pub enum Slot {
 
 // -------- Function-pointer ABI --------
 //
-// Plugins expose seven `#[unsafe(no_mangle)] pub extern "Rust"` symbols. The
-// signatures live here as type aliases so that host and plugin agree on the
-// exact shape; mismatches surface as link-time symbol-type errors.
+// Plugins expose the required `#[unsafe(no_mangle)] pub extern "Rust"` symbols.
+// Optional view symbols can be absent. The signatures live here as type aliases
+// so that host and plugin agree on the exact shape.
 
 pub type ModelFn = unsafe extern "Rust" fn(toml::Table) -> (PluginModel, Option<Task<PluginMsg>>);
 
@@ -113,6 +125,16 @@ pub type ViewFn =
     ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
 
 pub type PopupViewFn =
+    unsafe extern "Rust" fn(
+        model: PluginModel,
+    ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
+
+pub type ModalViewFn =
+    unsafe extern "Rust" fn(
+        model: PluginModel,
+    ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
+
+pub type PanelViewFn =
     unsafe extern "Rust" fn(
         model: PluginModel,
     ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;

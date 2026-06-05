@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use hyprland::{
     data::Workspace,
-    dispatch::Dispatch,
     event_listener::EventListener,
     shared::{HyprData, HyprDataActive},
 };
@@ -20,7 +19,6 @@ use iced::{
     stream,
     widget::{Row, text},
 };
-use iced_anim::AnimationBuilder;
 use oxibar_plugin_api::{ABI_VERSION, OxiAny, PluginModel, PluginMsg, PluginStream, toml::Table};
 use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_button};
 
@@ -28,13 +26,14 @@ use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_button};
 pub struct Model {
     workspaces: HashMap<String, hyprland::data::Workspace>,
     active_workspace_name: String,
+    font_family: Option<&'static str>,
     /// Transient errors surfaced via the `errors()` ABI entry. Drained by the
     /// host on each update.
     errors: Vec<String>,
 }
 
 impl Model {
-    pub fn new(_global_config: Table) -> Model {
+    pub fn new(global_config: Table) -> Model {
         let mut errors = Vec::new();
         let active_workspace_name = match Workspace::get_active() {
             Ok(w) => w.name,
@@ -43,12 +42,40 @@ impl Model {
                 String::new()
             }
         };
+        let font_family = global_config
+            .get("bar")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("font"))
+            .and_then(|v| v.as_str())
+            .map(resolve_font_family)
+            .map(|s| &*Box::leak(s.to_owned().into_boxed_str()));
         Model {
             workspaces: HashMap::new(),
             active_workspace_name,
+            font_family,
             errors,
         }
     }
+}
+
+fn resolve_font_family(configured: &str) -> String {
+    let Ok(output) = std::process::Command::new("fc-match")
+        .args(["-f", "%{family}", configured])
+        .output()
+    else {
+        return configured.to_owned();
+    };
+    if !output.status.success() {
+        return configured.to_owned();
+    }
+    let family = String::from_utf8_lossy(&output.stdout);
+    family
+        .split(',')
+        .next()
+        .map(str::trim)
+        .filter(|family| !family.is_empty())
+        .unwrap_or(configured)
+        .to_owned()
 }
 
 /// Wrap a typed `Message` in the dyn-`OxiAny` envelope expected by the host.
@@ -59,7 +86,7 @@ fn msg(m: Message) -> PluginMsg {
 #[derive(Clone, Debug)]
 pub enum Message {
     ActiveWorkspaceChanged(String),
-    ActivateWorkspace(String),
+    ActivateWorkspace(hyprland::shared::WorkspaceId),
     WorkspacesInit(HashMap<String, hyprland::data::Workspace>),
     WorkspaceAdded(hyprland::data::Workspace),
     WorkspaceRemoved(String),
@@ -93,16 +120,13 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             model.workspaces = workspaces;
             None
         }
-        Message::ActivateWorkspace(name) => {
-            // Fire-and-forget; the dispatch is sync but we don't want to
-            // block the iced update loop.
-            std::thread::spawn(move || {
-                if let Err(e) = Dispatch::call(hyprland::dispatch::DispatchType::Workspace(
-                    hyprland::dispatch::WorkspaceIdentifierWithSpecial::Name(&name),
-                )) {
-                    tracing::warn!("workspace dispatch failed: {e}");
-                }
-            });
+        Message::ActivateWorkspace(id) => {
+            tracing::info!(workspace = id, "activating workspace");
+            if let Err(e) = dispatch_workspace(id) {
+                model
+                    .errors
+                    .push(format!("workspace dispatch to {id} failed: {e}"));
+            }
             None
         }
         Message::WorkspaceAdded(workspace) => {
@@ -120,6 +144,24 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
     }
 }
 
+fn dispatch_workspace(id: hyprland::shared::WorkspaceId) -> Result<(), String> {
+    // Equivalent to: hyprctl dispatch 'hl.dsp.focus({ workspace = <id> })'
+    let command = format!("hl.dsp.focus({{ workspace = {id} }})");
+    let output = std::process::Command::new("hyprctl")
+        .args(["dispatch", &command])
+        .output()
+        .map_err(|e| format!("could not run hyprctl: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    if output.status.success() && (stdout.is_empty() || stdout == "ok") {
+        Ok(())
+    } else if stderr.is_empty() {
+        Err(stdout)
+    } else {
+        Err(stderr)
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "Rust" fn launch(focused_index: usize, model: PluginModel) -> Option<Task<PluginMsg>> {
     // Treat `focused_index` as the position in the id-sorted workspace list:
@@ -130,8 +172,7 @@ pub extern "Rust" fn launch(focused_index: usize, model: PluginModel) -> Option<
     let mut sorted: Vec<&hyprland::data::Workspace> = m.workspaces.values().collect();
     sorted.sort_by_key(|w| w.id);
     let target = sorted.get(focused_index)?;
-    let name = target.name.clone();
-    Some(Task::done(msg(Message::ActivateWorkspace(name))))
+    Some(Task::done(msg(Message::ActivateWorkspace(target.id))))
 }
 
 #[unsafe(no_mangle)]
@@ -174,57 +215,57 @@ pub extern "Rust" fn view(
             } else {
                 palette.primary
             };
+            let base_font = match model.font_family {
+                Some(name) => Font::with_name(name),
+                None => Font::DEFAULT,
+            };
             let font = Font {
-                family: iced::font::Family::SansSerif,
                 weight: iced::font::Weight::Semibold,
-                stretch: iced::font::Stretch::Normal,
-                style: iced::font::Style::Normal,
+                ..base_font
             };
 
-            AnimationBuilder::new((bg_color, fg_color), move |(bg_color, fg_color)| {
-                let base = iced::widget::button::Style {
-                    background: Some(bg_color),
-                    text_color: fg_color,
-                    border: Border {
-                        color: iced::Color::TRANSPARENT,
-                        width: 0.0,
-                        radius: Radius::new(360 / 4),
+            let base = iced::widget::button::Style {
+                background: Some(bg_color),
+                text_color: fg_color,
+                border: Border {
+                    color: iced::Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: Radius::new(360 / 4),
+                },
+                shadow: Shadow {
+                    blur_radius: 2.0,
+                    ..Shadow::default()
+                },
+                snap: false,
+            };
+            let style = move |base: iced::widget::button::Style,
+                              status: iced::widget::button::Status| {
+                match status {
+                    iced::widget::button::Status::Active => base,
+                    iced::widget::button::Status::Pressed => iced::widget::button::Style {
+                        background: Some(iced::Background::Color(palette.primary_active)),
+                        ..base
                     },
-                    shadow: Shadow {
-                        blur_radius: 2.0,
-                        ..Shadow::default()
+                    iced::widget::button::Status::Hovered => iced::widget::button::Style {
+                        background: Some(iced::Background::Color(palette.primary_hover)),
+                        ..base
                     },
-                    snap: false,
-                };
-                let style =
-                    move |base: iced::widget::button::Style,
-                          status: iced::widget::button::Status| match status {
-                        iced::widget::button::Status::Active => base,
-                        iced::widget::button::Status::Pressed => iced::widget::button::Style {
-                            background: Some(iced::Background::Color(palette.primary_active)),
-                            ..base
-                        },
-                        iced::widget::button::Status::Hovered => iced::widget::button::Style {
-                            background: Some(iced::Background::Color(palette.primary_hover)),
-                            ..base
-                        },
-                        iced::widget::button::Status::Disabled => base,
-                    };
-                oxi_button::button(
-                    text(format!("{}", workspace.id))
-                        .size(13)
-                        .font(font)
-                        .align_y(Alignment::Center)
-                        .align_x(Alignment::Center),
-                    oxi_button::ButtonVariant::PrimaryBg,
-                )
-                .on_press(msg(Message::ActivateWorkspace(workspace.name.clone())))
-                .style(move |&_, status| (style)(base, status))
-                .padding(0)
-                .height(22.5)
-                .width(22.5)
-                .into()
-            })
+                    iced::widget::button::Status::Disabled => base,
+                }
+            };
+            oxi_button::button(
+                text(format!("{}", workspace.id))
+                    .size(13)
+                    .font(font)
+                    .align_y(Alignment::Center)
+                    .align_x(Alignment::Center),
+                oxi_button::ButtonVariant::PrimaryBg,
+            )
+            .on_press(msg(Message::ActivateWorkspace(workspace.id)))
+            .style(move |&_, status| (style)(base, status))
+            .padding(0)
+            .height(22.5)
+            .width(22.5)
             .into()
         })
         .collect();

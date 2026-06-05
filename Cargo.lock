@@ -326,6 +326,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "audio"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "iced_anim",
+ "oxibar-plugin-api",
+ "oxiced",
+ "tracing",
+ "zbus",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -463,6 +475,16 @@ dependencies = [
  "futures-io",
  "futures-lite",
  "piper",
+]
+
+[[package]]
+name = "bluetooth"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "iced_anim",
+ "oxibar-plugin-api",
+ "oxiced",
 ]
 
 [[package]]
@@ -2559,6 +2581,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "network"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "iced_anim",
+ "oxibar-plugin-api",
+ "oxiced",
+ "tracing",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2587,6 +2620,16 @@ name = "noop_proc_macro"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
+
+[[package]]
+name = "notifications"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "oxibar-plugin-api",
+ "oxiced",
+ "zbus",
+]
 
 [[package]]
 name = "nu-ansi-term"
@@ -3099,6 +3142,7 @@ name = "oxibar"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "iced_anim",
  "iced_layershell",
  "libloading",
  "once_cell",
@@ -4426,6 +4470,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tray"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "oxibar-plugin-api",
+ "oxiced",
+ "serde",
+ "tracing",
+ "zbus",
+]
+
+[[package]]
 name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5584,7 +5640,6 @@ version = "0.2.0"
 dependencies = [
  "hyprland",
  "iced",
- "iced_anim",
  "oxibar-plugin-api",
  "oxiced",
  "tracing",

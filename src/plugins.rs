@@ -26,8 +26,9 @@ use std::sync::Arc;
 
 use libloading::Library;
 use oxibar_plugin_api::{
-    ABI_VERSION, AbiVersionFn, ErrorsFn, HOST_REQUEST_TOGGLE_POPUP, LaunchFn, ModelFn, NameFn,
-    PluginModel, PluginMsg, PopupViewFn, SubscriptionFn, UpdateFn, ViewFn,
+    ABI_VERSION, AbiVersionFn, ErrorsFn, HOST_REQUEST_CLOSE_MODAL, HOST_REQUEST_OPEN_MODAL,
+    HOST_REQUEST_TOGGLE_PANEL, HOST_REQUEST_TOGGLE_POPUP, LaunchFn, ModalViewFn, ModelFn, NameFn,
+    PanelViewFn, PluginModel, PluginMsg, PopupViewFn, SubscriptionFn, UpdateFn, ViewFn,
 };
 use toml::Table;
 use tracing::{error, info, warn};
@@ -47,6 +48,8 @@ pub struct PluginFuncs {
     pub name: NameFn,
     pub subscription: SubscriptionFn,
     pub popup_view: Option<PopupViewFn>,
+    pub modal_view: Option<ModalViewFn>,
+    pub panel_view: Option<PanelViewFn>,
 }
 
 impl std::fmt::Debug for PluginFuncs {
@@ -96,10 +99,7 @@ unsafe fn resolve<T: Copy>(lib: &Library, symbol: &'static str) -> Result<T, Loa
         let sym: libloading::Symbol<'_, T> = lib
             .get(symbol.as_bytes())
             .map_err(|e| LoadError::MissingSymbol(symbol, e))?;
-        // `Symbol::into_raw` returns a raw os symbol that outlives the
-        // `Symbol` borrow; we keep the `Library` itself alive via Arc.
-        let raw = sym.into_raw();
-        Ok(*(&raw as *const _ as *const T))
+        Ok(*sym)
     }
 }
 
@@ -111,8 +111,7 @@ unsafe fn resolve_optional<T: Copy>(lib: &Library, symbol: &'static str) -> Opti
     );
     unsafe {
         let sym: libloading::Symbol<'_, T> = lib.get(symbol.as_bytes()).ok()?;
-        let raw = sym.into_raw();
-        Some(*(&raw as *const _ as *const T))
+        Some(*sym)
     }
 }
 
@@ -137,6 +136,8 @@ unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), Load
     let name: NameFn = unsafe { resolve(&lib, "name")? };
     let subscription: SubscriptionFn = unsafe { resolve(&lib, "subscription")? };
     let popup_view: Option<PopupViewFn> = unsafe { resolve_optional(&lib, "popup_view") };
+    let modal_view: Option<ModalViewFn> = unsafe { resolve_optional(&lib, "modal_view") };
+    let panel_view: Option<PanelViewFn> = unsafe { resolve_optional(&lib, "panel_view") };
 
     let plugin_name = unsafe { name() }.to_owned();
 
@@ -152,6 +153,8 @@ unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), Load
             name,
             subscription,
             popup_view,
+            modal_view,
+            panel_view,
         },
     ))
 }
@@ -206,6 +209,21 @@ pub fn load_plugins(config: &Table) -> (PluginMap, Vec<iced::Task<crate::Message
                             .is_some_and(|request| request == HOST_REQUEST_TOGGLE_POPUP)
                         {
                             crate::Message::TogglePluginPopup(key_for_task.clone())
+                        } else if msg
+                            .downcast_ref::<String>()
+                            .is_some_and(|request| request == HOST_REQUEST_OPEN_MODAL)
+                        {
+                            crate::Message::OpenPluginModal(key_for_task.clone())
+                        } else if msg
+                            .downcast_ref::<String>()
+                            .is_some_and(|request| request == HOST_REQUEST_CLOSE_MODAL)
+                        {
+                            crate::Message::ClosePluginModal(key_for_task.clone())
+                        } else if msg
+                            .downcast_ref::<String>()
+                            .is_some_and(|request| request == HOST_REQUEST_TOGGLE_PANEL)
+                        {
+                            crate::Message::TogglePluginPanel(key_for_task.clone())
                         } else {
                             crate::Message::PluginSubMsg(key_for_task.clone(), msg)
                         }
@@ -248,6 +266,40 @@ pub fn render_plugin_popup(
         Ok(elements) => elements,
         Err(e) => {
             warn!("plugin popup view error: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Render a plugin-provided modal body, if the plugin exposes one.
+pub fn render_plugin_modal(
+    funcs: &PluginFuncs,
+    model: &PluginModel,
+) -> Vec<iced::Element<'static, PluginMsg>> {
+    let Some(modal_view) = funcs.modal_view else {
+        return Vec::new();
+    };
+    match unsafe { modal_view(model.clone()) } {
+        Ok(elements) => elements,
+        Err(e) => {
+            warn!("plugin modal view error: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Render a plugin-provided right-side panel body, if the plugin exposes one.
+pub fn render_plugin_panel(
+    funcs: &PluginFuncs,
+    model: &PluginModel,
+) -> Vec<iced::Element<'static, PluginMsg>> {
+    let Some(panel_view) = funcs.panel_view else {
+        return Vec::new();
+    };
+    match unsafe { panel_view(model.clone()) } {
+        Ok(elements) => elements,
+        Err(e) => {
+            warn!("plugin panel view error: {e}");
             Vec::new()
         }
     }

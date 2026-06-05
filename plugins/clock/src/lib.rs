@@ -11,6 +11,7 @@
 //!
 //! Clicking the time toggles a host-owned calendar popup.
 
+use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
@@ -18,10 +19,10 @@ use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate};
 use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Shadow, Task,
     border::Radius,
-    font::{Family, Weight},
+    font::Weight,
     futures::Stream,
     stream,
-    widget::{Column, Container, Row, button, text},
+    widget::{Column, Row, button, text},
 };
 use oxibar_plugin_api::{
     ABI_VERSION, HOST_REQUEST_TOGGLE_POPUP, OxiAny, PluginModel, PluginMsg, PluginStream,
@@ -46,7 +47,9 @@ pub struct Model {
     /// Resolved font family name from `[bar] font` (or `None` to use iced's
     /// default). Leaked to `&'static str` because [`iced::Font`] requires it.
     font_family: Option<&'static str>,
+    calendar_command: Option<String>,
     now: DateTime<Local>,
+    calendar_month: NaiveDate,
     calendar_open: bool,
     errors: Vec<String>,
 }
@@ -63,13 +66,16 @@ impl Model {
             .and_then(|v| v.as_table())
             .and_then(|t| t.get("font"))
             .and_then(|v| v.as_str())
+            .map(resolve_font_family)
             .map(|s| &*Box::leak(s.to_owned().into_boxed_str()));
         Self {
             format: cfg.format,
             font_size: cfg.font_size,
             bold: cfg.bold,
             font_family,
+            calendar_command: cfg.calendar_command,
             now: Local::now(),
+            calendar_month: current_month_start(),
             calendar_open: false,
             errors: Vec::new(),
         }
@@ -81,6 +87,7 @@ struct ClockConfig {
     tick_seconds: u64,
     font_size: f32,
     bold: bool,
+    calendar_command: Option<String>,
 }
 
 fn read_config(global: &Table) -> ClockConfig {
@@ -103,6 +110,7 @@ fn read_config(global: &Table) -> ClockConfig {
             tick_seconds: DEFAULT_TICK_SECONDS,
             font_size: DEFAULT_FONT_SIZE,
             bold: DEFAULT_BOLD,
+            calendar_command: None,
         };
     };
 
@@ -127,18 +135,47 @@ fn read_config(global: &Table) -> ClockConfig {
         .get("bold")
         .and_then(|v| v.as_bool())
         .unwrap_or(DEFAULT_BOLD);
+    let calendar_command = plugins
+        .get("calendar_command")
+        .and_then(|v| v.as_str())
+        .map(ToOwned::to_owned);
     ClockConfig {
         format,
         tick_seconds,
         font_size,
         bold,
+        calendar_command,
     }
+}
+
+fn resolve_font_family(configured: &str) -> String {
+    let Ok(output) = std::process::Command::new("fc-match")
+        .args(["-f", "%{family}", configured])
+        .output()
+    else {
+        return configured.to_owned();
+    };
+    if !output.status.success() {
+        return configured.to_owned();
+    }
+    let family = String::from_utf8_lossy(&output.stdout);
+    family
+        .split(',')
+        .next()
+        .map(str::trim)
+        .filter(|family| !family.is_empty())
+        .unwrap_or(configured)
+        .to_owned()
 }
 
 #[derive(Clone, Debug)]
 pub enum Message {
     Tick(DateTime<Local>),
     ToggleCalendar,
+    PreviousMonth,
+    NextMonth,
+    OpenDay(NaiveDate),
+    CalendarOpenResult(Result<(), String>),
 }
 
 fn msg(m: Message) -> PluginMsg {
@@ -178,8 +215,32 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
         }
         Message::ToggleCalendar => {
             model.calendar_open = !model.calendar_open;
+            if model.calendar_open {
+                model.calendar_month = current_month_start();
+            }
             let request: PluginMsg = Arc::new(HOST_REQUEST_TOGGLE_POPUP.to_owned());
             Some(Task::done(request))
+        }
+        Message::PreviousMonth => {
+            model.calendar_month = add_months(model.calendar_month, -1);
+            None
+        }
+        Message::NextMonth => {
+            model.calendar_month = add_months(model.calendar_month, 1);
+            None
+        }
+        Message::OpenDay(date) => {
+            let command = model.calendar_command.clone();
+            Some(Task::perform(
+                async move { open_calendar_day(date, command) },
+                |result| msg(Message::CalendarOpenResult(result)),
+            ))
+        }
+        Message::CalendarOpenResult(result) => {
+            if let Err(error) = result {
+                model.errors.push(error);
+            }
+            None
         }
     }
 }
@@ -218,23 +279,17 @@ pub extern "Rust" fn view(
     // catching errors per-frame and surfacing once is good enough.
     let label = format_time(&model.now, &model.format);
     let font_size = model.font_size;
-    // Build a font matching the bar-wide family (if configured) and only
-    // override the weight when the user has asked for bold. This keeps the
-    // host's `[bar] font` choice intact when bold is enabled.
-    let base_font = match model.font_family {
-        Some(name) => Font::with_name(name),
-        None => Font {
-            family: Family::SansSerif,
+    let label_text = text(label)
+        .size(font_size)
+        .align_y(Alignment::Center)
+        .align_x(Alignment::Center);
+    let label_text = if model.bold && model.font_family.is_none() {
+        label_text.font(Font {
+            weight: Weight::Bold,
             ..Font::DEFAULT
-        },
-    };
-    let font = Font {
-        weight: if model.bold {
-            Weight::Bold
-        } else {
-            Weight::Normal
-        },
-        ..base_font
+        })
+    } else {
+        label_text
     };
 
     // Transparent button: text in the primary accent color, no background
@@ -266,41 +321,47 @@ pub extern "Rust" fn view(
         }
     };
 
-    let btn = button(
-        text(label)
-            .size(font_size)
-            .font(font)
-            .align_y(Alignment::Center)
-            .align_x(Alignment::Center),
-    )
-    .on_press(msg(Message::ToggleCalendar))
-    .style(style)
-    .padding([0, 8])
-    .height(22.5)
-    .width(Length::Shrink);
+    let btn = button(label_text)
+        .on_press(msg(Message::ToggleCalendar))
+        .style(style)
+        .padding([0, 8])
+        .height(22.5)
+        .width(Length::Shrink);
 
     Ok(vec![btn.into()])
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn popup_view(
-    _model: PluginModel,
+    model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    let lock = model.try_read().map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::WouldBlock, "model is write-locked")
+    })?;
+    let model = lock.downcast_ref::<Model>().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "model has wrong type")
+    })?;
     let now = Local::now().date_naive();
-    let month_start =
-        NaiveDate::from_ymd_opt(now.year(), now.month(), 1).expect("valid current year/month");
+    let month_start = model.calendar_month;
     let title = month_start.format("%B %Y").to_string();
     let palette = &OXITHEME;
 
-    let mut column = Column::new().spacing(8).padding([12, 14]).push(
-        text(title)
-            .size(18)
-            .style(move |_| iced::widget::text::Style {
-                color: Some(palette.primary),
-            })
-            .align_x(Alignment::Center)
-            .width(Length::Fill),
-    );
+    let header = Row::new()
+        .push(calendar_nav_button("‹", Message::PreviousMonth))
+        .push(
+            text(title)
+                .size(18)
+                .style(move |_| iced::widget::text::Style {
+                    color: Some(palette.primary),
+                })
+                .align_x(Alignment::Center)
+                .width(Length::Fill),
+        )
+        .push(calendar_nav_button("›", Message::NextMonth))
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+
+    let mut column = Column::new().spacing(8).padding([12, 14]).push(header);
 
     let mut weekdays = Row::new().spacing(4).width(Length::Fill);
     for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
@@ -324,7 +385,7 @@ pub extern "Rust" fn popup_view(
             let date = grid_start + ChronoDuration::days(week * 7 + day);
             let is_current_month = date.month() == now.month();
             let is_today = date == now;
-            row = row.push(day_cell(date.day(), is_current_month, is_today));
+            row = row.push(day_cell(date, is_current_month, is_today));
         }
         column = column.push(row);
     }
@@ -332,7 +393,25 @@ pub extern "Rust" fn popup_view(
     Ok(vec![column.width(Length::Fill).height(Length::Fill).into()])
 }
 
-fn day_cell(day: u32, is_current_month: bool, is_today: bool) -> Element<'static, PluginMsg> {
+fn calendar_nav_button(label: &'static str, message: Message) -> Element<'static, PluginMsg> {
+    button(
+        text(label)
+            .size(20)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
+    )
+    .on_press(msg(message))
+    .style(clock_button_style)
+    .padding([2, 10])
+    .height(28)
+    .into()
+}
+
+fn day_cell(
+    date: NaiveDate,
+    is_current_month: bool,
+    is_today: bool,
+) -> Element<'static, PluginMsg> {
     let palette = &OXITHEME;
     let text_color = if is_current_month {
         palette.primary
@@ -348,8 +427,8 @@ fn day_cell(day: u32, is_current_month: bool, is_today: bool) -> Element<'static
         None
     };
 
-    Container::new(
-        text(day.to_string())
+    button(
+        text(date.day().to_string())
             .size(13)
             .align_x(Alignment::Center)
             .align_y(Alignment::Center)
@@ -357,19 +436,93 @@ fn day_cell(day: u32, is_current_month: bool, is_today: bool) -> Element<'static
                 color: Some(text_color),
             }),
     )
+    .on_press(msg(Message::OpenDay(date)))
+    .style(move |_, status| {
+        let background = match status {
+            button::Status::Hovered => Some(Background::Color(palette.primary_bg_hover)),
+            button::Status::Pressed => Some(Background::Color(palette.primary_bg_active)),
+            button::Status::Active | button::Status::Disabled => background,
+        };
+        button::Style {
+            background,
+            text_color,
+            border: Border {
+                radius: Radius::from(8.0),
+                ..Default::default()
+            },
+            shadow: Shadow::default(),
+            snap: false,
+        }
+    })
+    .padding(0)
     .width(Length::Fill)
     .height(30)
-    .align_x(Alignment::Center)
-    .align_y(Alignment::Center)
-    .style(move |_| iced::widget::container::Style {
-        background,
-        border: Border {
-            radius: Radius::from(8.0),
-            ..Default::default()
-        },
-        ..Default::default()
-    })
     .into()
+}
+
+fn clock_button_style(_: &iced::Theme, status: button::Status) -> button::Style {
+    let base = button::Style {
+        background: None,
+        text_color: OXITHEME.primary,
+        border: Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: 8.0.into(),
+        },
+        shadow: Shadow::default(),
+        snap: false,
+    };
+    match status {
+        button::Status::Hovered => button::Style {
+            background: Some(Background::Color(OXITHEME.primary_bg_hover)),
+            ..base
+        },
+        button::Status::Pressed => button::Style {
+            background: Some(Background::Color(OXITHEME.primary_bg_active)),
+            ..base
+        },
+        button::Status::Active | button::Status::Disabled => base,
+    }
+}
+
+fn current_month_start() -> NaiveDate {
+    let now = Local::now().date_naive();
+    NaiveDate::from_ymd_opt(now.year(), now.month(), 1).expect("valid current year/month")
+}
+
+fn add_months(date: NaiveDate, delta: i32) -> NaiveDate {
+    let zero_based = date.year() * 12 + date.month0() as i32 + delta;
+    let year = zero_based.div_euclid(12);
+    let month = zero_based.rem_euclid(12) as u32 + 1;
+    NaiveDate::from_ymd_opt(year, month, 1).expect("valid shifted year/month")
+}
+
+fn open_calendar_day(date: NaiveDate, command: Option<String>) -> Result<(), String> {
+    let Some(command) = command else {
+        return Err(
+            "clock: set [clock] calendar_command, e.g. `gnome-calendar --date {date}`".to_owned(),
+        );
+    };
+    let date_string = date.format("%Y-%m-%d").to_string();
+    let command = command
+        .replace("{date}", &date_string)
+        .replace("{year}", &date.year().to_string())
+        .replace("{month}", &format!("{:02}", date.month()))
+        .replace("{day}", &format!("{:02}", date.day()));
+    let output = Command::new("sh")
+        .args(["-c", &command])
+        .output()
+        .map_err(|e| format!("clock: failed to run calendar_command: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if stderr.is_empty() {
+            Err("clock: calendar_command failed".to_owned())
+        } else {
+            Err(format!("clock: calendar_command failed: {stderr}"))
+        }
+    }
 }
 
 /// Wrap chrono's panicking `format` so a malformed user spec doesn't take
