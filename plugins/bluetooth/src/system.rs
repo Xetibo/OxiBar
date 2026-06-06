@@ -63,6 +63,18 @@ pub(crate) fn scan_devices(active_scan: bool) -> Result<Snapshot, String> {
     })
 }
 
+pub(crate) fn has_bluetooth_controller() -> bool {
+    run_bluetoothctl(&["show"])
+        .map(|output| output_has_controller(&output))
+        .unwrap_or(false)
+}
+
+fn output_has_controller(output: &str) -> bool {
+    output
+        .lines()
+        .any(|line| line.trim_start().starts_with("Controller "))
+}
+
 #[derive(Default)]
 struct DeviceInfo {
     icon: String,
@@ -226,6 +238,15 @@ mod tests {
         assert_eq!(devices[0].mac, "AA:BB:CC:DD:EE:FF");
         assert_eq!(devices[0].name, "Headphones");
         assert_eq!(devices[1].name, "Keyboard");
+    }
+
+    #[test]
+    fn detects_controller_from_show_output() {
+        let present = "Controller 00:11:22:33:44:55 (public)\n\tName: laptop";
+        let absent = "No default controller available";
+
+        assert!(output_has_controller(present));
+        assert!(!output_has_controller(absent));
     }
 
     #[test]

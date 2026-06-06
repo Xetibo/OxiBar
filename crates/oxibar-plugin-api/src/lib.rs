@@ -231,10 +231,18 @@ pub struct PluginPopupMetrics {
     pub popup_input_size: Option<(u32, u32)>,
 }
 
+/// Optional plugin load gate used by the host before it instantiates a plugin
+/// model or starts subscriptions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginAvailability {
+    Available,
+    Unavailable(&'static str),
+}
+
 // -------- Function-pointer ABI --------
 //
 // Plugins expose the required `#[unsafe(no_mangle)] pub extern "Rust"` symbols.
-// Optional view symbols can be absent. The signatures live here as type aliases
+// Optional symbols can be absent. The signatures live here as type aliases
 // so that host and plugin agree on the exact shape.
 
 pub type ModelFn = unsafe extern "Rust" fn(toml::Table) -> (PluginModel, Option<Task<PluginMsg>>);
@@ -276,6 +284,8 @@ pub type ErrorsFn = unsafe extern "Rust" fn(model: PluginModel) -> Vec<String>;
 pub type NameFn = unsafe extern "Rust" fn() -> &'static str;
 
 pub type MetadataFn = unsafe extern "Rust" fn() -> PluginMetadata;
+
+pub type AvailabilityFn = unsafe extern "Rust" fn(toml::Table) -> PluginAvailability;
 
 pub type PopupMetricsFn = unsafe extern "Rust" fn(model: PluginModel) -> PluginPopupMetrics;
 

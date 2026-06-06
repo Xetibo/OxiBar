@@ -12,8 +12,8 @@ use iced::{
 use iced_anim::{AnimationBuilder, Motion};
 use oxibar_plugin_api::{
     ABI_VERSION, HOST_REQUEST_CLOSE_MODAL, HOST_REQUEST_OPEN_MODAL, HOST_REQUEST_TOGGLE_POPUP,
-    PluginMetadata, PluginModel, PluginMsg, PluginStream, drain_model_errors, plugin_model,
-    toml::Table, with_model_read, with_model_write,
+    PluginAvailability, PluginMetadata, PluginModel, PluginMsg, PluginStream, drain_model_errors,
+    plugin_model, toml::Table, with_model_read, with_model_write,
 };
 use oxiced::{
     theme::theme_impl::OXITHEME,
@@ -102,6 +102,15 @@ pub extern "Rust" fn abi_version() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "Rust" fn name() -> &'static str {
     "Bluetooth"
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn availability(_global_config: Table) -> PluginAvailability {
+    if system::has_bluetooth_controller() {
+        PluginAvailability::Available
+    } else {
+        PluginAvailability::Unavailable("no bluetooth controller found")
+    }
 }
 
 #[unsafe(no_mangle)]

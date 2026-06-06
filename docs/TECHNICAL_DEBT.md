@@ -2,6 +2,17 @@
 
 This file tracks accepted deviations from the current UI contract in `UI.md`. These are allowed only because `oxiced` does not yet provide the needed shared component or semantic token.
 
+It also tracks non-UI runtime/testing limitations that affect future plugin work.
+
+## Runtime Debt
+
+### Missing Dynamic Plugin Loading Integration Test
+
+- Status: accepted temporary limitation.
+- Affected code: `src/plugins.rs` and all dynamic plugin crates.
+- Current state: the host supports optional `availability(config)` gates and unit-tests the pure plugin availability probes, but does not run an integration test that builds temporary dylibs and verifies skip-before-model behavior through `load_plugins()`.
+- Target fix: add a small dynamic-loading integration test once plugin test fixtures can be built reproducibly through the workspace/Nix setup.
+
 ## UI Theme Debt
 
 ### Missing Additional Flat Button Variants In `oxiced`

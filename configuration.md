@@ -23,7 +23,9 @@ plugins = ["libclock.so", "libworkspaces.so", "libbattery.so", "libbluetooth.so"
 A plugin file present on disk but not listed here is ignored. Unknown names
 are skipped with a warning. Plugins whose `abi_version()` does not match the
 host's are also skipped with a warning — rebuild them against the current
-`oxibar-plugin-api`.
+`oxibar-plugin-api`. Plugins can also export an availability check; oxibar
+skips them before model initialization and polling when required hardware or
+system services are missing.
 
 ## `[bar]` — bar surface
 

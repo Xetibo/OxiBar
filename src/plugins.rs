@@ -26,9 +26,9 @@ use std::sync::Arc;
 
 use libloading::Library;
 use oxibar_plugin_api::{
-    ABI_VERSION, AbiVersionFn, ErrorsFn, LaunchFn, MetadataFn, ModalViewFn, ModelFn, NameFn,
-    PanelViewFn, PluginMetadata, PluginModel, PluginMsg, PluginPopupMetrics, PopupMetricsFn,
-    PopupViewFn, SubscriptionFn, ToastViewFn, UpdateFn, ViewFn,
+    ABI_VERSION, AbiVersionFn, AvailabilityFn, ErrorsFn, LaunchFn, MetadataFn, ModalViewFn,
+    ModelFn, NameFn, PanelViewFn, PluginAvailability, PluginMetadata, PluginModel, PluginMsg,
+    PluginPopupMetrics, PopupMetricsFn, PopupViewFn, SubscriptionFn, ToastViewFn, UpdateFn, ViewFn,
 };
 use toml::Table;
 use tracing::{error, info, warn};
@@ -81,6 +81,7 @@ enum LoadError {
     Library(libloading::Error),
     MissingSymbol(&'static str, libloading::Error),
     AbiMismatch { plugin: u32, host: u32 },
+    Unavailable { plugin: String, reason: String },
     DuplicateName(String),
 }
 
@@ -91,6 +92,9 @@ impl std::fmt::Display for LoadError {
             LoadError::MissingSymbol(s, e) => write!(f, "missing symbol `{s}`: {e}"),
             LoadError::AbiMismatch { plugin, host } => {
                 write!(f, "ABI mismatch (plugin={plugin}, host={host})")
+            }
+            LoadError::Unavailable { plugin, reason } => {
+                write!(f, "plugin `{plugin}` unavailable: {reason}")
             }
             LoadError::DuplicateName(n) => write!(f, "duplicate plugin name `{n}`"),
         }
@@ -124,7 +128,10 @@ unsafe fn resolve_optional<T: Copy>(lib: &Library, symbol: &'static str) -> Opti
     }
 }
 
-unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), LoadError> {
+unsafe fn load_one(
+    path: &std::path::Path,
+    config: &Table,
+) -> Result<(String, PluginFuncs), LoadError> {
     let lib = unsafe { Library::new(path) }.map_err(LoadError::Library)?;
 
     // ABI gate: refuse to load plugins compiled against an older/newer api.
@@ -137,12 +144,22 @@ unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), Load
         });
     }
 
+    let name: NameFn = unsafe { resolve(&lib, "name")? };
+    let plugin_name = unsafe { name() }.to_owned();
+    if let Some(availability) = unsafe { resolve_optional::<AvailabilityFn>(&lib, "availability") }
+        && let PluginAvailability::Unavailable(reason) = unsafe { availability(config.clone()) }
+    {
+        return Err(LoadError::Unavailable {
+            plugin: plugin_name,
+            reason: reason.to_owned(),
+        });
+    }
+
     let model: ModelFn = unsafe { resolve(&lib, "model")? };
     let update: UpdateFn = unsafe { resolve(&lib, "update")? };
     let launch: LaunchFn = unsafe { resolve(&lib, "launch")? };
     let view: ViewFn = unsafe { resolve(&lib, "view")? };
     let errors: ErrorsFn = unsafe { resolve(&lib, "errors")? };
-    let name: NameFn = unsafe { resolve(&lib, "name")? };
     let metadata: PluginMetadata = unsafe { resolve_optional::<MetadataFn>(&lib, "metadata") }
         .map(|metadata| unsafe { metadata() })
         .unwrap_or_default();
@@ -152,8 +169,6 @@ unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), Load
     let modal_view: Option<ModalViewFn> = unsafe { resolve_optional(&lib, "modal_view") };
     let panel_view: Option<PanelViewFn> = unsafe { resolve_optional(&lib, "panel_view") };
     let toast_view: Option<ToastViewFn> = unsafe { resolve_optional(&lib, "toast_view") };
-
-    let plugin_name = unsafe { name() }.to_owned();
 
     Ok((
         plugin_name,
@@ -202,7 +217,7 @@ pub fn load_plugins(config: &Table) -> LoadedPlugins {
             warn!("configured plugin {} was not found", path.display());
             continue;
         }
-        match unsafe { load_one(&path) } {
+        match unsafe { load_one(&path, config) } {
             Ok((plugin_name, funcs)) => {
                 if plugins.contains_key(&plugin_name) {
                     warn!("{}", LoadError::DuplicateName(plugin_name));
@@ -351,5 +366,23 @@ pub fn drain_errors(funcs: &PluginFuncs, model: &PluginModel) {
     let errs = unsafe { (funcs.errors)(model.clone()) };
     for e in errs {
         warn!(plugin = unsafe { (funcs.name)() }, "{e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_load_error_names_plugin_and_reason() {
+        let error = LoadError::Unavailable {
+            plugin: "Battery".to_owned(),
+            reason: "no battery found".to_owned(),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "plugin `Battery` unavailable: no battery found"
+        );
     }
 }

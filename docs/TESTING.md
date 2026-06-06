@@ -9,10 +9,10 @@
 
 ## Current Unit Coverage
 
-- Host/config: plugin allow-list parsing, anchor parsing, host-request message mapping, popup geometry/config/dynamic metrics, bar section lookup, and popup state setters.
+- Host/config: plugin allow-list parsing, plugin unavailable error formatting, anchor parsing, host-request message mapping, popup geometry/config/dynamic metrics, bar section lookup, and popup state setters.
 - `audio`: percent parsing, file URL decoding, selected-device fallback, config poll interval, view/popup construction, and error draining.
-- `battery`: sysfs battery parsing, percentage and duration estimates, config poll interval, view construction, and error draining.
-- `bluetooth`: `bluetoothctl` device parsing, noise filtering, pairing prompt detection, view/popup/modal construction, and error draining.
+- `battery`: sysfs battery availability/parsing, percentage and duration estimates, config poll interval, view construction, and error draining.
+- `bluetooth`: `bluetoothctl` controller availability parsing, device parsing, noise filtering, pairing prompt detection, view/popup/modal construction, and error draining.
 - `clock`: config parsing, invalid config defaults, month arithmetic, Thunderbird launcher mapping, CalDAV HTTPS guard, iCalendar/CalDAV parsing, recurrence/RDATE expansion, event tooltip details, ABI metadata, and error draining.
 - `network`: `nmcli` field splitting, scan interval parsing, label/icon helpers, view/popup/modal construction, and error draining.
 - `notifications`: markup stripping, notification action selection, notification timeout config, notification add/replace/remove/clear state transitions, DND toast suppression, toast-only expiry, hover/focus/draft expiry preservation, panel rendering, and error draining.

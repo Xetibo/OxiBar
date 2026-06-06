@@ -11,7 +11,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `src/messages.rs`: host message enum, layer-shell action conversion, and plugin message routing.
 - `src/font.rs`: bar font config, fontconfig resolution, and font byte loading.
 - `src/config.rs`: XDG config discovery and TOML config helpers.
-- `src/plugins.rs`: dynamic library discovery, ABI symbol resolution, plugin model initialization, and safe wrappers for plugin view/update/error calls.
+- `src/plugins.rs`: dynamic library discovery, ABI symbol resolution, optional plugin availability checks, plugin model initialization, and safe wrappers for plugin view/update/error calls.
 - `crates/oxibar-plugin-api`: shared ABI types used by host and plugins.
 - `plugins/*`: dynamic plugin crates loaded from `$XDG_CONFIG_HOME/oxibar/plugins/` when their library filename appears in `plugins = [...]`.
 - `plugins/{audio,battery,bluetooth,network,tray}/src/system.rs`: command/DBus/sysfs integration, parsing, and domain data extracted from plugin ABI/UI files.
@@ -20,7 +20,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 ## Runtime Flow
 
 - `main()` configures tracing, layershell settings, font loading, theme, subscription, update, and view callbacks.
-- `OxiBar::new()` loads configured plugins in the order listed by `plugins = [...]` and reads `[bar]` section placement for start, center, and end widgets.
+- `OxiBar::new()` loads configured and available plugins in the order listed by `plugins = [...]` and reads `[bar]` section placement for start, center, and end widgets.
 - Plugins are keyed by their declared `name()` string, not by filesystem path or load index. Fallback layout order follows config plugin order.
 - Plugin messages are wrapped as `PluginMsg` and mapped to host messages when they carry a known host request string.
 - Host-request mapping is centralized in `map_plugin_message()`, so plugin subscription messages and plugin initialization tasks use the same routing rules.
@@ -30,7 +30,8 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 ## Plugin ABI
 
 - Required symbols: `abi_version`, `name`, `model`, `update`, `launch`, `view`, `errors`, and `subscription`.
-- Optional symbols: `metadata`, `popup_metrics`, `popup_view`, `modal_view`, and `panel_view`.
+- Optional symbols: `availability`, `metadata`, `popup_metrics`, `popup_view`, `modal_view`, and `panel_view`.
+- `availability(config)` lets a plugin skip loading before model initialization, init tasks, and subscriptions when required hardware or system services are unavailable.
 - `ABI_VERSION` in `oxibar-plugin-api` gates host/plugin compatibility.
 - Plugin models are `Arc<RwLock<Box<dyn OxiAny>>>`; plugin messages are `Arc<dyn OxiAny>`.
 - Plugin subscriptions return a raw pointer to a boxed stream. The host rebuilds it while keeping the dynamic library alive for function-pointer validity.

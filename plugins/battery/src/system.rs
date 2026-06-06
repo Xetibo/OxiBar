@@ -36,6 +36,16 @@ pub(crate) fn read_battery() -> Result<BatterySnapshot, String> {
     read_battery_from(Path::new(SYSFS_POWER_SUPPLY))
 }
 
+pub(crate) fn has_battery() -> bool {
+    has_battery_in(Path::new(SYSFS_POWER_SUPPLY))
+}
+
+fn has_battery_in(root: &Path) -> bool {
+    battery_dirs(root)
+        .map(|batteries| !batteries.is_empty())
+        .unwrap_or(false)
+}
+
 fn read_battery_from(root: &Path) -> Result<BatterySnapshot, String> {
     let battery = first_battery_dir(root)?;
     let stored = stored_amount(&battery);
@@ -55,6 +65,14 @@ fn read_battery_from(root: &Path) -> Result<BatterySnapshot, String> {
 }
 
 fn first_battery_dir(root: &Path) -> Result<PathBuf, String> {
+    let batteries = battery_dirs(root)?;
+    batteries
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("battery: no battery found in {}", root.display()))
+}
+
+fn battery_dirs(root: &Path) -> Result<Vec<PathBuf>, String> {
     let entries = fs::read_dir(root)
         .map_err(|e| format!("battery: failed to read {}: {e}", root.display()))?;
     let mut batteries = Vec::new();
@@ -80,10 +98,7 @@ fn first_battery_dir(root: &Path) -> Result<PathBuf, String> {
     }
 
     batteries.sort();
-    batteries
-        .into_iter()
-        .next()
-        .ok_or_else(|| format!("battery: no battery found in {}", root.display()))
+    Ok(batteries)
 }
 
 fn battery_state(status: &str, percentage: f32) -> BatteryState {
@@ -252,6 +267,19 @@ mod tests {
         assert_eq!(snapshot.state, BatteryState::Draining);
         assert_eq!(snapshot.percentage, 73.0);
         assert_eq!(snapshot.estimate, None);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn detects_battery_availability() {
+        let root = temp_root("available");
+
+        assert!(!has_battery_in(&root));
+
+        write(&root, "BAT1/type", "Battery");
+
+        assert!(has_battery_in(&root));
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -10,8 +10,8 @@ use iced::{
     widget::{Column, Row, container, text, tooltip},
 };
 use oxibar_plugin_api::{
-    ABI_VERSION, PluginModel, PluginMsg, PluginStream, drain_model_errors, plugin_model,
-    toml::Table, with_model_read, with_model_write,
+    ABI_VERSION, PluginAvailability, PluginModel, PluginMsg, PluginStream, drain_model_errors,
+    plugin_model, toml::Table, with_model_read, with_model_write,
 };
 use oxiced::{
     theme::theme_impl::OXITHEME,
@@ -66,6 +66,15 @@ pub extern "Rust" fn abi_version() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "Rust" fn name() -> &'static str {
     "Battery"
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn availability(_global_config: Table) -> PluginAvailability {
+    if system::has_battery() {
+        PluginAvailability::Available
+    } else {
+        PluginAvailability::Unavailable("no battery found")
+    }
 }
 
 #[unsafe(no_mangle)]
