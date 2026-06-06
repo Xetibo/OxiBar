@@ -21,6 +21,7 @@ pub enum Message {
     ClosePluginModal(String),
     SetPopupPlugin(Option<String>),
     SetPopupOpen(bool),
+    RefreshPopupInputRegion(String),
     SetPopupInputRegion(bool, BarSection, u32, u32),
     OpenModalLayer(IcedId),
     CloseModalLayer(IcedId),

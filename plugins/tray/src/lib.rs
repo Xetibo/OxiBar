@@ -13,11 +13,12 @@ use iced::{
     },
     futures::Stream,
     stream,
-    widget::{Column, Row, Space, button, container, image, mouse_area, svg, text},
+    widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, svg, text},
 };
 use oxibar_plugin_api::{
-    ABI_VERSION, HOST_REQUEST_TOGGLE_POPUP, PluginMetadata, PluginModel, PluginMsg, PluginStream,
-    drain_model_errors, plugin_model, toml::Table, with_model_read, with_model_write,
+    ABI_VERSION, HOST_REQUEST_TOGGLE_POPUP, PluginMetadata, PluginModel, PluginMsg,
+    PluginPopupMetrics, PluginStream, drain_model_errors, plugin_model, toml::Table,
+    with_model_read, with_model_write,
 };
 use oxiced::theme::theme_impl::OXITHEME;
 use oxiced::widgets::oxi_plugin;
@@ -32,6 +33,12 @@ use system::{
 
 const WATCHER_BUS_NAME: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
+const POPUP_WIDTH: u32 = 300;
+const POPUP_MAX_HEIGHT: u32 = 420;
+const POPUP_MIN_HEIGHT: u32 = 48;
+const POPUP_VERTICAL_PADDING: u32 = 24;
+const TRAY_ROW_HEIGHT: u32 = 30;
+const TRAY_ROW_SPACING: u32 = 6;
 const CONTEXT_MENU_WIDTH: f32 = 240.0;
 const CONTEXT_MENU_MAX_HEIGHT: f32 = 420.0;
 
@@ -93,9 +100,29 @@ pub extern "Rust" fn name() -> &'static str {
 #[unsafe(no_mangle)]
 pub extern "Rust" fn metadata() -> PluginMetadata {
     PluginMetadata {
-        popup_size: Some((300, 180)),
-        popup_input_size: Some((300, 420)),
+        popup_size: Some((POPUP_WIDTH, 180)),
+        popup_input_size: Some((POPUP_WIDTH, POPUP_MAX_HEIGHT)),
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn popup_metrics(model: PluginModel) -> PluginPopupMetrics {
+    with_model_read::<Model, _>(&model, |model| {
+        let visible_height = tray_popup_height(model.items.len());
+        let input_height = if model.open_menu.is_some() {
+            POPUP_MAX_HEIGHT
+        } else {
+            visible_height
+        };
+        PluginPopupMetrics {
+            popup_size: Some((POPUP_WIDTH, visible_height)),
+            popup_input_size: Some((POPUP_WIDTH, input_height)),
+        }
+    })
+    .unwrap_or(PluginPopupMetrics {
+        popup_size: Some((POPUP_WIDTH, POPUP_MIN_HEIGHT)),
+        popup_input_size: Some((POPUP_WIDTH, POPUP_MIN_HEIGHT)),
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -245,7 +272,7 @@ pub extern "Rust" fn popup_view(
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
         let mut list = Column::new()
-            .spacing(6)
+            .spacing(10)
             .padding([12, 14])
             .width(Length::Fill);
 
@@ -278,8 +305,23 @@ pub extern "Rust" fn popup_view(
             ));
         }
 
-        vec![list.into()]
+        if tray_popup_height(model.items.len()) >= POPUP_MAX_HEIGHT {
+            vec![scrollable(list).height(Length::Fill).into()]
+        } else {
+            vec![list.into()]
+        }
     })
+}
+
+fn tray_popup_height(item_count: usize) -> u32 {
+    if item_count == 0 {
+        return POPUP_MIN_HEIGHT;
+    }
+
+    let count = item_count as u32;
+    let rows = count * TRAY_ROW_HEIGHT;
+    let spacing = count.saturating_sub(1) * TRAY_ROW_SPACING;
+    (POPUP_VERTICAL_PADDING + rows + spacing).clamp(POPUP_MIN_HEIGHT, POPUP_MAX_HEIGHT)
 }
 
 fn tray_item_row(
@@ -751,10 +793,18 @@ impl Watcher {
         if service.is_empty() || path.is_empty() {
             return;
         }
-        let item = query_item(&service, &path)
-            .unwrap_or_else(|| TrayItem::new_fallback(service, path, service_or_path));
+        let item = TrayItem::new_fallback(service.clone(), path.clone(), service_or_path);
         self.items.lock().unwrap().insert(item.key.clone(), item);
         publish_snapshot(&self.items, &self.output);
+
+        let items = self.items.clone();
+        let output = self.output.clone();
+        std::thread::spawn(move || {
+            if let Some(item) = query_item(&service, &path) {
+                items.lock().unwrap().insert(item.key.clone(), item);
+                publish_snapshot(&items, &output);
+            }
+        });
     }
 
     #[zbus(name = "RegisterStatusNotifierHost")]
@@ -869,6 +919,10 @@ mod tests {
         assert_eq!(abi_version(), ABI_VERSION);
         assert_eq!(view(plugin_model.clone()).unwrap().len(), 1);
         assert_eq!(popup_view(plugin_model.clone()).unwrap().len(), 1);
+        assert_eq!(
+            popup_metrics(plugin_model.clone()).popup_size,
+            Some((300, 48))
+        );
 
         let _ = update(
             plugin_model.clone(),
@@ -896,6 +950,10 @@ mod tests {
             assert_eq!(model.open_menu.as_deref(), Some("k"));
             assert_eq!(model.menus.get("k").unwrap().len(), 3);
         }
+        assert_eq!(
+            popup_metrics(plugin_model.clone()).popup_input_size,
+            Some((300, 420))
+        );
 
         let _ = update(
             plugin_model.clone(),
@@ -903,5 +961,13 @@ mod tests {
         );
         assert_eq!(errors(plugin_model.clone()), vec!["watcher failed"]);
         assert!(errors(plugin_model).is_empty());
+    }
+
+    #[test]
+    fn tray_popup_height_tracks_item_count_with_cap() {
+        assert_eq!(tray_popup_height(0), 48);
+        assert_eq!(tray_popup_height(1), 54);
+        assert_eq!(tray_popup_height(5), 198);
+        assert_eq!(tray_popup_height(100), 420);
     }
 }

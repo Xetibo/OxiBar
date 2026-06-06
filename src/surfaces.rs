@@ -3,7 +3,7 @@ use iced::{
     Alignment, Element, Length, Padding, Point, Rectangle, Theme,
     widget::{Column, Row, Space, Stack, canvas},
 };
-use iced_anim::{AnimationBuilder, Motion};
+use iced_anim::{AnimationBuilder, transition::Easing};
 use iced_layershell::reexport::IcedId;
 use oxiced::theme::theme_impl::OXITHEME;
 
@@ -21,6 +21,8 @@ use crate::{
 
 const PANEL_BODY_INSET: u32 = POPUP_CONNECTOR_PADDING / 2;
 const PANEL_RADIUS: f32 = 20.0;
+const BAR_VERTICAL_PADDING: u16 = 3;
+const BAR_HORIZONTAL_PADDING: u16 = 8;
 
 impl OxiBar {
     pub(crate) fn view(&self, id: IcedId) -> Element<'_, Message> {
@@ -63,7 +65,7 @@ impl OxiBar {
 
         let bar = Container::new(row)
             .style(move |theme: &Theme| Self::box_style(theme, transparent))
-            .padding([3, 0])
+            .padding([BAR_VERTICAL_PADDING, BAR_HORIZONTAL_PADDING])
             .align_x(Alignment::Center)
             .align_y(Alignment::Center)
             .width(Length::Fill)
@@ -218,7 +220,7 @@ impl OxiBar {
                 .clip(!has_detached_overlay)
                 .into()
         })
-        .animation(Motion::SMOOTH)
+        .animation(Easing::EASE_OUT.quick().reversible(true))
         .animates_layout(true)
         .into()
     }

@@ -46,6 +46,22 @@ fn popup_request_uses_input_metadata_for_detached_overlays() {
 }
 
 #[test]
+fn popup_request_uses_dynamic_metrics_when_available() {
+    let mut host = TestHost::with_plugins([(
+        "Tray",
+        FakePluginOptions::popup().with_dynamic_popup_metrics((300, 96), Some((300, 420))),
+    )]);
+
+    let applied = host.drive_plugin_request("Tray", TOGGLE_POPUP);
+
+    assert!(
+        applied
+            .iter()
+            .any(|message| { matches!(message, Message::SetPopupInputRegion(true, _, 332, 420)) })
+    );
+}
+
+#[test]
 fn repeated_popup_request_closes_open_popup_without_clearing_plugin() {
     let mut host = TestHost::with_plugins([("Clock", FakePluginOptions::popup())]);
 

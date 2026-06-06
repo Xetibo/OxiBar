@@ -197,16 +197,26 @@ pub extern "Rust" fn view(
             model.snapshot.default_output.as_deref(),
         )
         .map(|device| device.volume);
-        let label = volume
-            .map(|volume| format!("{AUDIO_ICON} {volume}%"))
-            .unwrap_or_else(|| AUDIO_ICON.to_owned());
-        let btn = oxi_plugin::bar_button(
-            text(label)
+        let content: Element<'static, PluginMsg> = if let Some(volume) = volume {
+            Row::new()
+                .push(text(AUDIO_ICON).size(14).align_y(Alignment::Center))
+                .push(
+                    text(format!("{volume}%"))
+                        .size(14)
+                        .align_y(Alignment::Center),
+                )
+                .spacing(10)
+                .height(Length::Fill)
+                .align_y(Alignment::Center)
+                .into()
+        } else {
+            text(AUDIO_ICON)
                 .size(14)
                 .align_y(Alignment::Center)
-                .align_x(Alignment::Center),
-        )
-        .on_press(msg(Message::TogglePopup));
+                .align_x(Alignment::Center)
+                .into()
+        };
+        let btn = oxi_plugin::bar_button(content).on_press(msg(Message::TogglePopup));
 
         vec![btn.into()]
     })

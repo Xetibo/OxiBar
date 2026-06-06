@@ -5,6 +5,7 @@
 - Keep changes small and aligned with existing module boundaries.
 - Prefer pure helper functions for parsing, state transitions, and config extraction so behavior is unit-testable without DBus, Wayland, Hyprland, or shell commands.
 - Keep dynamic plugin ABI entry points thin. Delegate testable behavior to normal Rust functions where practical.
+- Keep model-dependent popup sizing in pure helpers and expose it through optional `popup_metrics(model)` only when content height truly varies.
 - Keep plugin `lib.rs` focused on ABI, model updates, and view composition. Move command/DBus integrations, parsers, and domain data into modules such as `system.rs` before files become god files.
 - Use `Result<T, String>` for plugin-local external command/DBus errors when the error is surfaced through a plugin error queue.
 - Avoid long-lived locks around UI building or external calls.

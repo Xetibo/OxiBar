@@ -27,8 +27,8 @@ use std::sync::Arc;
 use libloading::Library;
 use oxibar_plugin_api::{
     ABI_VERSION, AbiVersionFn, ErrorsFn, LaunchFn, MetadataFn, ModalViewFn, ModelFn, NameFn,
-    PanelViewFn, PluginMetadata, PluginModel, PluginMsg, PopupViewFn, SubscriptionFn, ToastViewFn,
-    UpdateFn, ViewFn,
+    PanelViewFn, PluginMetadata, PluginModel, PluginMsg, PluginPopupMetrics, PopupMetricsFn,
+    PopupViewFn, SubscriptionFn, ToastViewFn, UpdateFn, ViewFn,
 };
 use toml::Table;
 use tracing::{error, info, warn};
@@ -47,6 +47,7 @@ pub struct PluginFuncs {
     pub errors: ErrorsFn,
     pub name: NameFn,
     pub metadata: PluginMetadata,
+    pub popup_metrics: Option<PopupMetricsFn>,
     pub subscription: SubscriptionFn,
     pub popup_view: Option<PopupViewFn>,
     pub modal_view: Option<ModalViewFn>,
@@ -145,6 +146,7 @@ unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), Load
     let metadata: PluginMetadata = unsafe { resolve_optional::<MetadataFn>(&lib, "metadata") }
         .map(|metadata| unsafe { metadata() })
         .unwrap_or_default();
+    let popup_metrics: Option<PopupMetricsFn> = unsafe { resolve_optional(&lib, "popup_metrics") };
     let subscription: SubscriptionFn = unsafe { resolve(&lib, "subscription")? };
     let popup_view: Option<PopupViewFn> = unsafe { resolve_optional(&lib, "popup_view") };
     let modal_view: Option<ModalViewFn> = unsafe { resolve_optional(&lib, "modal_view") };
@@ -164,6 +166,7 @@ unsafe fn load_one(path: &std::path::Path) -> Result<(String, PluginFuncs), Load
             errors,
             name,
             metadata,
+            popup_metrics,
             subscription,
             popup_view,
             modal_view,
@@ -242,6 +245,16 @@ pub fn render_plugin(
             Vec::new()
         }
     }
+}
+
+/// Read optional model-dependent popup metrics from a plugin.
+pub fn query_plugin_popup_metrics(
+    funcs: &PluginFuncs,
+    model: &PluginModel,
+) -> Option<PluginPopupMetrics> {
+    funcs
+        .popup_metrics
+        .map(|popup_metrics| unsafe { popup_metrics(model.clone()) })
 }
 
 /// Render a plugin-provided popup body, if the plugin exposes one.

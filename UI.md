@@ -15,7 +15,9 @@ This file is the styling contract for Oxibar plugins. New plugins and UI changes
 
 - Main bar background uses `OXITHEME.mantle` unless `[bar] transparent = true` is set.
 - Popup, panel, and modal host surfaces use `OXITHEME.mantle`. Plugin content should not repaint the full surface with another base color.
+- Popup open/close animation uses quick `Easing::EASE_OUT` timing to align with notification-center layer opening.
 - Popups are compact overlays. Keep content inside `Length::Fill`, with body padding `[12, 14]` and vertical spacing `8` to `10`.
+- Plugins with model-dependent popup content should export `popup_metrics(model)` and cap long content at the host max height with scrolling.
 - Panels are full-height side surfaces. Use `padding([14, 14])`, top-level spacing `12`, and scrolling for long lists.
 - Modals are focused task surfaces. The host provides radius `18`, shadow, border, and padding `16`; plugin modal content should use full width and not add another outer card.
 
@@ -23,8 +25,10 @@ This file is the styling contract for Oxibar plugins. New plugins and UI changes
 
 - Bar plugin controls are 22.5 units high.
 - Use horizontal padding `[0, 8]` and `Length::Shrink` width for text/icon buttons.
+- The host bar keeps 8 units of padding at the left and right window edges.
 - Use text size `14` for bar labels and icons.
 - Align bar text to center on both axes.
+- Text labels that combine icons with counts or values should use row spacing `4` between the icon and text, not extra inner padding.
 - Default bar button style is transparent background, `OXITHEME.primary` text, transparent border, radius `8`, and no shadow.
 - Hover background must be `OXITHEME.primary_bg_hover`.
 - Pressed background must be `OXITHEME.primary_bg_active`.
@@ -103,7 +107,7 @@ This file is the styling contract for Oxibar plugins. New plugins and UI changes
 
 ## Popup, Modal, And Panel Duties
 
-- Plugins request host surfaces with `HOST_REQUEST_TOGGLE_POPUP`, `HOST_REQUEST_OPEN_MODAL`, `HOST_REQUEST_CLOSE_MODAL`, or `HOST_REQUEST_TOGGLE_PANEL`.
+- Plugins request host surfaces with `HOST_REQUEST_TOGGLE_POPUP`, `HOST_REQUEST_OPEN_MODAL`, `HOST_REQUEST_CLOSE_MODAL`, or `HOST_REQUEST_TOGGLE_PANEL`. Plugins with variable popup content can expose `popup_metrics(model)` so the host sizes visible chrome and input region from current model state.
 - Plugins render only inner content. Host owns popup shape, modal chrome, panel chrome, layer placement, and input region.
 - Popup content should be useful at 320x300. Larger plugins may rely on the host large popup size, but must still scroll instead of overflowing.
 - Panel content should assume width `420` and full height.

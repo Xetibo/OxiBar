@@ -3,7 +3,9 @@ use std::pin::Pin;
 use iced::{Font, Subscription, Task, Theme, theme::Style};
 use iced_layershell::reexport::IcedId;
 use once_cell::sync::Lazy;
-use oxibar_plugin_api::{HostToastRequest, PluginMsg, PluginStream, SubscriptionFn};
+use oxibar_plugin_api::{
+    HostToastRequest, PluginMsg, PluginPopupMetrics, PluginStream, SubscriptionFn,
+};
 use oxiced::{theme::theme_impl::get_derived_iced_theme, widgets::oxi_layer::layer_theme};
 use toml::Table;
 use tracing::error;
@@ -16,7 +18,7 @@ use crate::{
         TOAST_SPACING,
     },
     messages::{Message, map_plugin_message},
-    plugins::{PluginMap, dispatch_update, drain_errors, load_plugins},
+    plugins::{PluginMap, dispatch_update, drain_errors, load_plugins, query_plugin_popup_metrics},
 };
 
 pub(crate) static CONFIG: Lazy<Table> = Lazy::new(get_config);
@@ -149,6 +151,9 @@ impl OxiBar {
                 self.popup_open = open;
                 Task::none()
             }
+            Message::RefreshPopupInputRegion(plugin_id) => {
+                self.refresh_popup_input_region(&plugin_id)
+            }
             Message::TogglePluginPopup(plugin_id) => self.toggle_plugin_popup(plugin_id),
             Message::TogglePluginPanel(plugin_id) => self.toggle_plugin_panel(plugin_id),
             Message::OpenPluginModal(plugin_id) => self.open_plugin_modal(plugin_id),
@@ -166,12 +171,19 @@ impl OxiBar {
                 };
                 let task = dispatch_update(funcs, model.clone(), msg);
                 drain_errors(funcs, model);
+                let refresh = if self.popup_open
+                    && self.popup_plugin.as_deref() == Some(plugin_id.as_str())
+                {
+                    Task::done(Message::RefreshPopupInputRegion(plugin_id.clone()))
+                } else {
+                    Task::none()
+                };
                 match task {
                     Some(task) => {
                         let id = plugin_id.clone();
-                        task.map(move |msg| map_plugin_message(id.clone(), msg))
+                        refresh.chain(task.map(move |msg| map_plugin_message(id.clone(), msg)))
                     }
-                    None => Task::none(),
+                    None => refresh,
                 }
             }
         }
@@ -193,6 +205,37 @@ impl OxiBar {
         } else {
             BarSection::End
         }
+    }
+
+    fn refresh_popup_input_region(&self, plugin_id: &str) -> Task<Message> {
+        if !self.popup_open || self.popup_plugin.as_deref() != Some(plugin_id) {
+            return Task::none();
+        }
+
+        let section = self.plugin_section(plugin_id);
+        let metrics = self.popup_input_metrics(plugin_id);
+        Task::done(Message::SetPopupInputRegion(
+            true,
+            section,
+            metrics.connector_width,
+            metrics.height,
+        ))
+    }
+
+    fn plugin_popup_metrics(&self, plugin_id: &str) -> Option<PluginPopupMetrics> {
+        let (model, funcs) = self.plugins.get(plugin_id)?;
+        query_plugin_popup_metrics(funcs, model)
+    }
+
+    fn popup_size(&self, plugin_id: &str, dynamic: Option<PluginPopupMetrics>) -> (u32, u32) {
+        layout::popup_size_from_config(&CONFIG, plugin_id)
+            .or_else(|| dynamic.and_then(|metrics| metrics.popup_size))
+            .or_else(|| {
+                self.plugins
+                    .get(plugin_id)
+                    .and_then(|(_, funcs)| funcs.metadata.popup_size)
+            })
+            .unwrap_or(DEFAULT_POPUP_SIZE)
     }
 
     fn toggle_plugin_popup(&mut self, plugin_id: String) -> Task<Message> {
@@ -427,22 +470,23 @@ impl OxiBar {
     }
 
     pub(crate) fn popup_metrics(&self, plugin_id: &str) -> PopupMetrics {
-        let size = layout::popup_size_from_config(&CONFIG, plugin_id).or_else(|| {
-            self.plugins
-                .get(plugin_id)
-                .and_then(|(_, funcs)| funcs.metadata.popup_size)
-        });
-        PopupMetrics::new(size.unwrap_or(DEFAULT_POPUP_SIZE))
+        let dynamic = self.plugin_popup_metrics(plugin_id);
+        PopupMetrics::new(self.popup_size(plugin_id, dynamic))
     }
 
     pub(crate) fn popup_input_metrics(&self, plugin_id: &str) -> PopupMetrics {
-        let visible = self.popup_metrics(plugin_id);
-        let size = self
-            .plugins
-            .get(plugin_id)
-            .and_then(|(_, funcs)| funcs.metadata.popup_input_size)
+        let dynamic = self.plugin_popup_metrics(plugin_id);
+        let visible_size = self.popup_size(plugin_id, dynamic);
+        let visible = PopupMetrics::new(visible_size);
+        let (width, height) = dynamic
+            .and_then(|metrics| metrics.popup_input_size)
+            .or_else(|| {
+                self.plugins
+                    .get(plugin_id)
+                    .and_then(|(_, funcs)| funcs.metadata.popup_input_size)
+            })
             .unwrap_or((visible.body_width, visible.height));
-        PopupMetrics::new(size)
+        PopupMetrics::new((width.max(visible.body_width), height.max(visible.height)))
     }
 }
 

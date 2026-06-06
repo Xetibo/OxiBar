@@ -24,13 +24,13 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - Plugins are keyed by their declared `name()` string, not by filesystem path or load index. Fallback layout order follows config plugin order.
 - Plugin messages are wrapped as `PluginMsg` and mapped to host messages when they carry a known host request string.
 - Host-request mapping is centralized in `map_plugin_message()`, so plugin subscription messages and plugin initialization tasks use the same routing rules.
-- The host owns popup, modal, and panel surfaces. Plugins render only inner content for those surfaces.
-- Visible popup size comes from `[bar.popup_sizes]`, then optional plugin metadata, then host default size. Plugins can also request a larger transparent popup input region through metadata for detached overlays such as tray context menus.
+- The host owns popup, modal, and panel surfaces. Plugins render only inner content for those surfaces. Popup open/close layout animation uses a fixed quick ease-out transition so app-side popups track notification-panel layer opening speed more closely.
+- Visible popup size comes from `[bar.popup_sizes]`, then optional runtime `popup_metrics(model)`, then optional plugin metadata, then host default size. Plugins can also request a larger transparent popup input region through runtime metrics or metadata for detached overlays such as tray context menus.
 
 ## Plugin ABI
 
 - Required symbols: `abi_version`, `name`, `model`, `update`, `launch`, `view`, `errors`, and `subscription`.
-- Optional symbols: `metadata`, `popup_view`, `modal_view`, and `panel_view`.
+- Optional symbols: `metadata`, `popup_metrics`, `popup_view`, `modal_view`, and `panel_view`.
 - `ABI_VERSION` in `oxibar-plugin-api` gates host/plugin compatibility.
 - Plugin models are `Arc<RwLock<Box<dyn OxiAny>>>`; plugin messages are `Arc<dyn OxiAny>`.
 - Plugin subscriptions return a raw pointer to a boxed stream. The host rebuilds it while keeping the dynamic library alive for function-pointer validity.
@@ -42,7 +42,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `clock`: time display, local calendar popup with event-day tooltips, optional HTTPS CalDAV event sync, and configurable external calendar launcher.
 - `network`: NetworkManager `nmcli` connection management and password modal; popup and modal surfaces.
 - `notifications`: Freedesktop notification server, toast layers, inline replies, DND state, and side panel.
-- `tray`: StatusNotifier watcher, tray item popup, activation, and DBusMenu-backed detached context menu rendering.
+- `tray`: StatusNotifier watcher, dynamically sized tray item popup, activation, and DBusMenu-backed detached context menu rendering. Item registration publishes a fallback row immediately and refreshes DBus metadata asynchronously so registering applications are not blocked by property queries.
 - `workspaces`: Hyprland workspace display and dispatch.
 
 Plugin `lib.rs` files should keep ABI symbols, model update, and view composition. External-system logic and parsers should live in sibling modules once they grow beyond small helpers.

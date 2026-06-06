@@ -220,6 +220,17 @@ pub struct PluginMetadata {
     pub popup_input_size: Option<(u32, u32)>,
 }
 
+/// Optional runtime popup metrics read from plugins whose popup size depends on
+/// model state.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PluginPopupMetrics {
+    /// Visible popup body size, including host chrome.
+    pub popup_size: Option<(u32, u32)>,
+    /// Optional input/layout region for detached overlays such as context
+    /// menus. Defaults to the resolved visible popup size when unset.
+    pub popup_input_size: Option<(u32, u32)>,
+}
+
 // -------- Function-pointer ABI --------
 //
 // Plugins expose the required `#[unsafe(no_mangle)] pub extern "Rust"` symbols.
@@ -265,6 +276,8 @@ pub type ErrorsFn = unsafe extern "Rust" fn(model: PluginModel) -> Vec<String>;
 pub type NameFn = unsafe extern "Rust" fn() -> &'static str;
 
 pub type MetadataFn = unsafe extern "Rust" fn() -> PluginMetadata;
+
+pub type PopupMetricsFn = unsafe extern "Rust" fn(model: PluginModel) -> PluginPopupMetrics;
 
 pub type SubscriptionFn = unsafe extern "Rust" fn() -> *mut PluginStream;
 

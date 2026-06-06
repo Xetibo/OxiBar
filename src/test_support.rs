@@ -5,7 +5,7 @@ use iced_runtime::Action;
 use oxibar_plugin_api::{
     HOST_REQUEST_CLOSE_MODAL, HOST_REQUEST_OPEN_MODAL, HOST_REQUEST_TOGGLE_PANEL,
     HOST_REQUEST_TOGGLE_POPUP, HostToastRequest, OxiAny, PluginMetadata, PluginModel, PluginMsg,
-    PluginStream, toml::Table,
+    PluginPopupMetrics, PluginStream, toml::Table,
 };
 
 use crate::{
@@ -29,6 +29,7 @@ pub struct FakePluginOptions {
     pub toast: bool,
     pub popup_size: Option<(u32, u32)>,
     pub popup_input_size: Option<(u32, u32)>,
+    pub dynamic_popup_metrics: Option<PluginPopupMetrics>,
 }
 
 impl FakePluginOptions {
@@ -79,12 +80,25 @@ impl FakePluginOptions {
         self.popup_input_size = Some((width, height));
         self
     }
+
+    pub fn with_dynamic_popup_metrics(
+        mut self,
+        popup_size: (u32, u32),
+        popup_input_size: Option<(u32, u32)>,
+    ) -> Self {
+        self.dynamic_popup_metrics = Some(PluginPopupMetrics {
+            popup_size: Some(popup_size),
+            popup_input_size,
+        });
+        self
+    }
 }
 
 #[derive(Debug, Default)]
 struct FakePluginModel {
     seen: Vec<String>,
     errors: Vec<String>,
+    dynamic_popup_metrics: Option<PluginPopupMetrics>,
 }
 
 #[derive(Clone, Debug)]
@@ -109,7 +123,7 @@ impl TestHost {
 
         for (name, options) in plugins {
             let name = name.into();
-            let model = fake_model();
+            let model = fake_model(options.dynamic_popup_metrics);
             let funcs = Arc::new(fake_funcs(options));
             plugin_map.insert(name.clone(), (model, funcs));
             order.push(name);
@@ -280,8 +294,11 @@ pub fn is_host_request(message: &Message, plugin_id: &str, request: &str) -> boo
     )
 }
 
-fn fake_model() -> PluginModel {
-    let model: Box<dyn OxiAny> = Box::new(FakePluginModel::default());
+fn fake_model(dynamic_popup_metrics: Option<PluginPopupMetrics>) -> PluginModel {
+    let model: Box<dyn OxiAny> = Box::new(FakePluginModel {
+        dynamic_popup_metrics,
+        ..FakePluginModel::default()
+    });
     Arc::new(RwLock::new(model))
 }
 
@@ -298,6 +315,10 @@ fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
             popup_size: options.popup_size,
             popup_input_size: options.popup_input_size,
         },
+        popup_metrics: options
+            .dynamic_popup_metrics
+            .is_some()
+            .then_some(fake_popup_metrics),
         subscription: fake_subscription,
         popup_view: options.popup.then_some(fake_popup_view),
         modal_view: options.modal.then_some(fake_modal_view),
@@ -321,7 +342,17 @@ fn current_library() -> libloading::Library {
 unsafe extern "Rust" fn fake_model_fn(
     _global_config: Table,
 ) -> (PluginModel, Option<Task<PluginMsg>>) {
-    (fake_model(), None)
+    (fake_model(None), None)
+}
+
+unsafe extern "Rust" fn fake_popup_metrics(model: PluginModel) -> PluginPopupMetrics {
+    let Ok(guard) = model.try_read() else {
+        return PluginPopupMetrics::default();
+    };
+    guard
+        .downcast_ref::<FakePluginModel>()
+        .and_then(|model| model.dynamic_popup_metrics)
+        .unwrap_or_default()
 }
 
 unsafe extern "Rust" fn fake_update(

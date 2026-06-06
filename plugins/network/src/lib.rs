@@ -251,18 +251,26 @@ pub extern "Rust" fn view(
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
         let connected = model.connected.len();
-        let label = if connected == 0 {
-            WIFI_ICON.to_owned()
-        } else {
-            format!("{WIFI_ICON} {connected}")
-        };
-        let btn = oxi_plugin::bar_button(
-            text(label)
+        let content: Element<'static, PluginMsg> = if connected == 0 {
+            text(WIFI_ICON)
                 .size(14)
                 .align_y(Alignment::Center)
-                .align_x(Alignment::Center),
-        )
-        .on_press(msg(Message::TogglePopup));
+                .align_x(Alignment::Center)
+                .into()
+        } else {
+            Row::new()
+                .push(text(WIFI_ICON).size(14).align_y(Alignment::Center))
+                .push(
+                    text(connected.to_string())
+                        .size(14)
+                        .align_y(Alignment::Center),
+                )
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .height(Length::Fill)
+                .into()
+        };
+        let btn = oxi_plugin::bar_button(content).on_press(msg(Message::TogglePopup));
 
         vec![btn.into()]
     })

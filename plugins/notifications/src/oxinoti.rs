@@ -312,14 +312,24 @@ pub(crate) fn read_timeout(global_config: &Table) -> Duration {
     Duration::from_secs(seconds)
 }
 
-pub(crate) fn bar_button(label: String) -> button::Button<'static, PluginMsg> {
-    oxi_plugin::bar_button(
-        text(label)
+pub(crate) fn bar_button(count: usize) -> button::Button<'static, PluginMsg> {
+    let content: Element<'static, PluginMsg> = if count == 0 {
+        text(ICON)
             .size(14)
             .align_y(Alignment::Center)
-            .align_x(Alignment::Center),
-    )
-    .on_press(msg(Event::TogglePanel))
+            .align_x(Alignment::Center)
+            .into()
+    } else {
+        row![
+            text(ICON).size(14).align_y(Alignment::Center),
+            text(count.to_string()).size(14).align_y(Alignment::Center)
+        ]
+        .spacing(10)
+        .height(Length::Fill)
+        .align_y(Alignment::Center)
+        .into()
+    };
+    oxi_plugin::bar_button(content).on_press(msg(Event::TogglePanel))
 }
 
 pub(crate) fn panel_view(

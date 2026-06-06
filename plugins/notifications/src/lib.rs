@@ -260,12 +260,7 @@ pub extern "Rust" fn view(
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
         let count = model.notifications.len();
-        let label = if count == 0 {
-            oxinoti::ICON.to_owned()
-        } else {
-            format!("{} {count}", oxinoti::ICON)
-        };
-        vec![oxinoti::bar_button(label).into()]
+        vec![oxinoti::bar_button(count).into()]
     })
 }
 
