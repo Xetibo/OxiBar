@@ -31,6 +31,7 @@ use system::{
 
 const DEFAULT_SCAN_SECONDS: u64 = 15;
 const WIFI_ICON: &str = "󰤨";
+const POPUP_SIZE: (u32, u32) = (460, 420);
 
 static SCAN_INTERVAL: OnceLock<Duration> = OnceLock::new();
 
@@ -117,7 +118,7 @@ pub extern "Rust" fn name() -> &'static str {
 #[unsafe(no_mangle)]
 pub extern "Rust" fn metadata() -> PluginMetadata {
     PluginMetadata {
-        popup_size: Some((460, 420)),
+        popup_size: Some(POPUP_SIZE),
         ..PluginMetadata::default()
     }
 }
@@ -253,19 +254,23 @@ pub extern "Rust" fn view(
         let connected = model.connected.len();
         let content: Element<'static, PluginMsg> = if connected == 0 {
             text(WIFI_ICON)
-                .size(14)
+                .size(OXITHEME.font_md)
                 .align_y(Alignment::Center)
                 .align_x(Alignment::Center)
                 .into()
         } else {
             Row::new()
-                .push(text(WIFI_ICON).size(14).align_y(Alignment::Center))
                 .push(
-                    text(connected.to_string())
-                        .size(14)
+                    text(WIFI_ICON)
+                        .size(OXITHEME.font_md)
                         .align_y(Alignment::Center),
                 )
-                .spacing(10)
+                .push(
+                    text(connected.to_string())
+                        .size(OXITHEME.font_md)
+                        .align_y(Alignment::Center),
+                )
+                .spacing(OXITHEME.padding_md)
                 .align_y(Alignment::Center)
                 .height(Length::Fill)
                 .into()
@@ -282,8 +287,8 @@ pub extern "Rust" fn popup_view(
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
         let mut content = Column::new()
-            .spacing(8)
-            .padding([12, 14])
+            .spacing(OXITHEME.padding_sm)
+            .padding([OXITHEME.padding_md, OXITHEME.padding_lg])
             .width(Length::Fill);
 
         let refresh = oxi_button::button(
@@ -292,11 +297,11 @@ pub extern "Rust" fn popup_view(
             } else {
                 "Refresh"
             })
-            .size(12),
+            .size(OXITHEME.font_md),
             oxi_button::ButtonVariant::SecondaryBg,
         )
         .on_press(msg(Message::Refresh))
-        .padding([5, 8]);
+        .padding([OXITHEME.padding_xs, OXITHEME.padding_sm]);
         content = content.push(
             Row::new()
                 .push(section_title("Connected"))
@@ -358,7 +363,7 @@ pub extern "Rust" fn modal_view(
                 Column::new()
                     .push(section_title("No network selected"))
                     .push(cancel_button("Close"))
-                    .spacing(12)
+                    .spacing(OXITHEME.padding_md)
                     .into(),
             ];
         };
@@ -368,45 +373,45 @@ pub extern "Rust" fn modal_view(
         })
         .secure(true)
         .width(Length::Fill);
-        let save = oxi_button::button(text("Save").size(13), oxi_button::ButtonVariant::Primary)
-            .on_press(msg(Message::SaveEdit))
-            .padding([8, 12]);
+        let save = oxi_button::button(
+            text("Save").size(OXITHEME.font_md),
+            oxi_button::ButtonVariant::Primary,
+        )
+        .on_press(msg(Message::SaveEdit))
+        .padding([OXITHEME.padding_sm, OXITHEME.padding_md]);
         let cancel = cancel_button("Cancel");
 
-        let body = Column::new()
-            .push(
-                text("Network Settings")
-                    .size(18)
-                    .style(|_| iced::widget::text::Style {
+        let body =
+            Column::new()
+                .push(text("Network Settings").size(OXITHEME.font_lg).style(|_| {
+                    iced::widget::text::Style {
                         color: Some(OXITHEME.primary),
-                    }),
-            )
-            .push(
-                text(editing.label)
-                    .size(14)
-                    .style(|_| iced::widget::text::Style {
+                    }
+                }))
+                .push(text(editing.label).size(OXITHEME.font_md).style(|_| {
+                    iced::widget::text::Style {
                         color: Some(OXITHEME.text),
-                    }),
-            )
-            .push(
-                text("Leave password empty to reuse the saved NetworkManager profile.")
-                    .size(11)
-                    .style(|_| iced::widget::text::Style {
-                        color: Some(OXITHEME.text_muted),
-                    }),
-            )
-            .push(password)
-            .push(
-                Row::new()
-                    .push(Space::new().width(Length::Fill))
-                    .push(cancel)
-                    .push(save)
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-            )
-            .spacing(12)
-            .width(Length::Fill)
-            .height(Length::Fill);
+                    }
+                }))
+                .push(
+                    text("Leave password empty to reuse the saved NetworkManager profile.")
+                        .size(OXITHEME.font_sm)
+                        .style(|_| iced::widget::text::Style {
+                            color: Some(OXITHEME.text_muted),
+                        }),
+                )
+                .push(password)
+                .push(
+                    Row::new()
+                        .push(Space::new().width(Length::Fill))
+                        .push(cancel)
+                        .push(save)
+                        .spacing(OXITHEME.padding_sm)
+                        .align_y(Alignment::Center),
+                )
+                .spacing(OXITHEME.padding_md)
+                .width(Length::Fill)
+                .height(Length::Fill);
 
         vec![body.into()]
     })
@@ -452,7 +457,7 @@ fn run_action(
 
 fn section_title(label: &'static str) -> Element<'static, PluginMsg> {
     text(label)
-        .size(12)
+        .size(OXITHEME.font_md)
         .style(|_| iced::widget::text::Style {
             color: Some(OXITHEME.primary),
         })
@@ -461,7 +466,7 @@ fn section_title(label: &'static str) -> Element<'static, PluginMsg> {
 
 fn empty_text(label: &'static str) -> Element<'static, PluginMsg> {
     text(label)
-        .size(12)
+        .size(OXITHEME.font_md)
         .style(|_| iced::widget::text::Style {
             color: Some(OXITHEME.text_muted),
         })
@@ -475,7 +480,7 @@ fn network_row_button_style(_: &iced::Theme, status: button::Status) -> button::
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 8.0.into(),
+            radius: OXITHEME.border_radius.into(),
         },
         shadow: Shadow::default(),
         snap: false,
@@ -496,7 +501,7 @@ fn network_edit_button_style(_: &iced::Theme, status: button::Status) -> button:
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 8.0.into(),
+            radius: OXITHEME.border_radius.into(),
         },
         shadow: Shadow::default(),
         snap: false,
@@ -519,15 +524,19 @@ fn saved_connections_accordion(model: &Model) -> Element<'static, PluginMsg> {
     let label = format!("{icon} Saved Connections ({})", model.saved.len());
     button(
         Row::new()
-            .push(text(label).size(12).style(|_| iced::widget::text::Style {
-                color: Some(OXITHEME.primary),
-            }))
+            .push(
+                text(label)
+                    .size(OXITHEME.font_md)
+                    .style(|_| iced::widget::text::Style {
+                        color: Some(OXITHEME.primary),
+                    }),
+            )
             .push(Space::new().width(Length::Fill))
             .align_y(Alignment::Center),
     )
     .on_press(msg(Message::ToggleSavedConnections))
     .style(network_row_button_style)
-    .padding([6, 8])
+    .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
     .width(Length::Fill)
     .into()
 }
@@ -542,15 +551,23 @@ fn active_row(network: &ActiveNetwork, busy: bool, hovered: bool) -> Element<'st
     animated_network_row(hovered, move || {
         let mut main = row_button(
             Row::new()
-                .push(text("󰤨").size(13).style(text_primary))
+                .push(text("󰤨").size(OXITHEME.font_md).style(text_primary))
                 .push(
                     Column::new()
-                        .push(text(name.clone()).size(13).style(text_primary))
-                        .push(text(details.clone()).size(10).style(text_muted))
-                        .spacing(2)
+                        .push(
+                            text(name.clone())
+                                .size(OXITHEME.font_md)
+                                .style(text_primary),
+                        )
+                        .push(
+                            text(details.clone())
+                                .size(OXITHEME.font_sm)
+                                .style(text_muted),
+                        )
+                        .spacing(OXITHEME.padding_xs)
                         .width(Length::Fill),
                 )
-                .spacing(8)
+                .spacing(OXITHEME.padding_sm)
                 .align_y(Alignment::Center),
         );
         if !busy {
@@ -563,7 +580,7 @@ fn active_row(network: &ActiveNetwork, busy: bool, hovered: bool) -> Element<'st
         Row::new()
             .push(main)
             .push(edit)
-            .spacing(4)
+            .spacing(OXITHEME.padding_xs)
             .align_y(Alignment::Center)
             .into()
     })
@@ -585,15 +602,27 @@ fn saved_row(
     animated_network_row(hovered, move || {
         let mut main = row_button(
             Row::new()
-                .push(text(connection_icon(&kind)).size(13).style(text_primary))
+                .push(
+                    text(connection_icon(&kind))
+                        .size(OXITHEME.font_md)
+                        .style(text_primary),
+                )
                 .push(
                     Column::new()
-                        .push(text(name.clone()).size(13).style(text_primary))
-                        .push(text(details.clone()).size(10).style(text_muted))
-                        .spacing(2)
+                        .push(
+                            text(name.clone())
+                                .size(OXITHEME.font_md)
+                                .style(text_primary),
+                        )
+                        .push(
+                            text(details.clone())
+                                .size(OXITHEME.font_sm)
+                                .style(text_muted),
+                        )
+                        .spacing(OXITHEME.padding_xs)
                         .width(Length::Fill),
                 )
-                .spacing(8)
+                .spacing(OXITHEME.padding_sm)
                 .align_y(Alignment::Center),
         );
         if !busy {
@@ -606,7 +635,7 @@ fn saved_row(
         Row::new()
             .push(main)
             .push(edit)
-            .spacing(4)
+            .spacing(OXITHEME.padding_xs)
             .align_y(Alignment::Center)
             .into()
     })
@@ -634,15 +663,27 @@ fn wifi_row(network: &WifiNetwork, busy: bool, hovered: bool) -> Element<'static
         };
         let mut main = row_button(
             Row::new()
-                .push(text(signal_icon(connected)).size(13).style(text_primary))
+                .push(
+                    text(signal_icon(connected))
+                        .size(OXITHEME.font_md)
+                        .style(text_primary),
+                )
                 .push(
                     Column::new()
-                        .push(text(ssid.clone()).size(13).style(text_primary))
-                        .push(text(details.clone()).size(10).style(text_muted))
-                        .spacing(2)
+                        .push(
+                            text(ssid.clone())
+                                .size(OXITHEME.font_md)
+                                .style(text_primary),
+                        )
+                        .push(
+                            text(details.clone())
+                                .size(OXITHEME.font_sm)
+                                .style(text_muted),
+                        )
+                        .spacing(OXITHEME.padding_xs)
                         .width(Length::Fill),
                 )
-                .spacing(8)
+                .spacing(OXITHEME.padding_sm)
                 .align_y(Alignment::Center),
         );
         if !busy && let Some(action) = action {
@@ -652,7 +693,7 @@ fn wifi_row(network: &WifiNetwork, busy: bool, hovered: bool) -> Element<'static
         Row::new()
             .push(main)
             .push(edit)
-            .spacing(4)
+            .spacing(OXITHEME.padding_xs)
             .align_y(Alignment::Center)
             .into()
     })
@@ -674,14 +715,14 @@ fn animated_network_row(
             .style(move |_| iced::widget::container::Style {
                 background: Some(Background::Color(bg)),
                 border: Border {
-                    radius: 9.0.into(),
+                    radius: OXITHEME.border_radius.into(),
                     color: Color::TRANSPARENT,
                     width: 0.0,
                 },
                 shadow: Shadow::default(),
                 ..Default::default()
             })
-            .padding([5, 6])
+            .padding(OXITHEME.padding_xs)
             .width(Length::Fill)
             .into()
     })
@@ -705,26 +746,29 @@ impl MouseAreaExt for Element<'static, PluginMsg> {
 fn row_button<'a>(content: impl Into<Element<'a, PluginMsg>>) -> button::Button<'a, PluginMsg> {
     button(content)
         .style(network_row_button_style)
-        .padding([6, 8])
+        .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
         .width(Length::Fill)
 }
 
 fn edit_button(message: PluginMsg) -> button::Button<'static, PluginMsg> {
     button(
         text("󰏫")
-            .size(14)
+            .size(OXITHEME.font_md)
             .align_x(Alignment::Center)
             .align_y(Alignment::Center),
     )
     .style(network_edit_button_style)
     .on_press(message)
-    .padding([6, 8])
+    .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
 }
 
 fn cancel_button(label: &'static str) -> button::Button<'static, PluginMsg> {
-    oxi_button::button(text(label).size(13), oxi_button::ButtonVariant::SecondaryBg)
-        .on_press(msg(Message::CancelEdit))
-        .padding([8, 12])
+    oxi_button::button(
+        text(label).size(OXITHEME.font_md),
+        oxi_button::ButtonVariant::SecondaryBg,
+    )
+    .on_press(msg(Message::CancelEdit))
+    .padding([OXITHEME.padding_sm, OXITHEME.padding_md])
 }
 
 fn signal_icon(connected: bool) -> &'static str {
@@ -795,7 +839,7 @@ mod tests {
         assert!(init_task.is_some());
         assert_eq!(name(), "Network");
         assert_eq!(abi_version(), ABI_VERSION);
-        assert_eq!(metadata().popup_size, Some((460, 420)));
+        assert_eq!(metadata().popup_size, Some(POPUP_SIZE));
         assert_eq!(view(plugin_model.clone()).unwrap().len(), 1);
         assert_eq!(popup_view(plugin_model.clone()).unwrap().len(), 1);
         assert_eq!(modal_view(plugin_model.clone()).unwrap().len(), 1);

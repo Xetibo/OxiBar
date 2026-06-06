@@ -20,7 +20,7 @@ This file tracks accepted deviations from the current UI contract in `UI.md`. Th
 
 - Status: accepted temporary exception.
 - Affected code: `plugins/audio/src/lib.rs`, `plugins/bluetooth/src/lib.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, `plugins/tray/src/lib.rs`.
-- Current state: plugins build compact row/card containers with local `container::Style` or `button::Style` closures while still using `OXITHEME` colors.
+- Current state: plugins build compact row/card containers with local `container::Style` or `button::Style` closures while still using `OXITHEME` colors and spacing/font/radius tokens where available. `audio` media/device cards now use `oxi_plugin::compact_card`.
 - Current state: `oxiced::widgets::oxi_plugin` includes `compact_card` and `compact_card_style`, but remaining plugin-local list-row styles have not all been migrated yet.
 - Target fix: migrate popup list-row/card wrappers to `oxi_plugin` helpers.
 
@@ -35,15 +35,23 @@ This file tracks accepted deviations from the current UI contract in `UI.md`. Th
 
 - Status: accepted temporary exception.
 - Affected code: `plugins/clock/src/lib.rs`.
-- Current state: adjacent-month days use `Color { a: 0.45, ..OXITHEME.primary }`.
+- Current state: adjacent-month days use a named local alpha constant with `OXITHEME.primary`.
 - Why accepted: `oxiced` does not currently provide a semantic token for disabled accent text or adjacent-calendar text.
 - Target fix: add a semantic disabled/accent-muted text color to `oxiced` or use a new calendar helper once available.
+
+### Missing Shared Tooltip Chrome Helper
+
+- Status: accepted temporary exception.
+- Affected code: `plugins/clock/src/lib.rs`, `plugins/battery/src/lib.rs`.
+- Current state: clock calendar event days and the battery bar item use local themed tooltip container styles so hover details share the same chrome.
+- Why accepted: `oxiced` does not currently provide a shared plugin tooltip helper.
+- Target fix: add an `oxi_plugin` tooltip chrome helper and migrate local tooltip styles to it.
 
 ### Workspace Pill Styling
 
 - Status: accepted temporary exception.
 - Affected code: `plugins/workspaces/src/lib.rs`.
-- Current state: workspace buttons use a custom 22.5x22.5 pill style with active/inactive theme colors and a small shadow.
+- Current state: workspace buttons use a custom pill style sized from `oxi_plugin::BAR_CONTROL_HEIGHT`, active/inactive theme colors, and a small named shadow.
 - Why accepted: `oxiced` does not currently provide a compact workspace/pill/bar-item helper that supports active, hover, pressed, and fixed square sizing.
 - Target fix: add a compact pill/bar-item helper to `oxiced`; remove local workspace style and shadow.
 

@@ -30,6 +30,7 @@ use system::{
 
 const DEFAULT_REFRESH_SECONDS: u64 = 20;
 const ICON: &str = "󰂯";
+const POPUP_SIZE: (u32, u32) = (460, 420);
 
 static REFRESH_INTERVAL: OnceLock<Duration> = OnceLock::new();
 
@@ -106,7 +107,7 @@ pub extern "Rust" fn name() -> &'static str {
 #[unsafe(no_mangle)]
 pub extern "Rust" fn metadata() -> PluginMetadata {
     PluginMetadata {
-        popup_size: Some((460, 420)),
+        popup_size: Some(POPUP_SIZE),
         ..PluginMetadata::default()
     }
 }
@@ -240,8 +241,8 @@ pub extern "Rust" fn popup_view(
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
         let mut content = Column::new()
-            .spacing(8)
-            .padding([12, 14])
+            .spacing(OXITHEME.padding_sm)
+            .padding([OXITHEME.padding_md, OXITHEME.padding_lg])
             .width(Length::Fill);
         let scan = oxi_button::button(
             text(if model.pending.is_some() {
@@ -249,11 +250,11 @@ pub extern "Rust" fn popup_view(
             } else {
                 "Scan"
             })
-            .size(12),
+            .size(OXITHEME.font_md),
             oxi_button::ButtonVariant::SecondaryBg,
         )
         .on_press(msg(Message::Scan))
-        .padding([5, 8]);
+        .padding([OXITHEME.padding_xs, OXITHEME.padding_sm]);
         content = content.push(
             Row::new()
                 .push(section_title("Bluetooth"))
@@ -310,22 +311,29 @@ pub extern "Rust" fn modal_view(
             msg(Message::CodeChanged(value))
         })
         .width(Length::Fill);
-        let submit = oxi_button::button(text("Pair").size(13), oxi_button::ButtonVariant::Primary)
-            .on_press(msg(Message::SubmitCode))
-            .padding([8, 12]);
+        let submit = oxi_button::button(
+            text("Pair").size(OXITHEME.font_md),
+            oxi_button::ButtonVariant::Primary,
+        )
+        .on_press(msg(Message::SubmitCode))
+        .padding([OXITHEME.padding_sm, OXITHEME.padding_md]);
         let cancel = oxi_button::button(
-            text("Cancel").size(13),
+            text("Cancel").size(OXITHEME.font_md),
             oxi_button::ButtonVariant::SecondaryBg,
         )
         .on_press(msg(Message::CancelCode))
-        .padding([8, 12]);
+        .padding([OXITHEME.padding_sm, OXITHEME.padding_md]);
         vec![
             Column::new()
                 .push(section_title("Bluetooth Pairing"))
-                .push(text(pairing.device.name).size(14).style(text_primary))
+                .push(
+                    text(pairing.device.name)
+                        .size(OXITHEME.font_md)
+                        .style(text_primary),
+                )
                 .push(
                     text("Enter the PIN or pairing code shown by the device.")
-                        .size(11)
+                        .size(OXITHEME.font_sm)
                         .style(text_muted),
                 )
                 .push(input)
@@ -334,10 +342,10 @@ pub extern "Rust" fn modal_view(
                         .push(Space::new().width(Length::Fill))
                         .push(cancel)
                         .push(submit)
-                        .spacing(8)
+                        .spacing(OXITHEME.padding_sm)
                         .align_y(Alignment::Center),
                 )
-                .spacing(12)
+                .spacing(OXITHEME.padding_md)
                 .width(Length::Fill)
                 .into(),
         ]
@@ -367,7 +375,7 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
 fn bar_button(label: String) -> button::Button<'static, PluginMsg> {
     oxi_plugin::bar_button(
         text(label)
-            .size(14)
+            .size(OXITHEME.font_md)
             .align_y(Alignment::Center)
             .align_x(Alignment::Center),
     )
@@ -400,19 +408,27 @@ fn device_card(
         move |bg| {
             let mut card: button::Button<'_, PluginMsg> = button(
                 Row::new()
-                    .push(text(icon).size(16).style(text_primary))
+                    .push(text(icon).size(OXITHEME.font_lg).style(text_primary))
                     .push(
                         Column::new()
-                            .push(text(label.clone()).size(13).style(text_primary))
-                            .push(text(details.clone()).size(10).style(text_muted))
-                            .spacing(2)
+                            .push(
+                                text(label.clone())
+                                    .size(OXITHEME.font_md)
+                                    .style(text_primary),
+                            )
+                            .push(
+                                text(details.clone())
+                                    .size(OXITHEME.font_sm)
+                                    .style(text_muted),
+                            )
+                            .spacing(OXITHEME.padding_xs)
                             .width(Length::Fill),
                     )
-                    .spacing(8)
+                    .spacing(OXITHEME.padding_sm)
                     .align_y(Alignment::Center),
             )
             .style(move |_, status| card_button_style(status, bg))
-            .padding([8, 10])
+            .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
             .width(Length::Fill);
             if !busy {
                 card = if connected {
@@ -425,14 +441,14 @@ fn device_card(
                 .style(move |_| iced::widget::container::Style {
                     background: Some(Background::Color(bg)),
                     border: Border {
-                        radius: 9.0.into(),
+                        radius: OXITHEME.border_radius.into(),
                         color: Color::TRANSPARENT,
                         width: 0.0,
                     },
                     shadow: Shadow::default(),
                     ..Default::default()
                 })
-                .padding([4, 5])
+                .padding(OXITHEME.padding_xs)
                 .width(Length::Fill)
                 .into()
         },
@@ -448,7 +464,7 @@ fn device_card(
 
 fn section_title(label: &'static str) -> Element<'static, PluginMsg> {
     text(label)
-        .size(12)
+        .size(OXITHEME.font_md)
         .style(|_| iced::widget::text::Style {
             color: Some(OXITHEME.primary),
         })
@@ -456,7 +472,7 @@ fn section_title(label: &'static str) -> Element<'static, PluginMsg> {
 }
 
 fn empty_text(label: &'static str) -> Element<'static, PluginMsg> {
-    text(label).size(12).style(text_muted).into()
+    text(label).size(OXITHEME.font_md).style(text_muted).into()
 }
 
 fn card_button_style(status: button::Status, bg: Color) -> button::Style {
@@ -471,7 +487,7 @@ fn card_button_style(status: button::Status, bg: Color) -> button::Style {
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 8.0.into(),
+            radius: OXITHEME.border_radius.into(),
         },
         shadow: Shadow::default(),
         snap: false,
@@ -539,7 +555,7 @@ mod tests {
         assert!(init_task.is_some());
         assert_eq!(name(), "Bluetooth");
         assert_eq!(abi_version(), ABI_VERSION);
-        assert_eq!(metadata().popup_size, Some((460, 420)));
+        assert_eq!(metadata().popup_size, Some(POPUP_SIZE));
         assert_eq!(view(plugin_model.clone()).unwrap().len(), 1);
         assert_eq!(popup_view(plugin_model.clone()).unwrap().len(), 1);
         assert_eq!(modal_view(plugin_model.clone()).unwrap().len(), 1);

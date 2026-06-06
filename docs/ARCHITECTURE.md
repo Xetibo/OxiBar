@@ -14,7 +14,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `src/plugins.rs`: dynamic library discovery, ABI symbol resolution, plugin model initialization, and safe wrappers for plugin view/update/error calls.
 - `crates/oxibar-plugin-api`: shared ABI types used by host and plugins.
 - `plugins/*`: dynamic plugin crates loaded from `$XDG_CONFIG_HOME/oxibar/plugins/` when their library filename appears in `plugins = [...]`.
-- `plugins/{audio,bluetooth,network,tray}/src/system.rs`: command/DBus integration, parsing, and domain data extracted from plugin ABI/UI files.
+- `plugins/{audio,battery,bluetooth,network,tray}/src/system.rs`: command/DBus/sysfs integration, parsing, and domain data extracted from plugin ABI/UI files.
 - `plugins/clock/src/caldav.rs`: HTTPS-only CalDAV sync, current-month calendar queries, minimal iCalendar parsing, common recurrence expansion, and Nextcloud-compatible calendar query support.
 
 ## Runtime Flow
@@ -38,10 +38,11 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 ## Current Plugins
 
 - `audio`: PulseAudio/PipeWire `pactl` plus MPRIS controls; popup surface.
+- `battery`: Linux power-supply sysfs percentage, charging/draining state, and calendar-style hover tooltip with duration estimates.
 - `bluetooth`: `bluetoothctl` scan, connect, disconnect, and pairing modal; popup and modal surfaces.
 - `clock`: time display, local calendar popup with event-day tooltips, optional HTTPS CalDAV event sync, and configurable external calendar launcher.
 - `network`: NetworkManager `nmcli` connection management and password modal; popup and modal surfaces.
-- `notifications`: Freedesktop notification server, toast layers, inline replies, DND state, and side panel.
+- `notifications`: Freedesktop notification server, toast layers, inline replies, DND state, and side panel. Toast timeout closes only the host toast surface; stored notifications remain in the panel until dismissed, cleared, replied to, or actioned.
 - `tray`: StatusNotifier watcher, dynamically sized tray item popup, activation, and DBusMenu-backed detached context menu rendering. Item registration publishes a fallback row immediately and refreshes DBus metadata asynchronously so registering applications are not blocked by property queries.
 - `workspaces`: Hyprland workspace display and dispatch.
 

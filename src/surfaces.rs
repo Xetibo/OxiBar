@@ -21,8 +21,12 @@ use crate::{
 
 const PANEL_BODY_INSET: u32 = POPUP_CONNECTOR_PADDING / 2;
 const PANEL_RADIUS: f32 = 20.0;
-const BAR_VERTICAL_PADDING: u16 = 3;
-const BAR_HORIZONTAL_PADDING: u16 = 8;
+const MODAL_SURFACE_RADIUS: f32 = 18.0;
+const SURFACE_BORDER_WIDTH: f32 = 1.0;
+const SURFACE_SHADOW_ALPHA: f32 = 0.35;
+const MODAL_SHADOW_OFFSET_Y: f32 = 10.0;
+const MODAL_SHADOW_BLUR: f32 = 24.0;
+const POPUP_SURFACE_RADIUS: f32 = PANEL_RADIUS;
 
 impl OxiBar {
     pub(crate) fn view(&self, id: IcedId) -> Element<'_, Message> {
@@ -65,7 +69,7 @@ impl OxiBar {
 
         let bar = Container::new(row)
             .style(move |theme: &Theme| Self::box_style(theme, transparent))
-            .padding([BAR_VERTICAL_PADDING, BAR_HORIZONTAL_PADDING])
+            .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
             .align_x(Alignment::Center)
             .align_y(Alignment::Center)
             .width(Length::Fill)
@@ -113,7 +117,7 @@ impl OxiBar {
             .height(Length::Fill);
         Container::new(body)
             .style(modal_surface_style)
-            .padding(16)
+            .padding(OXITHEME.padding_lg)
             .width(MODAL_SIZE.0 as f32)
             .height(MODAL_SIZE.1 as f32)
             .into()
@@ -382,14 +386,14 @@ fn modal_surface_style(_: &Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
         background: Some(iced::Background::Color(palette.mantle)),
         border: iced::Border {
-            radius: 18.0.into(),
+            radius: MODAL_SURFACE_RADIUS.into(),
             color: palette.primary_bg_hover,
-            width: 1.0,
+            width: SURFACE_BORDER_WIDTH,
         },
         shadow: iced::Shadow {
-            color: iced::Color::BLACK.scale_alpha(0.35),
-            offset: iced::Vector::new(0.0, 10.0),
-            blur_radius: 24.0,
+            color: iced::Color::BLACK.scale_alpha(SURFACE_SHADOW_ALPHA),
+            offset: iced::Vector::new(0.0, MODAL_SHADOW_OFFSET_Y),
+            blur_radius: MODAL_SHADOW_BLUR,
         },
         ..Default::default()
     }
@@ -471,7 +475,7 @@ impl<Message> canvas::Program<Message> for PopupBackground {
         let inset = (w - body_w) / 2.0;
         let body_left = inset;
         let body_right = body_left + body_w;
-        let radius = 20.0_f32;
+        let radius = POPUP_SURFACE_RADIUS;
         let top_radius = radius.min(ch / 2.0);
         let shoulder_radius = inset.min(radius).min((h - ch).max(0.0)).max(0.0);
         let bottom_radius = radius.min(body_w / 2.0).min((h - ch).max(0.0) / 2.0);

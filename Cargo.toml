@@ -4,6 +4,7 @@ members = [
 	".",
 	"crates/oxibar-plugin-api",
 	"plugins/audio",
+	"plugins/battery",
 	"plugins/bluetooth",
 	"plugins/clock",
 	"plugins/network",

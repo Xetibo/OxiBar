@@ -41,6 +41,16 @@ const TRAY_ROW_HEIGHT: u32 = 30;
 const TRAY_ROW_SPACING: u32 = 6;
 const CONTEXT_MENU_WIDTH: f32 = 240.0;
 const CONTEXT_MENU_MAX_HEIGHT: f32 = 420.0;
+const CONTEXT_MENU_ITEM_SPACING: f32 = 2.0;
+const CONTEXT_MENU_LIMIT_EXTRA: f32 = 12.0;
+const CONTEXT_MENU_OFFSET: f32 = 8.0;
+const CONTEXT_MENU_DEPTH_INDENT: usize = 14;
+const CONTEXT_MENU_BORDER_WIDTH: f32 = 1.0;
+const CONTEXT_MENU_SHADOW_ALPHA: f32 = 0.35;
+const CONTEXT_MENU_SHADOW_OFFSET_Y: f32 = 8.0;
+const CONTEXT_MENU_SHADOW_BLUR: f32 = 18.0;
+const TRAY_FALLBACK_ICON_WIDTH: u32 = 22;
+const TRAY_ICON_SIZE: u32 = 18;
 
 #[derive(Debug, Default)]
 pub struct Model {
@@ -248,19 +258,27 @@ pub extern "Rust" fn view(
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
         let count = model.items.len();
-        let label = if count == 0 {
-            "󰀻".to_owned()
+        let content: Element<'static, PluginMsg> = if count == 0 {
+            text("󰀻")
+                .size(OXITHEME.font_md)
+                .align_y(Alignment::Center)
+                .align_x(Alignment::Center)
+                .into()
         } else {
-            format!("󰀻 {count}")
+            Row::new()
+                .push(text("󰀻").size(OXITHEME.font_md).align_y(Alignment::Center))
+                .push(
+                    text(count.to_string())
+                        .size(OXITHEME.font_md)
+                        .align_y(Alignment::Center),
+                )
+                .spacing(OXITHEME.padding_md)
+                .height(Length::Fill)
+                .align_y(Alignment::Center)
+                .into()
         };
 
-        let btn = oxi_plugin::bar_button(
-            text(label)
-                .size(14)
-                .align_y(Alignment::Center)
-                .align_x(Alignment::Center),
-        )
-        .on_press(msg(Message::TogglePopup));
+        let btn = oxi_plugin::bar_button(content).on_press(msg(Message::TogglePopup));
 
         vec![btn.into()]
     })
@@ -272,18 +290,16 @@ pub extern "Rust" fn popup_view(
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
         let mut list = Column::new()
-            .spacing(10)
-            .padding([12, 14])
+            .spacing(OXITHEME.padding_sm)
+            .padding([OXITHEME.padding_md, OXITHEME.padding_lg])
             .width(Length::Fill);
 
         if model.items.is_empty() {
-            list = list.push(
-                text("No tray items")
-                    .size(14)
-                    .style(|_| iced::widget::text::Style {
-                        color: Some(OXITHEME.primary),
-                    }),
-            );
+            list = list.push(text("No tray items").size(OXITHEME.font_md).style(|_| {
+                iced::widget::text::Style {
+                    color: Some(OXITHEME.primary),
+                }
+            }));
         }
 
         for item in model.items.values() {
@@ -296,7 +312,7 @@ pub extern "Rust" fn popup_view(
                 .cursor_positions
                 .get(&item.key)
                 .copied()
-                .unwrap_or_else(|| Point::new(12.0, 12.0));
+                .unwrap_or_else(|| Point::new(OXITHEME.padding_md, OXITHEME.padding_md));
             list = list.push(tray_item_row(
                 item,
                 model.hovered_item.as_deref() == Some(&item.key),
@@ -337,8 +353,8 @@ fn tray_item_row(
     let item_button = button(
         Row::new()
             .push(icon)
-            .push(text(label).size(13).width(Length::Fill))
-            .spacing(8)
+            .push(text(label).size(OXITHEME.font_md).width(Length::Fill))
+            .spacing(OXITHEME.padding_sm)
             .align_y(Alignment::Center),
     )
     .on_press(msg(Message::Activate {
@@ -346,10 +362,10 @@ fn tray_item_row(
         action: TrayAction::Activate,
     }))
     .style(tray_item_button_style)
-    .padding([6, 8])
+    .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
     .width(Length::Fill);
 
-    let row = Row::new().push(item_button).spacing(8);
+    let row = Row::new().push(item_button).spacing(OXITHEME.padding_sm);
 
     let row = mouse_area(row)
         .on_enter(msg(Message::HoverItem(Some(item.key.clone()))))
@@ -373,21 +389,21 @@ fn tray_item_row(
 }
 
 fn tray_context_menu(key: &str, items: &[TrayMenuItem]) -> Element<'static, PluginMsg> {
-    let mut menu = Column::new().spacing(2).width(CONTEXT_MENU_WIDTH);
+    let mut menu = Column::new()
+        .spacing(CONTEXT_MENU_ITEM_SPACING)
+        .width(CONTEXT_MENU_WIDTH);
     if items.is_empty() {
-        menu = menu.push(
-            text("Loading menu...")
-                .size(11)
-                .style(|_| iced::widget::text::Style {
-                    color: Some(OXITHEME.text_muted),
-                }),
-        );
+        menu = menu.push(text("Loading menu...").size(OXITHEME.font_sm).style(|_| {
+            iced::widget::text::Style {
+                color: Some(OXITHEME.text_muted),
+            }
+        }));
     } else {
         for item in items {
             if item.separator {
                 menu = menu.push(
                     text("────────")
-                        .size(10)
+                        .size(OXITHEME.font_sm)
                         .style(|_| iced::widget::text::Style {
                             color: Some(OXITHEME.text_muted),
                         })
@@ -397,17 +413,19 @@ fn tray_context_menu(key: &str, items: &[TrayMenuItem]) -> Element<'static, Plug
             }
 
             let label = Row::new()
-                .push(Space::new().width((item.depth as u32) * 14))
+                .push(
+                    Space::new().width(item.depth.saturating_mul(CONTEXT_MENU_DEPTH_INDENT) as u32),
+                )
                 .push(
                     text(item.label.clone())
-                        .size(12)
+                        .size(OXITHEME.font_md)
                         .style(menu_item_text_style(item.enabled))
                         .width(Length::Fill),
                 )
                 .align_y(Alignment::Center);
             let mut button = button(label)
                 .style(tray_menu_button_style)
-                .padding([5, 8])
+                .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
                 .width(Length::Fill);
             if item.enabled
                 && let Some(action) = item.action.clone()
@@ -422,7 +440,7 @@ fn tray_context_menu(key: &str, items: &[TrayMenuItem]) -> Element<'static, Plug
     }
 
     container(menu)
-        .padding([4, 6])
+        .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
         .width(CONTEXT_MENU_WIDTH)
         .style(tray_context_menu_style)
         .into()
@@ -577,15 +595,20 @@ struct ContextMenuOverlayLayer<'a, 'b> {
 
 impl overlay::Overlay<PluginMsg, iced::Theme, iced::Renderer> for ContextMenuOverlayLayer<'_, '_> {
     fn layout(&mut self, renderer: &iced::Renderer, bounds: Size) -> layout::Node {
-        let max_size = Size::new(CONTEXT_MENU_WIDTH + 12.0, CONTEXT_MENU_MAX_HEIGHT);
+        let max_size = Size::new(
+            CONTEXT_MENU_WIDTH + CONTEXT_MENU_LIMIT_EXTRA,
+            CONTEXT_MENU_MAX_HEIGHT,
+        );
         let menu_layout = self.menu.as_widget_mut().layout(
             self.tree,
             renderer,
             &layout::Limits::new(Size::ZERO, max_size),
         );
         let size = menu_layout.size();
-        let x = (self.position.x + 8.0).clamp(0.0, (bounds.width - size.width).max(0.0));
-        let y = (self.position.y + 8.0).clamp(0.0, (bounds.height - size.height).max(0.0));
+        let x = (self.position.x + CONTEXT_MENU_OFFSET)
+            .clamp(0.0, (bounds.width - size.width).max(0.0));
+        let y = (self.position.y + CONTEXT_MENU_OFFSET)
+            .clamp(0.0, (bounds.height - size.height).max(0.0));
         menu_layout.move_to(Point::new(x, y))
     }
 
@@ -688,13 +711,13 @@ fn tray_context_menu_style(_: &iced::Theme) -> container::Style {
         text_color: Some(palette.text),
         border: Border {
             color: palette.primary_bg_hover,
-            width: 1.0,
-            radius: 8.0.into(),
+            width: CONTEXT_MENU_BORDER_WIDTH,
+            radius: palette.border_radius.into(),
         },
         shadow: Shadow {
-            color: Color::BLACK.scale_alpha(0.35),
-            offset: iced::Vector::new(0.0, 8.0),
-            blur_radius: 18.0,
+            color: Color::BLACK.scale_alpha(CONTEXT_MENU_SHADOW_ALPHA),
+            offset: iced::Vector::new(0.0, CONTEXT_MENU_SHADOW_OFFSET_Y),
+            blur_radius: CONTEXT_MENU_SHADOW_BLUR,
         },
         ..Default::default()
     }
@@ -708,7 +731,7 @@ fn tray_menu_button_style(_: &iced::Theme, status: button::Status) -> button::St
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 6.0.into(),
+            radius: palette.border_radius.into(),
         },
         shadow: Shadow::default(),
         snap: false,
@@ -729,17 +752,20 @@ fn tray_menu_button_style(_: &iced::Theme, status: button::Status) -> button::St
 fn tray_icon(path: Option<&str>) -> Element<'static, PluginMsg> {
     let Some(path) = path else {
         return text("󰀻")
-            .size(15)
+            .size(OXITHEME.font_md)
             .align_x(Alignment::Center)
-            .width(22)
+            .width(TRAY_FALLBACK_ICON_WIDTH)
             .into();
     };
     if path.ends_with(".svg") || path.ends_with(".svgz") {
-        svg(path).width(18).height(18).into()
+        svg(path)
+            .width(TRAY_ICON_SIZE)
+            .height(TRAY_ICON_SIZE)
+            .into()
     } else {
         image(path)
-            .width(18)
-            .height(18)
+            .width(TRAY_ICON_SIZE)
+            .height(TRAY_ICON_SIZE)
             .content_fit(ContentFit::Contain)
             .into()
     }
@@ -753,7 +779,7 @@ fn tray_item_button_style(_: &iced::Theme, status: button::Status) -> button::St
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 8.0.into(),
+            radius: palette.border_radius.into(),
         },
         shadow: Shadow::default(),
         snap: false,
@@ -921,7 +947,7 @@ mod tests {
         assert_eq!(popup_view(plugin_model.clone()).unwrap().len(), 1);
         assert_eq!(
             popup_metrics(plugin_model.clone()).popup_size,
-            Some((300, 48))
+            Some((POPUP_WIDTH, POPUP_MIN_HEIGHT))
         );
 
         let _ = update(
@@ -952,7 +978,7 @@ mod tests {
         }
         assert_eq!(
             popup_metrics(plugin_model.clone()).popup_input_size,
-            Some((300, 420))
+            Some((POPUP_WIDTH, POPUP_MAX_HEIGHT))
         );
 
         let _ = update(
@@ -965,9 +991,9 @@ mod tests {
 
     #[test]
     fn tray_popup_height_tracks_item_count_with_cap() {
-        assert_eq!(tray_popup_height(0), 48);
+        assert_eq!(tray_popup_height(0), POPUP_MIN_HEIGHT);
         assert_eq!(tray_popup_height(1), 54);
         assert_eq!(tray_popup_height(5), 198);
-        assert_eq!(tray_popup_height(100), 420);
+        assert_eq!(tray_popup_height(100), POPUP_MAX_HEIGHT);
     }
 }

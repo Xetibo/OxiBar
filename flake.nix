@@ -124,6 +124,7 @@
         in rec {
           oxibar = pkgs.callPackage ./nix/default.nix {inherit inputs lockFile;};
           oxibar-audio = pluginPackage "audio";
+          oxibar-battery = pluginPackage "battery";
           oxibar-bluetooth = pluginPackage "bluetooth";
           oxibar-clock = pluginPackage "clock";
           oxibar-network = pluginPackage "network";

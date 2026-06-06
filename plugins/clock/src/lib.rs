@@ -39,6 +39,16 @@ const DEFAULT_FORMAT: &str = "%H:%M";
 const DEFAULT_TICK_SECONDS: u64 = 60;
 const DEFAULT_FONT_SIZE: f32 = 14.0;
 const DEFAULT_BOLD: bool = false;
+const CALENDAR_POPUP_SIZE: (u32, u32) = (360, 320);
+const CALENDAR_NAV_TEXT_SIZE: f32 = 20.0;
+const CALENDAR_NAV_HEIGHT: u32 = 28;
+const CALENDAR_DAY_CELL_HEIGHT: u32 = 30;
+const CALENDAR_TOOLTIP_WIDTH: u32 = 240;
+const ADJACENT_MONTH_ALPHA: f32 = 0.45;
+const TOOLTIP_BORDER_WIDTH: f32 = 1.0;
+const TOOLTIP_SHADOW_ALPHA: f32 = 0.35;
+const TOOLTIP_SHADOW_OFFSET_Y: f32 = 8.0;
+const TOOLTIP_SHADOW_BLUR: f32 = 18.0;
 
 /// Tick interval shared with `subscription()`. Set during `model()` so the
 /// subscription thread can read it without the model being passed in.
@@ -243,7 +253,7 @@ pub extern "Rust" fn name() -> &'static str {
 #[unsafe(no_mangle)]
 pub extern "Rust" fn metadata() -> PluginMetadata {
     PluginMetadata {
-        popup_size: Some((360, 320)),
+        popup_size: Some(CALENDAR_POPUP_SIZE),
         ..PluginMetadata::default()
     }
 }
@@ -393,7 +403,7 @@ pub extern "Rust" fn popup_view(
             .push(calendar_nav_button("‹", Message::PreviousMonth))
             .push(
                 text(title)
-                    .size(18)
+                    .size(OXITHEME.font_lg)
                     .style(move |_| iced::widget::text::Style {
                         color: Some(palette.primary),
                     })
@@ -404,13 +414,16 @@ pub extern "Rust" fn popup_view(
             .align_y(Alignment::Center)
             .width(Length::Fill);
 
-        let mut column = Column::new().spacing(8).padding([12, 14]).push(header);
+        let mut column = Column::new()
+            .spacing(OXITHEME.padding_sm)
+            .padding([OXITHEME.padding_md, OXITHEME.padding_lg])
+            .push(header);
 
-        let mut weekdays = Row::new().spacing(4).width(Length::Fill);
+        let mut weekdays = Row::new().spacing(OXITHEME.padding_xs).width(Length::Fill);
         for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
             weekdays = weekdays.push(
                 text(day)
-                    .size(12)
+                    .size(OXITHEME.font_sm)
                     .style(move |_| iced::widget::text::Style {
                         color: Some(palette.primary),
                     })
@@ -423,7 +436,7 @@ pub extern "Rust" fn popup_view(
         let first_offset = month_start.weekday().num_days_from_monday() as i64;
         let grid_start = month_start - ChronoDuration::days(first_offset);
         for week in 0..6 {
-            let mut row = Row::new().spacing(4).width(Length::Fill);
+            let mut row = Row::new().spacing(OXITHEME.padding_xs).width(Length::Fill);
             for day in 0..7 {
                 let date = grid_start + ChronoDuration::days(week * 7 + day);
                 let is_current_month =
@@ -447,14 +460,14 @@ pub extern "Rust" fn popup_view(
 fn calendar_nav_button(label: &'static str, message: Message) -> Element<'static, PluginMsg> {
     button(
         text(label)
-            .size(20)
+            .size(CALENDAR_NAV_TEXT_SIZE)
             .align_x(Alignment::Center)
             .align_y(Alignment::Center),
     )
     .on_press(msg(message))
     .style(oxi_plugin::bar_button_style)
-    .padding([2, 10])
-    .height(28)
+    .padding([OXITHEME.padding_xs, OXITHEME.padding_md])
+    .height(CALENDAR_NAV_HEIGHT)
     .into()
 }
 
@@ -470,7 +483,7 @@ fn day_cell(
         palette.primary
     } else {
         Color {
-            a: 0.45,
+            a: ADJACENT_MONTH_ALPHA,
             ..palette.primary
         }
     };
@@ -484,7 +497,7 @@ fn day_cell(
 
     let cell = button(
         text(date.day().to_string())
-            .size(13)
+            .size(OXITHEME.font_md)
             .align_x(Alignment::Center)
             .align_y(Alignment::Center)
             .style(move |_| iced::widget::text::Style {
@@ -502,7 +515,7 @@ fn day_cell(
             background,
             text_color,
             border: Border {
-                radius: Radius::from(8.0),
+                radius: Radius::from(OXITHEME.border_radius),
                 ..Default::default()
             },
             shadow: Shadow::default(),
@@ -511,7 +524,7 @@ fn day_cell(
     })
     .padding(0)
     .width(Length::Fill)
-    .height(30);
+    .height(CALENDAR_DAY_CELL_HEIGHT);
 
     if events.is_empty() {
         cell.into()
@@ -521,7 +534,7 @@ fn day_cell(
             calendar_event_tooltip(date, &events),
             tooltip::Position::FollowCursor,
         )
-        .gap(8)
+        .gap(OXITHEME.padding_sm)
         .into()
     }
 }
@@ -531,27 +544,33 @@ fn calendar_event_tooltip(
     events: &[CalendarEvent],
 ) -> Element<'static, PluginMsg> {
     let palette = &OXITHEME;
-    let mut content = Column::new().spacing(6).width(240).push(
-        text(date.format("%A, %Y-%m-%d").to_string())
-            .size(12)
-            .style(move |_| iced::widget::text::Style {
-                color: Some(palette.primary),
-            }),
-    );
+    let mut content = Column::new()
+        .spacing(OXITHEME.padding_sm)
+        .width(CALENDAR_TOOLTIP_WIDTH)
+        .push(
+            text(date.format("%A, %Y-%m-%d").to_string())
+                .size(OXITHEME.font_sm)
+                .style(move |_| iced::widget::text::Style {
+                    color: Some(palette.primary),
+                }),
+        );
 
     for event in events {
-        let mut item = Column::new().spacing(2).width(Length::Fill).push(
-            text(event.summary.clone())
-                .size(12)
-                .style(move |_| iced::widget::text::Style {
-                    color: Some(palette.text),
-                })
-                .wrapping(iced::widget::text::Wrapping::Word),
-        );
+        let mut item = Column::new()
+            .spacing(OXITHEME.padding_xs)
+            .width(Length::Fill)
+            .push(
+                text(event.summary.clone())
+                    .size(OXITHEME.font_sm)
+                    .style(move |_| iced::widget::text::Style {
+                        color: Some(palette.text),
+                    })
+                    .wrapping(iced::widget::text::Wrapping::Word),
+            );
         if let Some(location) = event.location.as_ref() {
             item = item.push(
                 text(location.clone())
-                    .size(10)
+                    .size(OXITHEME.font_sm)
                     .style(move |_| iced::widget::text::Style {
                         color: Some(palette.text_muted),
                     })
@@ -561,7 +580,7 @@ fn calendar_event_tooltip(
         if let Some(description) = event.description.as_ref() {
             item = item.push(
                 text(description.clone())
-                    .size(10)
+                    .size(OXITHEME.font_sm)
                     .style(move |_| iced::widget::text::Style {
                         color: Some(palette.text_muted),
                     })
@@ -572,7 +591,7 @@ fn calendar_event_tooltip(
     }
 
     container(content)
-        .padding([8, 10])
+        .padding([OXITHEME.padding_sm, OXITHEME.padding_md])
         .style(calendar_tooltip_style)
         .into()
 }
@@ -584,13 +603,13 @@ fn calendar_tooltip_style(_: &iced::Theme) -> container::Style {
         text_color: Some(palette.text),
         border: Border {
             color: palette.primary_bg_hover,
-            width: 1.0,
-            radius: 10.0.into(),
+            width: TOOLTIP_BORDER_WIDTH,
+            radius: OXITHEME.border_radius.into(),
         },
         shadow: Shadow {
-            color: Color::BLACK.scale_alpha(0.35),
-            offset: iced::Vector::new(0.0, 8.0),
-            blur_radius: 18.0,
+            color: Color::BLACK.scale_alpha(TOOLTIP_SHADOW_ALPHA),
+            offset: iced::Vector::new(0.0, TOOLTIP_SHADOW_OFFSET_Y),
+            blur_radius: TOOLTIP_SHADOW_BLUR,
         },
         ..Default::default()
     }

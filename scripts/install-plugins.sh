@@ -8,6 +8,7 @@ target_dir="/home/dashie/.config/oxibar/plugins"
 
 plugins=(
   audio
+  battery
   bluetooth
   clock
   network

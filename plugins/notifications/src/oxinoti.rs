@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     path::Path,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU32, Ordering},
     },
     thread,
@@ -36,6 +36,7 @@ use zbus::{
 const BUS_NAME: &str = "org.freedesktop.Notifications";
 const OBJECT_PATH: &str = "/org/freedesktop/Notifications";
 const NAME_RETRY_SECONDS: u64 = 5;
+const DEFAULT_TIMEOUT_SECONDS: u64 = 3;
 
 pub(crate) const ICON: &str = "󰂚";
 pub(crate) const TOAST_WIDTH: u32 = 380;
@@ -43,6 +44,16 @@ pub(crate) const TOAST_WIDTH: u32 = 380;
 const TOAST_MIN_HEIGHT: u32 = 112;
 const TOAST_IMAGE_HEIGHT: u32 = 196;
 const TOAST_MAX_HEIGHT: u32 = 360;
+const TOAST_TEXT_BASE_CHARS: usize = 90;
+const TOAST_TEXT_LINE_CHARS: usize = 42;
+const TOAST_TEXT_LINE_HEIGHT: u32 = 22;
+const TOAST_PROGRESS_HEIGHT: u32 = 20;
+const TOAST_ACTIONS_HEIGHT: u32 = 34;
+const TOAST_REPLY_HEIGHT: u32 = 54;
+const NOTIFICATION_IMAGE_SIZE: f32 = 88.0;
+const NOTIFICATION_BORDER_WIDTH: f32 = 1.0;
+
+static REPLY_FOCUS: OnceLock<Mutex<BTreeSet<u32>>> = OnceLock::new();
 
 type RawImageData = (i32, i32, i32, bool, i32, i32, Vec<u8>);
 type NotificationTuple = (
@@ -301,6 +312,27 @@ pub(crate) fn msg(event: Event) -> PluginMsg {
     Arc::new(event)
 }
 
+fn reply_focus() -> &'static Mutex<BTreeSet<u32>> {
+    REPLY_FOCUS.get_or_init(|| Mutex::new(BTreeSet::new()))
+}
+
+pub(crate) fn set_reply_focus(id: u32, focused: bool) {
+    let mut focused_replies = reply_focus().lock().unwrap();
+    if focused {
+        focused_replies.insert(id);
+    } else {
+        focused_replies.remove(&id);
+    }
+}
+
+pub(crate) fn is_reply_focused(id: u32) -> bool {
+    reply_focus().lock().unwrap().contains(&id)
+}
+
+pub(crate) fn clear_reply_focus(id: u32) {
+    reply_focus().lock().unwrap().remove(&id);
+}
+
 pub(crate) fn read_timeout(global_config: &Table) -> Duration {
     let seconds = global_config
         .get("notifications")
@@ -308,23 +340,26 @@ pub(crate) fn read_timeout(global_config: &Table) -> Duration {
         .and_then(|table| table.get("timeout"))
         .and_then(|value| value.as_integer())
         .filter(|seconds| *seconds > 0)
-        .unwrap_or(3) as u64;
+        .map(|seconds| seconds as u64)
+        .unwrap_or(DEFAULT_TIMEOUT_SECONDS);
     Duration::from_secs(seconds)
 }
 
 pub(crate) fn bar_button(count: usize) -> button::Button<'static, PluginMsg> {
     let content: Element<'static, PluginMsg> = if count == 0 {
         text(ICON)
-            .size(14)
+            .size(OXITHEME.font_md)
             .align_y(Alignment::Center)
             .align_x(Alignment::Center)
             .into()
     } else {
         row![
-            text(ICON).size(14).align_y(Alignment::Center),
-            text(count.to_string()).size(14).align_y(Alignment::Center)
+            text(ICON).size(OXITHEME.font_md).align_y(Alignment::Center),
+            text(count.to_string())
+                .size(OXITHEME.font_md)
+                .align_y(Alignment::Center)
         ]
-        .spacing(10)
+        .spacing(OXITHEME.padding_md)
         .height(Length::Fill)
         .align_y(Alignment::Center)
         .into()
@@ -339,29 +374,28 @@ pub(crate) fn panel_view(
     do_not_disturb: bool,
 ) -> Element<'static, PluginMsg> {
     let dnd_label = if do_not_disturb { "DND on" } else { "DND off" };
-    let header = Row::new()
-        .push(
-            text("Notifications")
-                .size(18)
-                .style(|_| iced::widget::text::Style {
+    let header =
+        Row::new()
+            .push(text("Notifications").size(OXITHEME.font_lg).style(|_| {
+                iced::widget::text::Style {
                     color: Some(OXITHEME.primary),
-                }),
-        )
-        .push(Space::new().width(Length::Fill))
-        .push(settings_button(dnd_label, Event::ToggleDoNotDisturb))
-        .push(settings_button("Clear", Event::ClearAll))
-        .spacing(6)
-        .align_y(Alignment::Center);
+                }
+            }))
+            .push(Space::new().width(Length::Fill))
+            .push(settings_button(dnd_label, Event::ToggleDoNotDisturb))
+            .push(settings_button("Clear", Event::ClearAll))
+            .spacing(OXITHEME.padding_sm)
+            .align_y(Alignment::Center);
 
-    let mut list = Column::new().spacing(10).width(Length::Fill);
+    let mut list = Column::new()
+        .spacing(OXITHEME.padding_sm)
+        .width(Length::Fill);
     if notifications.is_empty() {
-        list = list.push(
-            text("No notifications")
-                .size(13)
-                .style(|_| iced::widget::text::Style {
-                    color: Some(OXITHEME.text_muted),
-                }),
-        );
+        list = list.push(text("No notifications").size(OXITHEME.font_md).style(|_| {
+            iced::widget::text::Style {
+                color: Some(OXITHEME.text_muted),
+            }
+        }));
     } else {
         for notification in notifications {
             list = list.push(notification_card(
@@ -375,8 +409,8 @@ pub(crate) fn panel_view(
     Column::new()
         .push(header)
         .push(iced::widget::scrollable(list).height(Length::Fill))
-        .spacing(12)
-        .padding([14, 14])
+        .spacing(OXITHEME.padding_md)
+        .padding(OXITHEME.padding_md)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -401,10 +435,10 @@ pub(crate) fn toast_view(
 }
 
 fn settings_button(label: &'static str, event: Event) -> button::Button<'static, PluginMsg> {
-    button(text(label).size(11))
+    button(text(label).size(OXITHEME.font_sm))
         .on_press(msg(event))
         .style(settings_button_style)
-        .padding([5, 8])
+        .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
 }
 
 fn settings_button_style(_: &Theme, status: button::Status) -> button::Style {
@@ -414,7 +448,7 @@ fn settings_button_style(_: &Theme, status: button::Status) -> button::Style {
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: 8.0.into(),
+            radius: OXITHEME.border_radius.into(),
         },
         shadow: Shadow::default(),
         snap: false,
@@ -548,20 +582,21 @@ fn notification_height(notification: &Notification) -> u32 {
     };
 
     let text_len = notification.summary.len() + notification.body.len();
-    if text_len > 90 {
-        height += ((text_len - 90) / 42) as u32 * 22;
+    if text_len > TOAST_TEXT_BASE_CHARS {
+        height += ((text_len - TOAST_TEXT_BASE_CHARS) / TOAST_TEXT_LINE_CHARS) as u32
+            * TOAST_TEXT_LINE_HEIGHT;
     }
 
     if notification.progress.is_some_and(|progress| progress >= 0) {
-        height += 20;
+        height += TOAST_PROGRESS_HEIGHT;
     }
 
     if has_visible_action_buttons(notification) {
-        height += 34;
+        height += TOAST_ACTIONS_HEIGHT;
     }
 
     if notification.allows_inline_reply() {
-        height += 54;
+        height += TOAST_REPLY_HEIGHT;
     }
 
     height.min(TOAST_MAX_HEIGHT)
@@ -610,6 +645,13 @@ fn reply_row(notification: &Notification, draft: &str) -> Option<Element<'static
         msg(Event::ReplyChanged(id, value))
     })
     .on_submit(submit.clone())
+    .style(move |theme, status| {
+        set_reply_focus(
+            id,
+            matches!(status, iced::widget::text_input::Status::Focused { .. }),
+        );
+        oxi_text_input::text_input_style(theme, status)
+    })
     .width(Length::Fill);
 
     let mut send = oxi_button(
@@ -649,7 +691,7 @@ fn notification_style(theme: &Theme, urgency: &Urgency, hovered: bool) -> contai
         })),
         border: Border {
             radius: palette.border_radius.into(),
-            width: 1.0,
+            width: NOTIFICATION_BORDER_WIDTH,
             color: border_color,
         },
         ..container::rounded_box(theme)
@@ -684,8 +726,8 @@ fn notification_image(
 
 fn image_element(handle: iced::widget::image::Handle) -> Element<'static, PluginMsg> {
     image(handle)
-        .width(Length::Fixed(88.0))
-        .height(Length::Fixed(88.0))
+        .width(Length::Fixed(NOTIFICATION_IMAGE_SIZE))
+        .height(Length::Fixed(NOTIFICATION_IMAGE_SIZE))
         .content_fit(ContentFit::Contain)
         .into()
 }

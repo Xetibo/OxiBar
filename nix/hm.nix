@@ -9,6 +9,7 @@ self: {
   defaultPackage = self.packages.${system}.default;
   defaultPlugins = with self.packages.${system}; [
     oxibar-audio
+    oxibar-battery
     oxibar-bluetooth
     oxibar-clock
     oxibar-network

@@ -17,7 +17,7 @@ names you want enabled in the top-level `plugins` array.
 Example:
 
 ```toml
-plugins = ["libclock.so", "libworkspaces.so", "libbluetooth.so", "libnotifications.so"]
+plugins = ["libclock.so", "libworkspaces.so", "libbattery.so", "libbluetooth.so", "libnotifications.so"]
 ```
 
 A plugin file present on disk but not listed here is ignored. Unknown names
@@ -148,6 +148,25 @@ The host-level `launch(focused_index)` ABI hook is implemented: index `N`
 into the id-sorted workspace list activates that workspace. There is no
 default keybinding for this yet — wire one up via your compositor.
 
+### `[audio]` — Audio plugin
+
+Uses `pactl` for PulseAudio/PipeWire device state and MPRIS for media controls.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `poll_seconds` | integer (`> 0`) | `4` | Background refresh interval for output/input devices and MPRIS state. |
+
+### `[battery]` — Battery plugin
+
+Reads Linux power-supply data from `/sys/class/power_supply/BAT*`. The bar
+button shows a charging or draining icon followed by the rounded percentage.
+Hovering shows the exact percentage and either remaining runtime while draining
+or time to 100% while charging, when sysfs exposes rate data.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `poll_seconds` | integer (`> 0`) | `30` | Background refresh interval for capacity and time estimates. |
+
 ### `[bluetooth]` — Bluetooth plugin
 
 Uses `bluetoothctl`. Click opens a popup with connected devices and available
@@ -159,6 +178,14 @@ reports that a PIN/passkey/code is needed, Oxibar opens a modal for it.
 | --- | --- | --- | --- |
 | `refresh_seconds` | integer (`> 0`) | `20` | Background refresh interval. The popup `Scan` button triggers an active scan. |
 
+### `[network]` — Network plugin
+
+Uses NetworkManager's `nmcli` for active connections, saved profiles, and Wi-Fi scans.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `scan_seconds` | integer (`> 0`) | `15` | Background refresh interval for NetworkManager state. |
+
 ### `[notifications]` — notification center plugin
 
 Owns `org.freedesktop.Notifications` and stores notifications until they are
@@ -166,6 +193,17 @@ closed or cleared. Click the bar button to open a right-side full-height panel.
 The panel top row has `DND` and `Clear` controls. If another notification daemon
 already owns the DBus name, this plugin logs a warning and cannot receive
 notifications until that daemon is stopped.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `timeout` | integer (`> 0`) | `3` | Default toast lifetime in seconds when a notification does not provide a positive `expire_timeout`. Timeout closes only the toast; the notification remains visible in the notification center until dismissed, cleared, replied to, or actioned. |
+
+Example:
+
+```toml
+[notifications]
+timeout = 5
+```
 
 ## Logging
 
@@ -184,7 +222,7 @@ plugin error queues, and view/update failures all surface here.
 ## Full example
 
 ```toml
-plugins = ["libclock.so", "libworkspaces.so", "libbluetooth.so", "libnotifications.so"]
+plugins = ["libclock.so", "libworkspaces.so", "libbattery.so", "libbluetooth.so", "libnotifications.so"]
 
 [bar]
 transparent = true
@@ -192,7 +230,7 @@ font      = "Adwaita Sans"
 font_file = "/run/current-system/sw/share/fonts/Adwaita/AdwaitaSans-Regular.ttf"
 start  = ["workspaces"]
 center = ["clock"]
-end    = ["bluetooth", "notifications"]
+end    = ["battery", "bluetooth", "notifications"]
 
 [clock]
 format       = "%H:%M"

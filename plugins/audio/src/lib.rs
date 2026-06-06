@@ -32,6 +32,10 @@ use system::{
 
 const DEFAULT_POLL_SECONDS: u64 = 4;
 const AUDIO_ICON: &str = "󰕾";
+const POPUP_SIZE: (u32, u32) = (460, 420);
+const ARTWORK_PREVIEW_SIZE: u32 = 76;
+const ARTWORK_ICON_SIZE: f32 = 30.0;
+const MAX_DEVICE_VOLUME: u8 = 150;
 
 static POLL_INTERVAL: OnceLock<Duration> = OnceLock::new();
 
@@ -88,7 +92,7 @@ pub extern "Rust" fn name() -> &'static str {
 #[unsafe(no_mangle)]
 pub extern "Rust" fn metadata() -> PluginMetadata {
     PluginMetadata {
-        popup_size: Some((460, 420)),
+        popup_size: Some(POPUP_SIZE),
         ..PluginMetadata::default()
     }
 }
@@ -199,19 +203,23 @@ pub extern "Rust" fn view(
         .map(|device| device.volume);
         let content: Element<'static, PluginMsg> = if let Some(volume) = volume {
             Row::new()
-                .push(text(AUDIO_ICON).size(14).align_y(Alignment::Center))
                 .push(
-                    text(format!("{volume}%"))
-                        .size(14)
+                    text(AUDIO_ICON)
+                        .size(OXITHEME.font_md)
                         .align_y(Alignment::Center),
                 )
-                .spacing(10)
+                .push(
+                    text(format!("{volume}%"))
+                        .size(OXITHEME.font_md)
+                        .align_y(Alignment::Center),
+                )
+                .spacing(OXITHEME.padding_xs)
                 .height(Length::Fill)
                 .align_y(Alignment::Center)
                 .into()
         } else {
             text(AUDIO_ICON)
-                .size(14)
+                .size(OXITHEME.font_md)
                 .align_y(Alignment::Center)
                 .align_x(Alignment::Center)
                 .into()
@@ -228,8 +236,8 @@ pub extern "Rust" fn popup_view(
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
         let mut content = Column::new()
-            .spacing(10)
-            .padding([12, 14])
+            .spacing(OXITHEME.padding_sm)
+            .padding([OXITHEME.padding_md, OXITHEME.padding_lg])
             .width(Length::Fill);
         content = content.push(media_card(
             model.snapshot.player.as_ref(),
@@ -300,8 +308,8 @@ fn media_card(player: Option<&PlayerInfo>, busy: bool) -> Element<'static, Plugi
                 "󰐊"
             };
             let info = Column::new()
-                .push(text(title).size(13).style(text_primary))
-                .push(text(subtitle).size(10).style(text_muted))
+                .push(text(title).size(OXITHEME.font_md).style(text_primary))
+                .push(text(subtitle).size(OXITHEME.font_sm).style(text_muted))
                 .push(
                     Row::new()
                         .push(media_button(
@@ -322,10 +330,10 @@ fn media_card(player: Option<&PlayerInfo>, busy: bool) -> Element<'static, Plugi
                         .push(Space::new().width(Length::Fill))
                         .push(
                             text(format!("{}%", player.volume))
-                                .size(11)
+                                .size(OXITHEME.font_sm)
                                 .style(text_muted),
                         )
-                        .spacing(6)
+                        .spacing(OXITHEME.padding_sm)
                         .align_y(Alignment::Center),
                 )
                 .push(
@@ -334,13 +342,13 @@ fn media_card(player: Option<&PlayerInfo>, busy: bool) -> Element<'static, Plugi
                     })
                     .width(Length::Fill),
                 )
-                .spacing(8)
+                .spacing(OXITHEME.padding_sm)
                 .width(Length::Fill);
 
             Row::new()
                 .push(artwork_preview(player.art_url.as_deref()))
                 .push(info)
-                .spacing(10)
+                .spacing(OXITHEME.padding_sm)
                 .align_y(Alignment::Center)
                 .into()
         } else {
@@ -348,16 +356,20 @@ fn media_card(player: Option<&PlayerInfo>, busy: bool) -> Element<'static, Plugi
                 .push(artwork_preview(None))
                 .push(
                     Column::new()
-                        .push(text("No active media stream").size(13).style(text_primary))
+                        .push(
+                            text("No active media stream")
+                                .size(OXITHEME.font_md)
+                                .style(text_primary),
+                        )
                         .push(
                             text("Open music or video player to show MPRIS controls.")
-                                .size(10)
+                                .size(OXITHEME.font_sm)
                                 .style(text_muted),
                         )
-                        .spacing(3)
+                        .spacing(OXITHEME.padding_xs)
                         .width(Length::Fill),
                 )
-                .spacing(10)
+                .spacing(OXITHEME.padding_sm)
                 .align_y(Alignment::Center)
                 .into()
         };
@@ -371,14 +383,14 @@ fn artwork_preview(art_url: Option<&str>) -> Element<'static, PluginMsg> {
     let content: Element<'static, PluginMsg> = if let Some(path) = art_url.and_then(local_art_path)
     {
         image(path)
-            .width(76)
-            .height(76)
+            .width(ARTWORK_PREVIEW_SIZE)
+            .height(ARTWORK_PREVIEW_SIZE)
             .content_fit(ContentFit::Cover)
-            .border_radius(12)
+            .border_radius(OXITHEME.border_radius)
             .into()
     } else {
         text("󰎈")
-            .size(30)
+            .size(ARTWORK_ICON_SIZE)
             .style(|_| iced::widget::text::Style {
                 color: Some(OXITHEME.primary),
             })
@@ -391,15 +403,15 @@ fn artwork_preview(art_url: Option<&str>) -> Element<'static, PluginMsg> {
         .style(|_| iced::widget::container::Style {
             background: Some(Background::Color(OXITHEME.primary_bg)),
             border: Border {
-                radius: 12.0.into(),
+                radius: OXITHEME.border_radius.into(),
                 color: Color::TRANSPARENT,
                 width: 0.0,
             },
             shadow: Shadow::default(),
             ..Default::default()
         })
-        .width(76)
-        .height(76)
+        .width(ARTWORK_PREVIEW_SIZE)
+        .height(ARTWORK_PREVIEW_SIZE)
         .align_x(Alignment::Center)
         .align_y(Alignment::Center)
         .into()
@@ -441,19 +453,25 @@ fn device_section(
         .width(Length::Fill);
 
     let body = Column::new()
-        .push(text(label).size(12).style(text_primary))
+        .push(text(label).size(OXITHEME.font_md).style(text_primary))
         .push(picker)
         .push(
             Row::new()
                 .push(
-                    oxi_slider::slider(0u8..=150u8, volume, move |value| msg(volume_msg(value)))
-                        .width(Length::Fill),
+                    oxi_slider::slider(0u8..=MAX_DEVICE_VOLUME, volume, move |value| {
+                        msg(volume_msg(value))
+                    })
+                    .width(Length::Fill),
                 )
-                .push(text(format!("{volume}%")).size(11).style(text_muted))
-                .spacing(8)
+                .push(
+                    text(format!("{volume}%"))
+                        .size(OXITHEME.font_sm)
+                        .style(text_muted),
+                )
+                .spacing(OXITHEME.padding_sm)
                 .align_y(Alignment::Center),
         )
-        .spacing(7)
+        .spacing(OXITHEME.padding_sm)
         .width(Length::Fill);
     card(body.into(), OXITHEME.mantle_hover).into()
 }
@@ -463,8 +481,11 @@ fn media_button(
     message: Message,
     busy: bool,
 ) -> iced::widget::Button<'static, PluginMsg> {
-    let button = oxi_button::button(text(label).size(13), oxi_button::ButtonVariant::PrimaryBg)
-        .padding([5, 8]);
+    let button = oxi_button::button(
+        text(label).size(OXITHEME.font_md),
+        oxi_button::ButtonVariant::PrimaryBg,
+    )
+    .padding([OXITHEME.padding_xs, OXITHEME.padding_sm]);
     if busy {
         button
     } else {
@@ -473,19 +494,7 @@ fn media_button(
 }
 
 fn card<'a>(content: Element<'a, PluginMsg>, bg: Color) -> Container<'a, PluginMsg> {
-    Container::new(content)
-        .style(move |_| iced::widget::container::Style {
-            background: Some(Background::Color(bg)),
-            border: Border {
-                radius: 12.0.into(),
-                color: Color::TRANSPARENT,
-                width: 0.0,
-            },
-            shadow: Shadow::default(),
-            ..Default::default()
-        })
-        .padding(10)
-        .width(Length::Fill)
+    oxi_plugin::compact_card(content, bg)
 }
 
 fn read_poll_interval(global: &Table) -> u64 {
@@ -531,7 +540,7 @@ mod tests {
         assert!(init_task.is_some());
         assert_eq!(name(), "Audio");
         assert_eq!(abi_version(), ABI_VERSION);
-        assert_eq!(metadata().popup_size, Some((460, 420)));
+        assert_eq!(metadata().popup_size, Some(POPUP_SIZE));
         assert_eq!(view(plugin_model.clone()).unwrap().len(), 1);
         assert_eq!(popup_view(plugin_model.clone()).unwrap().len(), 1);
 

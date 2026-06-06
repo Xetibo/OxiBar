@@ -23,7 +23,12 @@ use oxibar_plugin_api::{
     ABI_VERSION, PluginModel, PluginMsg, PluginStream, drain_model_errors, plugin_model,
     toml::Table, with_model_read, with_model_write,
 };
-use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_button};
+use oxiced::{
+    theme::theme_impl::OXITHEME,
+    widgets::{oxi_button, oxi_plugin},
+};
+
+const WORKSPACE_SHADOW_BLUR: f32 = 2.0;
 
 #[derive(Debug, Default)]
 pub struct Model {
@@ -222,10 +227,10 @@ pub extern "Rust" fn view(
                     border: Border {
                         color: iced::Color::TRANSPARENT,
                         width: 0.0,
-                        radius: Radius::new(360 / 4),
+                        radius: Radius::from(oxi_plugin::BAR_CONTROL_HEIGHT / 2.0),
                     },
                     shadow: Shadow {
-                        blur_radius: 2.0,
+                        blur_radius: WORKSPACE_SHADOW_BLUR,
                         ..Shadow::default()
                     },
                     snap: false,
@@ -248,7 +253,7 @@ pub extern "Rust" fn view(
                     };
                 oxi_button::button(
                     text(format!("{}", workspace.id))
-                        .size(13)
+                        .size(OXITHEME.font_md)
                         .font(font)
                         .align_y(Alignment::Center)
                         .align_x(Alignment::Center),
@@ -257,8 +262,8 @@ pub extern "Rust" fn view(
                 .on_press(msg(Message::ActivateWorkspace(workspace.id)))
                 .style(move |&_, status| (style)(base, status))
                 .padding(0)
-                .height(22.5)
-                .width(22.5)
+                .height(oxi_plugin::BAR_CONTROL_HEIGHT)
+                .width(oxi_plugin::BAR_CONTROL_HEIGHT)
                 .into()
             })
             .collect();
@@ -266,7 +271,7 @@ pub extern "Rust" fn view(
         vec![
             Row::from_vec(workspace_entries)
                 .align_y(Alignment::Center)
-                .spacing(5)
+                .spacing(OXITHEME.padding_xs)
                 .into(),
         ]
     })

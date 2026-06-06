@@ -10,6 +10,8 @@
 - Use `Result<T, String>` for plugin-local external command/DBus errors when the error is surfaced through a plugin error queue.
 - Avoid long-lived locks around UI building or external calls.
 - Add comments only when code is not self-explanatory or unsafe/lifetime behavior needs documentation.
+- Do not leave magic numbers in code. Use named constants for domain/protocol values, put user-tunable values in config, and use `oxiced` theme/helper tokens for UI spacing, padding, margins, border radii, and font sizes.
+- When the same UI number repeats across plugins, add or use a shared `oxiced` token/helper before adding plugin-local constants.
 
 ## Testing Expectations
 

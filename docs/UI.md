@@ -8,10 +8,11 @@
 - Prefer shared `oxiced` widgets when available.
 - Use `oxiced::widgets::oxi_plugin::bar_button` for standard plugin bar controls.
 - Use `oxiced::widgets::oxi_plugin` text role helpers before adding local text style closures.
-- Keep bar controls 22.5 units high, text size `14`, horizontal padding `[0, 8]`, and transparent idle background. Bar edge padding is 8 units on the left and right. Bar labels that combine icons with counts or values should use row spacing `4` between the icon and text.
-- Popup roots should use compact spacing, padding `[12, 14]`, `Length::Fill`, and scrolling for long content.
+- Keep bar controls at `oxi_plugin::BAR_CONTROL_HEIGHT`, use `OXITHEME.font_md` text, `OXITHEME.padding_sm` horizontal padding, and transparent idle background. Bar edge padding should use `OXITHEME.padding_sm`; bar labels that combine icons with counts or values should use `OXITHEME.padding_xs` between icon and text.
+- Informational bar controls that need details on hover should use the same follow-cursor tooltip pattern as the clock calendar.
+- Popup roots should use compact `OXITHEME.padding_sm` spacing, `OXITHEME.padding_md`/`padding_lg` padding, `Length::Fill`, and scrolling for long content.
 - Plugins with model-dependent popup content should export `popup_metrics(model)` and cap long content at the host max height with scrolling.
-- Panel roots should use padding `[14, 14]`, full width/height, and scrolling for long lists.
+- Panel roots should use `OXITHEME.padding_md` padding, full width/height, and scrolling for long lists.
 - Modal content should rely on host-provided chrome, radius, shadow, border, and padding.
 - Notification cards are interactive: card click invokes the notification's primary action or dismisses when no action exists; inline reply inputs must remain focusable in toast and panel layers; hover/focus prevents toast expiry.
 - Tray rows use left-click activation and right-click context menus. Do not add separate per-row action buttons for secondary/context actions.

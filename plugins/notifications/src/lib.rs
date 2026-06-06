@@ -16,6 +16,8 @@ use oxibar_plugin_api::{
 
 use oxinoti::{Event, Notification};
 
+const TOAST_ACTIVE_RECHECK_MILLIS: u64 = 1_000;
+
 #[derive(Debug)]
 pub struct Model {
     notifications: Vec<Notification>,
@@ -25,6 +27,7 @@ pub struct Model {
     timeout: Duration,
     next_toast_generation: u64,
     toast_generations: BTreeMap<u32, u64>,
+    expired_toasts: BTreeSet<u32>,
     errors: Vec<String>,
 }
 
@@ -38,6 +41,7 @@ impl Model {
             timeout: oxinoti::read_timeout(&global_config),
             next_toast_generation: 0,
             toast_generations: BTreeMap::new(),
+            expired_toasts: BTreeSet::new(),
             errors: Vec::new(),
         }
     }
@@ -61,8 +65,28 @@ impl Model {
         self.notifications
             .retain(|notification| notification.id() != id);
         self.toast_generations.remove(&id);
+        self.expired_toasts.remove(&id);
         self.reply_texts.remove(&id);
         self.hovered_notifications.remove(&id);
+        oxinoti::clear_reply_focus(id);
+    }
+
+    fn is_toast_active(&self, id: u32) -> bool {
+        self.hovered_notifications.contains(&id)
+            || oxinoti::is_reply_focused(id)
+            || self
+                .reply_texts
+                .get(&id)
+                .is_some_and(|draft| !draft.trim().is_empty())
+    }
+
+    fn close_expired_toast_if_idle(&mut self, id: u32) -> Option<Task<PluginMsg>> {
+        if !self.expired_toasts.contains(&id) || self.is_toast_active(id) {
+            return None;
+        }
+        self.expired_toasts.remove(&id);
+        self.toast_generations.remove(&id);
+        Some(close_toast_task(id))
     }
 
     fn next_toast_generation(&mut self, id: u32) -> u64 {
@@ -135,8 +159,12 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
                 .iter()
                 .map(|notification| close_toast_task(notification.id()))
                 .collect::<Vec<_>>();
+            for notification in &model.notifications {
+                oxinoti::clear_reply_focus(notification.id());
+            }
             model.notifications.clear();
             model.toast_generations.clear();
+            model.expired_toasts.clear();
             model.reply_texts.clear();
             model.hovered_notifications.clear();
             Some(Task::batch(close_tasks))
@@ -148,6 +176,7 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             let timeout = model.toast_timeout(&notification);
             let (width, height) = notification.toast_size();
             let toast_id = notification.toast_id();
+            model.expired_toasts.remove(&id);
             model.upsert(notification);
             if model.do_not_disturb {
                 None
@@ -181,8 +210,12 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             Some(close_toast_task(id))
         }
         Event::ReplyChanged(id, text) => {
-            model.reply_texts.insert(id, text);
-            None
+            if text.trim().is_empty() {
+                model.reply_texts.remove(&id);
+            } else {
+                model.reply_texts.insert(id, text);
+            }
+            model.close_expired_toast_if_idle(id)
         }
         Event::SubmitReply(id) => {
             let can_reply = model
@@ -196,7 +229,7 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
                 let text = model.reply_texts.remove(&id).unwrap_or_default();
                 let text = text.trim().to_owned();
                 if text.is_empty() {
-                    None
+                    model.close_expired_toast_if_idle(id)
                 } else {
                     model.remove(id);
                     oxinoti::spawn_inline_reply(id, text);
@@ -207,27 +240,22 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
         Event::HoverChanged(id, hovered) => {
             if hovered {
                 model.hovered_notifications.insert(id);
+                None
             } else {
                 model.hovered_notifications.remove(&id);
+                model.close_expired_toast_if_idle(id)
             }
-            None
         }
         Event::ToastExpired(id, generation) => {
             if model.toast_generations.get(&id).copied() != Some(generation) {
                 None
+            } else if model.is_toast_active(id) {
+                model.expired_toasts.insert(id);
+                Some(recheck_expired_toast_task(id, generation))
             } else {
-                let reply_capable = model.notifications.iter().any(|notification| {
-                    notification.id() == id && notification.allows_inline_reply()
-                });
-                if model.hovered_notifications.contains(&id)
-                    || model.reply_texts.contains_key(&id)
-                    || reply_capable
-                {
-                    None
-                } else {
-                    model.toast_generations.remove(&id);
-                    Some(close_toast_task(id))
-                }
+                model.expired_toasts.remove(&id);
+                model.toast_generations.remove(&id);
+                Some(close_toast_task(id))
             }
         }
         Event::Error(error) => {
@@ -241,6 +269,16 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
 fn close_toast_task(id: u32) -> Task<PluginMsg> {
     Task::done(
         Arc::new(HostToastRequest::close(id.to_string()).to_host_request_string()) as PluginMsg,
+    )
+}
+
+fn recheck_expired_toast_task(id: u32, generation: u64) -> Task<PluginMsg> {
+    Task::perform(
+        async move {
+            std::thread::sleep(Duration::from_millis(TOAST_ACTIVE_RECHECK_MILLIS));
+            (id, generation)
+        },
+        |(id, generation)| oxinoti::msg(Event::ToastExpired(id, generation)),
     )
 }
 
@@ -419,6 +457,23 @@ mod tests {
     }
 
     #[test]
+    fn reads_notification_timeout_from_config() {
+        let mut notifications = Table::new();
+        notifications.insert(
+            "timeout".to_owned(),
+            oxibar_plugin_api::toml::Value::Integer(7),
+        );
+        let mut global = Table::new();
+        global.insert(
+            "notifications".to_owned(),
+            oxibar_plugin_api::toml::Value::Table(notifications),
+        );
+
+        assert_eq!(oxinoti::read_timeout(&global), Duration::from_secs(7));
+        assert_eq!(oxinoti::read_timeout(&Table::new()), Duration::from_secs(3));
+    }
+
+    #[test]
     fn hovered_notification_does_not_expire_toast_generation() {
         let (plugin_model, _) = model(Table::new());
         let _ = update(
@@ -435,10 +490,145 @@ mod tests {
             oxinoti::msg(Event::ToastExpired(9, 1)),
         );
 
-        assert!(task.is_none());
+        assert!(task.is_some());
         let guard = plugin_model.read().unwrap();
         let model = guard.downcast_ref::<Model>().unwrap();
         assert_eq!(model.toast_generations.get(&9), Some(&1));
+        assert!(model.expired_toasts.contains(&9));
+        drop(guard);
+
+        let task = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::HoverChanged(9, false)),
+        );
+
+        assert!(task.is_some());
+        let guard = plugin_model.read().unwrap();
+        let model = guard.downcast_ref::<Model>().unwrap();
+        assert!(!model.toast_generations.contains_key(&9));
+        assert!(!model.expired_toasts.contains(&9));
+        assert!(
+            model
+                .notifications
+                .iter()
+                .any(|notification| notification.id() == 9)
+        );
+    }
+
+    #[test]
+    fn inline_reply_notification_expires_when_idle() {
+        let (plugin_model, _) = model(Table::new());
+        let mut notification = notification(10, "reply");
+        notification.actions = vec!["inline-reply".to_owned(), "Reply".to_owned()];
+        let _ = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::Add(Box::new(notification))),
+        );
+
+        let task = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::ToastExpired(10, 1)),
+        );
+
+        assert!(task.is_some());
+        let guard = plugin_model.read().unwrap();
+        let model = guard.downcast_ref::<Model>().unwrap();
+        assert!(!model.toast_generations.contains_key(&10));
+        assert!(!model.expired_toasts.contains(&10));
+        assert!(
+            model
+                .notifications
+                .iter()
+                .any(|notification| notification.id() == 10)
+        );
+    }
+
+    #[test]
+    fn reply_draft_defers_expiry_until_cleared() {
+        let (plugin_model, _) = model(Table::new());
+        let mut notification = notification(11, "draft");
+        notification.actions = vec!["inline-reply".to_owned(), "Reply".to_owned()];
+        let _ = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::Add(Box::new(notification))),
+        );
+        let _ = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::ReplyChanged(11, "hello".to_owned())),
+        );
+
+        let task = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::ToastExpired(11, 1)),
+        );
+
+        assert!(task.is_some());
+        {
+            let guard = plugin_model.read().unwrap();
+            let model = guard.downcast_ref::<Model>().unwrap();
+            assert_eq!(model.toast_generations.get(&11), Some(&1));
+            assert!(model.expired_toasts.contains(&11));
+        }
+
+        let task = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::ReplyChanged(11, String::new())),
+        );
+
+        assert!(task.is_some());
+        let guard = plugin_model.read().unwrap();
+        let model = guard.downcast_ref::<Model>().unwrap();
+        assert!(!model.toast_generations.contains_key(&11));
+        assert!(!model.expired_toasts.contains(&11));
+        assert!(
+            model
+                .notifications
+                .iter()
+                .any(|notification| notification.id() == 11)
+        );
+    }
+
+    #[test]
+    fn focused_reply_defers_expiry_until_focus_clears() {
+        let (plugin_model, _) = model(Table::new());
+        let mut notification = notification(12, "focused");
+        notification.actions = vec!["inline-reply".to_owned(), "Reply".to_owned()];
+        let _ = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::Add(Box::new(notification))),
+        );
+        oxinoti::set_reply_focus(12, true);
+
+        let task = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::ToastExpired(12, 1)),
+        );
+
+        assert!(task.is_some());
+        {
+            let guard = plugin_model.read().unwrap();
+            let model = guard.downcast_ref::<Model>().unwrap();
+            assert_eq!(model.toast_generations.get(&12), Some(&1));
+            assert!(model.expired_toasts.contains(&12));
+        }
+
+        oxinoti::set_reply_focus(12, false);
+        let task = update(
+            plugin_model.clone(),
+            oxinoti::msg(Event::ToastExpired(12, 1)),
+        );
+
+        assert!(task.is_some());
+        let guard = plugin_model.read().unwrap();
+        let model = guard.downcast_ref::<Model>().unwrap();
+        assert!(!model.toast_generations.contains_key(&12));
+        assert!(!model.expired_toasts.contains(&12));
+        assert!(
+            model
+                .notifications
+                .iter()
+                .any(|notification| notification.id() == 12)
+        );
     }
 
     #[test]
