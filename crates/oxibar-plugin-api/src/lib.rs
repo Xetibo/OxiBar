@@ -125,6 +125,9 @@ pub const HOST_REQUEST_TOGGLE_CALENDAR_POPUP: &str = HOST_REQUEST_TOGGLE_POPUP;
 
 pub const HOST_REQUEST_SHOW_TOAST_PREFIX: &str = "oxibar.host.toast.show:";
 pub const HOST_REQUEST_CLOSE_TOAST_PREFIX: &str = "oxibar.host.toast.close:";
+pub const HOST_REQUEST_TOAST_KEYBOARD_NONE_PREFIX: &str = "oxibar.host.toast.keyboard.none:";
+pub const HOST_REQUEST_TOAST_KEYBOARD_ON_DEMAND_PREFIX: &str =
+    "oxibar.host.toast.keyboard.on-demand:";
 
 /// Plugin request for the host to show or close a transient toast layer.
 ///

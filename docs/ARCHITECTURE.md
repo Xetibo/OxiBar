@@ -16,6 +16,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `plugins/*`: dynamic plugin crates loaded from `$XDG_CONFIG_HOME/oxibar/plugins/` when their library filename appears in `plugins = [...]`.
 - `plugins/{audio,battery,bluetooth,network,tray}/src/system.rs`: command/DBus/sysfs integration, parsing, and domain data extracted from plugin ABI/UI files.
 - `plugins/clock/src/caldav.rs`: HTTPS-only CalDAV sync, current-month calendar queries, minimal iCalendar parsing, common recurrence expansion, and Nextcloud-compatible calendar query support.
+- `flake.nix` and `nix/*.nix`: Nix packaging for the host and dynamic plugin libraries. Crane builds one workspace dependency artifact derivation and reuses it for every host/plugin package so shared Rust dependencies are not rebuilt per plugin.
 
 ## Runtime Flow
 
@@ -24,7 +25,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - Plugins are keyed by their declared `name()` string, not by filesystem path or load index. Fallback layout order follows config plugin order.
 - Plugin messages are wrapped as `PluginMsg` and mapped to host messages when they carry a known host request string.
 - Host-request mapping is centralized in `map_plugin_message()`, so plugin subscription messages and plugin initialization tasks use the same routing rules.
-- The host owns popup, modal, and panel surfaces. Plugins render only inner content for those surfaces. Popup open/close layout animation uses a fixed quick ease-out transition so app-side popups track notification-panel layer opening speed more closely.
+- The host owns popup, modal, panel, and toast layer-shell surfaces. Plugins render only inner content for those surfaces. Popup open/close layout animation uses a fixed quick ease-out transition so app-side popups track notification-panel layer opening speed more closely.
 - Visible popup size comes from `[bar.popup_sizes]`, then optional runtime `popup_metrics(model)`, then optional plugin metadata, then host default size. Plugins can also request a larger transparent popup input region through runtime metrics or metadata for detached overlays such as tray context menus.
 
 ## Plugin ABI
@@ -43,7 +44,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `bluetooth`: `bluetoothctl` scan, connect, disconnect, and pairing modal; popup and modal surfaces.
 - `clock`: time display, local calendar popup with event-day tooltips, optional HTTPS CalDAV event sync, and configurable external calendar launcher.
 - `network`: NetworkManager `nmcli` connection management and password modal; popup and modal surfaces.
-- `notifications`: Freedesktop notification server, toast layers, inline replies, DND state, and side panel. Toast timeout closes only the host toast surface; stored notifications remain in the panel until dismissed, cleared, replied to, or actioned.
+- `notifications`: Freedesktop notification server, toast layers, inline replies, DND state, and side panel. Toast layers start with keyboard interactivity disabled and are switched to `OnDemand` only after user hover intent so incoming notifications do not steal keyboard focus. Toast timeout closes only the host toast surface; stored notifications remain in the panel until dismissed, cleared, replied to, or actioned.
 - `tray`: StatusNotifier watcher, dynamically sized tray item popup, activation, and DBusMenu-backed detached context menu rendering. Item registration publishes a fallback row immediately and refreshes DBus metadata asynchronously so registering applications are not blocked by property queries.
 - `workspaces`: Hyprland workspace display and dispatch.
 
@@ -56,3 +57,11 @@ Plugin `lib.rs` files should keep ABI symbols, model update, and view compositio
 - Thunderbird integration is limited to launching `thunderbird --calendar`; date-focused navigation remains a user-configured `calendar_command` concern because Thunderbird has no stable CLI for opening a specific calendar date.
 - Window size and layer settings are still hardcoded in `src/layout.rs`.
 - The stream raw-pointer ABI is documented as practical but not fully C-ABI-safe.
+
+## Nix Packaging
+
+- `inputs.crane` provides Cargo derivations for Nix builds.
+- `flake.nix` creates one cleaned Cargo source, one vendored dependency set, and one `buildDepsOnly` workspace artifact derivation with `--workspace` package selection.
+- `nix/default.nix` builds only the host package from those shared Cargo artifacts.
+- `nix/plugin.nix` builds only the requested plugin package from the same shared Cargo artifacts and installs the resulting `lib*.so` under `$out/lib/`.
+- This reduces rebuild time when multiple plugins are updated because dependency crates such as `iced`, `oxiced`, `zbus`, and `oxibar-plugin-api` are compiled once per dependency graph instead of once per plugin derivation. Final plugin crate compilation and linking still happen per plugin.

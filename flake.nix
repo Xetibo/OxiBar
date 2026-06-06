@@ -7,6 +7,7 @@
       url = "github:hercules-ci/flake-parts";
       inputs.nixpkgs-lib.follows = "nixpkgs";
     };
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs = inputs @ {
@@ -116,13 +117,57 @@
           };
 
         packages = let
+          craneLib = inputs.crane.mkLib pkgs;
           lockFile = ./Cargo.lock;
+          src = craneLib.cleanCargoSource ./.;
+          cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+          oxicedSource =
+            "git+https://github.com/Xetibo/oxiced?branch=iced14"
+            + "#735181be7340e5916795642efa95a11e08d8f32f";
+          outputHashes = {
+            ${oxicedSource} = "sha256-z7Dl9G6qBF5KNzlNccnFZOh7HkAid7nPoS2AEDhzG5c=";
+          };
+          cargoVendorDir = craneLib.vendorCargoDeps {
+            inherit src outputHashes;
+            cargoLock = lockFile;
+          };
+          commonCraneArgs = {
+            pname = "oxibar-workspace";
+            inherit (cargoToml.package) version;
+            inherit src cargoVendorDir;
+            cargoLock = lockFile;
+            buildInputs = with pkgs; [
+              libGL
+              libglvnd
+              libxkbcommon
+              wayland
+              wayland-protocols
+              libdrm
+              libclang.lib
+              vulkan-loader
+              xorg.libX11
+              xorg.libXrandr
+              xorg.libXi
+              xorg.libXcursor
+              mesa
+            ];
+            nativeBuildInputs = [pkgs.pkg-config];
+            LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
+          };
+          cargoArtifacts = craneLib.buildDepsOnly (commonCraneArgs
+            // {
+              cargoBuildExtraArgs = "--workspace";
+              cargoCheckExtraArgs = "--workspace --all-targets";
+              cargoTestExtraArgs = "--workspace --no-run";
+            });
           pluginPackage = plugin:
             pkgs.callPackage ./nix/plugin.nix {
-              inherit lockFile plugin;
+              inherit craneLib src cargoVendorDir cargoArtifacts lockFile plugin;
             };
         in rec {
-          oxibar = pkgs.callPackage ./nix/default.nix {inherit inputs lockFile;};
+          oxibar = pkgs.callPackage ./nix/default.nix {
+            inherit inputs craneLib src cargoVendorDir cargoArtifacts lockFile;
+          };
           oxibar-audio = pluginPackage "audio";
           oxibar-battery = pluginPackage "battery";
           oxibar-bluetooth = pluginPackage "bluetooth";

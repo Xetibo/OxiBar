@@ -30,3 +30,4 @@
 ## Nix
 
 - `flake.nix` exists. Prefer running commands from the flake/dev shell where practical.
+- Nix Rust packages use Crane. Keep host and plugin packages wired to the shared workspace `cargoArtifacts` in `flake.nix` instead of creating per-plugin dependency caches.

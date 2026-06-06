@@ -9,13 +9,13 @@
 
 ## Current Unit Coverage
 
-- Host/config: plugin allow-list parsing, plugin unavailable error formatting, anchor parsing, host-request message mapping, popup geometry/config/dynamic metrics, bar section lookup, and popup state setters.
+- Host/config: plugin allow-list parsing, plugin unavailable error formatting, anchor parsing, host-request message mapping, popup geometry/config/dynamic metrics, toast keyboard interactivity actions, bar section lookup, and popup state setters.
 - `audio`: percent parsing, file URL decoding, selected-device fallback, config poll interval, view/popup construction, and error draining.
 - `battery`: sysfs battery availability/parsing, percentage and duration estimates, config poll interval, view construction, and error draining.
 - `bluetooth`: `bluetoothctl` controller availability parsing, device parsing, noise filtering, pairing prompt detection, view/popup/modal construction, and error draining.
 - `clock`: config parsing, invalid config defaults, month arithmetic, Thunderbird launcher mapping, CalDAV HTTPS guard, iCalendar/CalDAV parsing, recurrence/RDATE expansion, event tooltip details, ABI metadata, and error draining.
 - `network`: `nmcli` field splitting, scan interval parsing, label/icon helpers, view/popup/modal construction, and error draining.
-- `notifications`: markup stripping, notification action selection, notification timeout config, notification add/replace/remove/clear state transitions, DND toast suppression, toast-only expiry, hover/focus/draft expiry preservation, panel rendering, and error draining.
+- `notifications`: markup stripping, notification action selection, notification timeout config, notification add/replace/remove/clear state transitions, DND toast suppression, toast-only expiry, hover/focus/draft expiry preservation, toast keyboard opt-in requests, panel rendering, and error draining.
 - `tray`: StatusNotifier address normalization, tray label fallback, DBusMenu label cleanup, item/hover/context-menu state update, dynamic popup metrics, popup/action rendering, and error draining.
 - `workspaces`: active workspace state update, empty launch behavior, view construction, and error draining without requiring Hyprland.
 
@@ -24,6 +24,7 @@
 - `cargo fmt --all`
 - `nix develop -c cargo test --workspace`
 - `nix develop -c cargo clippy --workspace --all-targets`
+- `nix build .#oxibar .#oxibar-audio` after Nix packaging changes, with more plugin package targets as needed.
 
 Oxibar patches the `oxiced` git dependency to `../oxiced` for local shared-helper development, so run oxiced checks too when changing shared UI helpers:
 

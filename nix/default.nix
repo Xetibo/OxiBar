@@ -1,5 +1,5 @@
 {
-  rustPlatform,
+  craneLib,
   stdenv,
   pkg-config,
   libGL,
@@ -11,6 +11,9 @@
   libclang,
   lib,
   lockFile,
+  cargoArtifacts,
+  cargoVendorDir,
+  src,
   vulkan-loader,
   xorg,
   mesa,
@@ -53,13 +56,14 @@
     fontDirectories = [adwaita-fonts];
   };
 in
-  rustPlatform.buildRustPackage rec {
+  craneLib.buildPackage rec {
     pname = cargoToml.package.name;
     inherit (cargoToml.package) version;
 
-    src = ../.;
-    cargoBuildFlags = ["-p" pname];
-    cargoTestFlags = ["-p" pname];
+    inherit src cargoArtifacts cargoVendorDir;
+    cargoLock = lockFile;
+    cargoBuildExtraArgs = "-p ${pname}";
+    cargoTestExtraArgs = "-p ${pname}";
 
     buildInputs = [
       pkg-config
@@ -77,13 +81,6 @@ in
       xorg.libXcursor
       mesa
     ];
-
-    cargoLock = {
-      inherit lockFile;
-      outputHashes = {
-        "oxiced-0.5.1" = "sha256-z7Dl9G6qBF5KNzlNccnFZOh7HkAid7nPoS2AEDhzG5c=";
-      };
-    };
 
     nativeBuildInputs = [
       pkg-config

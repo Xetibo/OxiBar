@@ -10,8 +10,10 @@ use std::{
 
 use iced::{Element, Task, futures::Stream, stream};
 use oxibar_plugin_api::{
-    ABI_VERSION, HOST_REQUEST_TOGGLE_PANEL, HostToastRequest, PluginModel, PluginMsg, PluginStream,
-    drain_model_errors, plugin_model, toml::Table, with_model_read, with_model_write,
+    ABI_VERSION, HOST_REQUEST_TOAST_KEYBOARD_NONE_PREFIX,
+    HOST_REQUEST_TOAST_KEYBOARD_ON_DEMAND_PREFIX, HOST_REQUEST_TOGGLE_PANEL, HostToastRequest,
+    PluginModel, PluginMsg, PluginStream, drain_model_errors, plugin_model, toml::Table,
+    with_model_read, with_model_write,
 };
 
 use oxinoti::{Event, Notification};
@@ -78,6 +80,12 @@ impl Model {
                 .reply_texts
                 .get(&id)
                 .is_some_and(|draft| !draft.trim().is_empty())
+    }
+
+    fn allows_inline_reply(&self, id: u32) -> bool {
+        self.notifications
+            .iter()
+            .any(|notification| notification.id() == id && notification.allows_inline_reply())
     }
 
     fn close_expired_toast_if_idle(&mut self, id: u32) -> Option<Task<PluginMsg>> {
@@ -218,11 +226,7 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             model.close_expired_toast_if_idle(id)
         }
         Event::SubmitReply(id) => {
-            let can_reply = model
-                .notifications
-                .iter()
-                .any(|notification| notification.id() == id && notification.allows_inline_reply());
-            if !can_reply {
+            if !model.allows_inline_reply(id) {
                 model.reply_texts.remove(&id);
                 None
             } else {
@@ -238,12 +242,20 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             }
         }
         Event::HoverChanged(id, hovered) => {
+            let can_reply = model.allows_inline_reply(id);
             if hovered {
                 model.hovered_notifications.insert(id);
-                None
+                can_reply.then(|| toast_keyboard_task(id, true))
             } else {
                 model.hovered_notifications.remove(&id);
-                model.close_expired_toast_if_idle(id)
+                let close_task = model.close_expired_toast_if_idle(id);
+                if close_task.is_some() || model.is_toast_active(id) {
+                    close_task
+                } else if can_reply {
+                    Some(toast_keyboard_task(id, false))
+                } else {
+                    None
+                }
             }
         }
         Event::ToastExpired(id, generation) => {
@@ -270,6 +282,15 @@ fn close_toast_task(id: u32) -> Task<PluginMsg> {
     Task::done(
         Arc::new(HostToastRequest::close(id.to_string()).to_host_request_string()) as PluginMsg,
     )
+}
+
+fn toast_keyboard_task(id: u32, enabled: bool) -> Task<PluginMsg> {
+    let prefix = if enabled {
+        HOST_REQUEST_TOAST_KEYBOARD_ON_DEMAND_PREFIX
+    } else {
+        HOST_REQUEST_TOAST_KEYBOARD_NONE_PREFIX
+    };
+    Task::done(Arc::new(format!("{prefix}{id}")) as PluginMsg)
 }
 
 fn recheck_expired_toast_task(id: u32, generation: u64) -> Task<PluginMsg> {

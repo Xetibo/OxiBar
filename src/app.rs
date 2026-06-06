@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use iced::{Font, Subscription, Task, Theme, theme::Style};
-use iced_layershell::reexport::IcedId;
+use iced_layershell::reexport::{IcedId, KeyboardInteractivity};
 use once_cell::sync::Lazy;
 use oxibar_plugin_api::{
     HostToastRequest, PluginMsg, PluginPopupMetrics, PluginStream, SubscriptionFn,
@@ -142,7 +142,8 @@ impl OxiBar {
             | Message::OpenToastLayer(_, _, _, _)
             | Message::CloseToastLayer(_)
             | Message::MoveToastLayer(_, _)
-            | Message::ResizeToastLayer(_, _, _) => Task::none(),
+            | Message::ResizeToastLayer(_, _, _)
+            | Message::SetToastKeyboardInteractivity(_, _) => Task::none(),
             Message::SetPopupPlugin(plugin_id) => {
                 self.popup_plugin = plugin_id;
                 Task::none()
@@ -163,6 +164,9 @@ impl OxiBar {
             }
             Message::ClosePluginToast(plugin_id, toast_id) => {
                 self.close_plugin_toast(&plugin_id, &toast_id)
+            }
+            Message::SetPluginToastKeyboard(plugin_id, toast_id, keyboard_interactivity) => {
+                self.set_plugin_toast_keyboard(&plugin_id, &toast_id, keyboard_interactivity)
             }
             Message::PluginSubMsg(plugin_id, msg) => {
                 let Some((model, funcs)) = self.plugins.get(&plugin_id) else {
@@ -420,6 +424,25 @@ impl OxiBar {
         let toast = self.toasts.remove(index);
         Task::done(Message::CloseToastLayer(toast.window_id))
             .chain(Task::batch(self.toast_layout_tasks()))
+    }
+
+    fn set_plugin_toast_keyboard(
+        &self,
+        plugin_id: &str,
+        toast_id: &str,
+        keyboard_interactivity: KeyboardInteractivity,
+    ) -> Task<Message> {
+        let Some(toast) = self
+            .toasts
+            .iter()
+            .find(|toast| toast.plugin_id == plugin_id && toast.toast_id == toast_id)
+        else {
+            return Task::none();
+        };
+        Task::done(Message::SetToastKeyboardInteractivity(
+            toast.window_id,
+            keyboard_interactivity,
+        ))
     }
 
     fn close_all_toasts(&mut self) -> Task<Message> {

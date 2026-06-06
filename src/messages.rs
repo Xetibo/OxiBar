@@ -3,7 +3,8 @@ use iced_layershell::{
     reexport::{Anchor, IcedId, KeyboardInteractivity, Layer, NewLayerShellSettings, OutputOption},
 };
 use oxibar_plugin_api::{
-    HOST_REQUEST_CLOSE_MODAL, HOST_REQUEST_OPEN_MODAL, HOST_REQUEST_TOGGLE_PANEL,
+    HOST_REQUEST_CLOSE_MODAL, HOST_REQUEST_OPEN_MODAL, HOST_REQUEST_TOAST_KEYBOARD_NONE_PREFIX,
+    HOST_REQUEST_TOAST_KEYBOARD_ON_DEMAND_PREFIX, HOST_REQUEST_TOGGLE_PANEL,
     HOST_REQUEST_TOGGLE_POPUP, HostToastAction, HostToastRequest, PluginMsg,
 };
 
@@ -29,10 +30,12 @@ pub enum Message {
     ClosePanelLayer(IcedId),
     ShowPluginToast(String, HostToastRequest),
     ClosePluginToast(String, String),
+    SetPluginToastKeyboard(String, String, KeyboardInteractivity),
     OpenToastLayer(IcedId, u32, u32, i32),
     CloseToastLayer(IcedId),
     MoveToastLayer(IcedId, i32),
     ResizeToastLayer(IcedId, u32, u32),
+    SetToastKeyboardInteractivity(IcedId, KeyboardInteractivity),
 }
 
 impl TryInto<LayershellCustomActionWithId> for Message {
@@ -108,7 +111,7 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                             anchor: Anchor::Top | Anchor::Right,
                             exclusive_zone: None,
                             margin: Some((top, TOAST_MARGIN_RIGHT, 0, 0)),
-                            keyboard_interactivity: KeyboardInteractivity::OnDemand,
+                            keyboard_interactivity: KeyboardInteractivity::None,
                             output_option: OutputOption::LastOutput,
                             events_transparent: false,
                             namespace: Some("OxiBar toast".to_owned()),
@@ -129,6 +132,12 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                 Some(id),
                 LayershellCustomAction::SizeChange((width, height)),
             )),
+            Message::SetToastKeyboardInteractivity(id, keyboard_interactivity) => {
+                Ok(LayershellCustomActionWithId::new(
+                    Some(id),
+                    LayershellCustomAction::KeyboardInteractivityChange(keyboard_interactivity),
+                ))
+            }
             message => Err(message),
         }
     }
@@ -154,6 +163,10 @@ pub(crate) fn map_plugin_message(plugin_id: String, msg: PluginMsg) -> Message {
             };
         }
 
+        if let Some((toast_id, keyboard_interactivity)) = parse_toast_keyboard_request(request) {
+            return Message::SetPluginToastKeyboard(plugin_id, toast_id, keyboard_interactivity);
+        }
+
         match request.as_str() {
             HOST_REQUEST_TOGGLE_POPUP => return Message::TogglePluginPopup(plugin_id),
             HOST_REQUEST_OPEN_MODAL => return Message::OpenPluginModal(plugin_id),
@@ -163,6 +176,25 @@ pub(crate) fn map_plugin_message(plugin_id: String, msg: PluginMsg) -> Message {
         }
     }
     Message::PluginSubMsg(plugin_id, msg)
+}
+
+fn parse_toast_keyboard_request(value: &str) -> Option<(String, KeyboardInteractivity)> {
+    let parse = |prefix: &str, keyboard_interactivity| {
+        value
+            .strip_prefix(prefix)
+            .filter(|toast_id| !toast_id.is_empty())
+            .map(|toast_id| (toast_id.to_owned(), keyboard_interactivity))
+    };
+    parse(
+        HOST_REQUEST_TOAST_KEYBOARD_NONE_PREFIX,
+        KeyboardInteractivity::None,
+    )
+    .or_else(|| {
+        parse(
+            HOST_REQUEST_TOAST_KEYBOARD_ON_DEMAND_PREFIX,
+            KeyboardInteractivity::OnDemand,
+        )
+    })
 }
 
 #[cfg(test)]
@@ -223,6 +255,64 @@ mod tests {
             Message::ShowPluginToast(id, request)
                 if id == "Notifications" && request.toast_id == "n2"
         ));
+    }
+
+    #[test]
+    fn maps_toast_keyboard_requests() {
+        let enable = format!("{HOST_REQUEST_TOAST_KEYBOARD_ON_DEMAND_PREFIX}n1");
+        assert!(matches!(
+            map_plugin_message("Notifications".to_owned(), plugin_msg(&enable)),
+            Message::SetPluginToastKeyboard(id, toast_id, KeyboardInteractivity::OnDemand)
+                if id == "Notifications" && toast_id == "n1"
+        ));
+
+        let disable = format!("{HOST_REQUEST_TOAST_KEYBOARD_NONE_PREFIX}n1");
+        assert!(matches!(
+            map_plugin_message("Notifications".to_owned(), plugin_msg(&disable)),
+            Message::SetPluginToastKeyboard(id, toast_id, KeyboardInteractivity::None)
+                if id == "Notifications" && toast_id == "n1"
+        ));
+    }
+
+    #[test]
+    fn toast_layers_start_keyboard_disabled() {
+        let id = IcedId::unique();
+        let action = <Message as TryInto<LayershellCustomActionWithId>>::try_into(
+            Message::OpenToastLayer(id, 380, 144, 16),
+        )
+        .unwrap();
+
+        let LayershellCustomActionWithId(
+            None,
+            LayershellCustomAction::NewLayerShell {
+                settings,
+                id: action_id,
+            },
+        ) = action
+        else {
+            panic!("expected toast NewLayerShell action");
+        };
+        assert_eq!(action_id, id);
+        assert_eq!(settings.keyboard_interactivity, KeyboardInteractivity::None);
+    }
+
+    #[test]
+    fn toast_keyboard_changes_target_existing_window() {
+        let id = IcedId::unique();
+        let action = <Message as TryInto<LayershellCustomActionWithId>>::try_into(
+            Message::SetToastKeyboardInteractivity(id, KeyboardInteractivity::OnDemand),
+        )
+        .unwrap();
+
+        let LayershellCustomActionWithId(
+            Some(action_id),
+            LayershellCustomAction::KeyboardInteractivityChange(keyboard_interactivity),
+        ) = action
+        else {
+            panic!("expected keyboard interactivity action");
+        };
+        assert_eq!(action_id, id);
+        assert_eq!(keyboard_interactivity, KeyboardInteractivity::OnDemand);
     }
 
     #[test]
