@@ -6,7 +6,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 
 - `src/main.rs`: module wiring and binary entry point.
 - `src/app.rs`: iced layershell daemon setup, main application state, update loop, subscriptions, and popup/modal/panel state transitions.
-- `src/layout.rs`: geometry constants, layershell settings, popup metrics, popup config parsing, and bar section math.
+- `src/layout.rs`: geometry constants, layershell settings, bar dimension config/fallback parsing, popup metrics, popup config parsing, and bar section math.
 - `src/surfaces.rs`: bar, popup, modal, and panel view construction.
 - `src/messages.rs`: host message enum, layer-shell action conversion, and plugin message routing.
 - `src/font.rs`: bar font config, fontconfig resolution, and font byte loading.
@@ -21,6 +21,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 ## Runtime Flow
 
 - `main()` configures tracing, layershell settings, font loading, theme, subscription, update, and view callbacks.
+- The main layer asks layer shell for the compositor-selected active output width by using left/right/top anchors and width `0`. Iced window open/resize events report the configured surface size back into `OxiBar`, which then updates popup placement and input-region math.
 - `OxiBar::new()` loads configured and available plugins in the order listed by `plugins = [...]` and reads `[bar]` section placement for start, center, and end widgets.
 - Plugins are keyed by their declared `name()` string, not by filesystem path or load index. Fallback layout order follows config plugin order.
 - Plugin messages are wrapped as `PluginMsg` and mapped to host messages when they carry a known host request string.
@@ -55,7 +56,7 @@ Plugin `lib.rs` files should keep ABI symbols, model update, and view compositio
 - Several runtime integrations call external CLIs or DBus APIs directly; pure parsing/state helpers should be covered by unit tests, while live integration remains manual.
 - The clock plugin's CalDAV sync shells out to `curl` to avoid adding a full HTTP stack to the dynamic plugin. It enforces `https://`, curl HTTPS-only protocol flags, and normal certificate verification.
 - Thunderbird integration is limited to launching `thunderbird --calendar`; date-focused navigation remains a user-configured `calendar_command` concern because Thunderbird has no stable CLI for opening a specific calendar date.
-- Window size and layer settings are still hardcoded in `src/layout.rs`.
+- Bar width is dynamic from the active layer-shell output when the compositor reports it. `[bar] width` and `[bar] height` provide config fallback/override values, while anchor, layer, margins, keyboard mode, and scale factor remain fixed in `src/layout.rs`.
 - The stream raw-pointer ABI is documented as practical but not fully C-ABI-safe.
 
 ## Nix Packaging

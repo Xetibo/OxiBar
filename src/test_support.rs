@@ -10,6 +10,7 @@ use oxibar_plugin_api::{
 
 use crate::{
     app::OxiBar,
+    layout,
     messages::Message,
     plugins::{PluginFuncs, PluginMap},
 };
@@ -134,6 +135,8 @@ impl TestHost {
                 theme: Theme::Dark,
                 plugins: plugin_map,
                 transparent: false,
+                bar_window_id: None,
+                bar_size: layout::DEFAULT_BAR_SIZE,
                 start_widgets: order,
                 center_widgets: Vec::new(),
                 end_widgets: Vec::new(),

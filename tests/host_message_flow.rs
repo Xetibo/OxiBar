@@ -38,11 +38,15 @@ fn popup_request_uses_input_metadata_for_detached_overlays() {
 
     let applied = host.drive_plugin_request("Tray", TOGGLE_POPUP);
 
-    assert!(
-        applied
-            .iter()
-            .any(|message| { matches!(message, Message::SetPopupInputRegion(true, _, 332, 420)) })
-    );
+    assert!(applied.iter().any(|message| matches!(
+        message,
+        Message::SetPopupInputRegion {
+            open: true,
+            width: 332,
+            height: 420,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -54,11 +58,15 @@ fn popup_request_uses_dynamic_metrics_when_available() {
 
     let applied = host.drive_plugin_request("Tray", TOGGLE_POPUP);
 
-    assert!(
-        applied
-            .iter()
-            .any(|message| { matches!(message, Message::SetPopupInputRegion(true, _, 332, 420)) })
-    );
+    assert!(applied.iter().any(|message| matches!(
+        message,
+        Message::SetPopupInputRegion {
+            open: true,
+            width: 332,
+            height: 420,
+            ..
+        }
+    )));
 }
 
 #[test]

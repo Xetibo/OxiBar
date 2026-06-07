@@ -21,7 +21,7 @@
 
 ## Current Surfaces
 
-- Main bar background uses `OXITHEME.mantle` unless `[bar] transparent = true`.
+- Main bar background uses `OXITHEME.mantle` unless `[bar] transparent = true`; the bar spans the compositor-selected active output width unless `[bar] width` overrides it.
 - Popup, modal, and panel host surfaces use `OXITHEME.mantle`.
 - Popup open/close animation uses quick `Easing::EASE_OUT` timing to align with notification-center layer opening.
 - Plugins request host surfaces through `HOST_REQUEST_TOGGLE_POPUP`, `HOST_REQUEST_OPEN_MODAL`, `HOST_REQUEST_CLOSE_MODAL`, and `HOST_REQUEST_TOGGLE_PANEL`.

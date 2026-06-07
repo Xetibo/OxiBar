@@ -32,6 +32,8 @@ system services are missing.
 | Key           | Type            | Default          | Description                                                                                                                                                          |
 | ------------- | --------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `transparent` | bool            | `false`          | When `true`, the bar's container background is fully transparent. Plugins still render their own backgrounds. Useful with a wallpaper or a compositor blur effect. |
+| `width`       | integer (`> 0`) | active output width | Optional explicit layer width. Omit it to let layer shell size the bar from the compositor-selected active Wayland output. Startup fallback before the first configure event is `3440`. |
+| `height`      | integer (`> 0`) | `31`             | Visible bar height. The layer reserves this as its exclusive zone and adds popup headroom internally. |
 | `font`        | string          | `"Adwaita Sans"` | Default font *family name* used across the entire bar. Oxibar resolves it through `fc-match`, loads the matched font file into iced/cosmic-text, then uses the matched family name as iced's `default_font`. Plugins that don't override their own font inherit it. |
 | `font_file`   | string          | _unset_          | Absolute path to a `.ttf` / `.otf` file. When set, this explicit file is loaded instead of the `fc-match` result. The `font` value must still match the family name inside the file. |
 | `start`       | array of string | `[]`             | Plugin names to render in the **start** (left) section, in the given order.                                                                                          |
@@ -53,15 +55,16 @@ As a backward-compat shortcut, if **all three** of `start`, `center` and
 the same order as the top-level `plugins = [...]` array — the old single-row
 layout, now deterministic.
 
-Popup size precedence is: `[bar.popup_sizes]` override, plugin metadata,
-then the host default `320 × 300`. `audio`, `bluetooth`, and `network`
-declare `460 × 420` via metadata.
+Popup size precedence is: `[bar.popup_sizes]` override, runtime
+`popup_metrics(model)`, plugin metadata, then the host default `320 × 300`.
+`audio`, `bluetooth`, and `network` declare `460 × 420` via metadata.
 
 Example:
 
 ```toml
 [bar]
 transparent = true
+height      = 31
 font      = "Adwaita Sans"
 font_file = "/run/current-system/sw/share/fonts/Adwaita/AdwaitaSans-Regular.ttf"
 start  = ["workspaces"]
@@ -74,16 +77,14 @@ clock = [340, 320]
 
 ### Not yet configurable
 
-These are currently hardcoded in `src/main.rs` and will move to `[bar]` in a
+These are currently fixed in `src/layout.rs` and will move to `[bar]` in a
 later pass:
 
-- Window size — `3440 × 31`. Will be derived from the active wayland output
-  or a `[bar] width` / `[bar] height` knob.
 - Anchor — `Top`. Will become `[bar] anchor = ["top"]` (array because layer
   shell anchors are bitflags).
 - Layer — `Top`. Will become `[bar] layer = "background" | "bottom" | "top" | "overlay"`.
 - Margins — `(0, 0, 0, 0)`. Will become `[bar] margin = [t, r, b, l]`.
-- Exclusive zone — `31`. Will become `[bar] exclusive_zone = N`.
+- Exclusive zone: follows `[bar] height`. A separate `[bar] exclusive_zone = N` may be added later.
 - Keyboard interactivity — `None` for the main bar/popup layer; modal dialogs use `Exclusive`. Will become `[bar] keyboard = "none" | "on-demand" | "exclusive"`.
 - Scale factor — `1.0`. Will become `[bar] scale = ...`.
 

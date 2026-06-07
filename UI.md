@@ -14,7 +14,7 @@ This file is the styling contract for Oxibar plugins. New plugins and UI changes
 
 ## Surfaces
 
-- Main bar background uses `OXITHEME.mantle` unless `[bar] transparent = true` is set.
+- Main bar spans the compositor-selected active output width unless `[bar] width` overrides it. Its background uses `OXITHEME.mantle` unless `[bar] transparent = true` is set.
 - Popup, panel, and modal host surfaces use `OXITHEME.mantle`. Plugin content should not repaint the full surface with another base color.
 - Popup open/close animation uses quick `Easing::EASE_OUT` timing to align with notification-center layer opening.
 - Popups are compact overlays. Keep content inside `Length::Fill`, with body padding based on `OXITHEME.padding_md`/`padding_lg` and vertical spacing from `OXITHEME.padding_sm`.

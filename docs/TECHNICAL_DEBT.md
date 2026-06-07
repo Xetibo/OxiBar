@@ -6,6 +6,11 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ## Runtime Debt
 
+### Hardcoded Bar Width
+
+- Status: resolved.
+- Current state: the main layer requests automatic width from the compositor-selected active output with layer-shell width `0` and left/right/top anchors. `OxiBar` stores the configured width from iced window events, and `[bar] width` / `[bar] height` provide config fallback/override values.
+
 ### Missing Dynamic Plugin Loading Integration Test
 
 - Status: accepted temporary limitation.

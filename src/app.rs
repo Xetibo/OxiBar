@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use iced::{Font, Subscription, Task, Theme, theme::Style};
+use iced::{Font, Subscription, Task, Theme, event, theme::Style, window};
 use iced_layershell::reexport::{IcedId, KeyboardInteractivity};
 use once_cell::sync::Lazy;
 use oxibar_plugin_api::{
@@ -14,8 +14,8 @@ use crate::{
     config::get_config,
     font,
     layout::{
-        self, BarSection, DEFAULT_POPUP_SIZE, PopupMetrics, SCALE_FACTOR, TOAST_MARGIN_TOP,
-        TOAST_SPACING,
+        self, BarDimensions, BarSection, DEFAULT_POPUP_SIZE, PopupMetrics, SCALE_FACTOR,
+        TOAST_MARGIN_TOP, TOAST_SPACING,
     },
     messages::{Message, map_plugin_message},
     plugins::{PluginMap, dispatch_update, drain_errors, load_plugins, query_plugin_popup_metrics},
@@ -34,7 +34,7 @@ pub fn run() -> Result<(), iced_layershell::Error> {
     let mut app =
         iced_layershell::daemon(OxiBar::new, OxiBar::namespace, OxiBar::update, OxiBar::view)
             .subscription(OxiBar::subscription)
-            .settings(layout::layer_shell_settings())
+            .settings(layout::layer_shell_settings(&CONFIG))
             .theme(OxiBar::theme)
             .default_font(Font::with_name(font::bar_font(&CONFIG)))
             .style(OxiBar::style)
@@ -49,6 +49,8 @@ pub(crate) struct OxiBar {
     pub(crate) theme: Theme,
     pub(crate) plugins: PluginMap,
     pub(crate) transparent: bool,
+    pub(crate) bar_window_id: Option<IcedId>,
+    pub(crate) bar_size: BarDimensions,
     pub(crate) start_widgets: Vec<String>,
     pub(crate) center_widgets: Vec<String>,
     pub(crate) end_widgets: Vec<String>,
@@ -70,12 +72,18 @@ pub(crate) struct ToastEntry {
     pub(crate) height: u32,
 }
 
-fn initial_input_region_task() -> Task<Message> {
+fn initial_input_region_task(bar_size: BarDimensions) -> Task<Message> {
     Task::perform(
         async {
             std::thread::sleep(std::time::Duration::from_millis(50));
         },
-        |_| Message::SetPopupInputRegion(false, BarSection::End, 0, 0),
+        move |_| Message::SetPopupInputRegion {
+            open: false,
+            section: BarSection::End,
+            width: 0,
+            height: 0,
+            bar_size,
+        },
     )
 }
 
@@ -101,6 +109,7 @@ impl OxiBar {
         let start_widgets = read_section("start");
         let center_widgets = read_section("center");
         let end_widgets = read_section("end");
+        let bar_size = layout::bar_size_from_config(&CONFIG);
         let start_widgets =
             if start_widgets.is_empty() && center_widgets.is_empty() && end_widgets.is_empty() {
                 loaded.order.clone()
@@ -111,6 +120,8 @@ impl OxiBar {
             plugins: loaded.plugins,
             theme: get_derived_iced_theme(),
             transparent,
+            bar_window_id: None,
+            bar_size,
             start_widgets,
             center_widgets,
             end_widgets,
@@ -123,7 +134,7 @@ impl OxiBar {
             toasts: Vec::new(),
         };
         let mut tasks = loaded.tasks;
-        tasks.push(initial_input_region_task());
+        tasks.push(initial_input_region_task(bar.bar_size));
         (bar, Task::batch(tasks))
     }
 
@@ -134,7 +145,7 @@ impl OxiBar {
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Exit => std::process::exit(0),
-            Message::SetPopupInputRegion(_, _, _, _)
+            Message::SetPopupInputRegion { .. }
             | Message::OpenModalLayer(_)
             | Message::CloseModalLayer(_)
             | Message::OpenPanelLayer(_)
@@ -144,6 +155,9 @@ impl OxiBar {
             | Message::MoveToastLayer(_, _)
             | Message::ResizeToastLayer(_, _, _)
             | Message::SetToastKeyboardInteractivity(_, _) => Task::none(),
+            Message::LayerSurfaceResized(id, width, height) => {
+                self.update_bar_size(id, width, height)
+            }
             Message::SetPopupPlugin(plugin_id) => {
                 self.popup_plugin = plugin_id;
                 Task::none()
@@ -218,12 +232,61 @@ impl OxiBar {
 
         let section = self.plugin_section(plugin_id);
         let metrics = self.popup_input_metrics(plugin_id);
-        Task::done(Message::SetPopupInputRegion(
-            true,
+        Task::done(Message::SetPopupInputRegion {
+            open: true,
             section,
-            metrics.connector_width,
-            metrics.height,
-        ))
+            width: metrics.connector_width,
+            height: metrics.height,
+            bar_size: self.bar_size,
+        })
+    }
+
+    fn update_bar_size(
+        &mut self,
+        id: IcedId,
+        layer_width: u32,
+        layer_height: u32,
+    ) -> Task<Message> {
+        if self.is_auxiliary_window(id) {
+            return Task::none();
+        }
+
+        if let Some(bar_window_id) = self.bar_window_id {
+            if bar_window_id != id {
+                return Task::none();
+            }
+        } else {
+            self.bar_window_id = Some(id);
+        }
+
+        let previous = self.bar_size;
+        self.bar_size = layout::bar_size_from_layer_surface(previous, layer_width, layer_height);
+        if self.bar_size == previous {
+            return Task::none();
+        }
+        self.current_input_region_task()
+    }
+
+    fn is_auxiliary_window(&self, id: IcedId) -> bool {
+        self.modal_window_id == Some(id)
+            || self.panel_window_id == Some(id)
+            || self.toasts.iter().any(|toast| toast.window_id == id)
+    }
+
+    fn current_input_region_task(&self) -> Task<Message> {
+        if let Some(plugin_id) = self.popup_plugin.as_deref()
+            && self.popup_open
+        {
+            return self.refresh_popup_input_region(plugin_id);
+        }
+
+        Task::done(Message::SetPopupInputRegion {
+            open: false,
+            section: BarSection::End,
+            width: 0,
+            height: 0,
+            bar_size: self.bar_size,
+        })
     }
 
     fn plugin_popup_metrics(&self, plugin_id: &str) -> Option<PluginPopupMetrics> {
@@ -258,17 +321,24 @@ impl OxiBar {
         let section = self.plugin_section(&plugin_id);
         if self.popup_open && self.popup_plugin.as_deref() == Some(plugin_id.as_str()) {
             Task::done(Message::SetPopupOpen(false)).chain(Task::done(
-                Message::SetPopupInputRegion(false, section, 0, 0),
+                Message::SetPopupInputRegion {
+                    open: false,
+                    section,
+                    width: 0,
+                    height: 0,
+                    bar_size: self.bar_size,
+                },
             ))
         } else {
             let metrics = self.popup_input_metrics(&plugin_id);
             Task::done(Message::SetPopupPlugin(Some(plugin_id)))
-                .chain(Task::done(Message::SetPopupInputRegion(
-                    true,
+                .chain(Task::done(Message::SetPopupInputRegion {
+                    open: true,
                     section,
-                    metrics.connector_width,
-                    metrics.height,
-                )))
+                    width: metrics.connector_width,
+                    height: metrics.height,
+                    bar_size: self.bar_size,
+                }))
                 .chain(Task::done(Message::SetPopupOpen(true)))
         }
     }
@@ -471,16 +541,14 @@ impl OxiBar {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let subs: Vec<Subscription<Message>> = self
-            .plugins
-            .iter()
-            .map(|(plugin_id, (_model, funcs))| {
-                let sub_fn_addr = funcs.subscription as usize;
-                Subscription::run_with((plugin_id.clone(), sub_fn_addr), build_plugin_stream)
-                    .with(plugin_id.clone())
-                    .map(|(id, msg): (String, PluginMsg)| map_plugin_message(id, msg))
-            })
-            .collect();
+        let mut subs: Vec<Subscription<Message>> = Vec::with_capacity(self.plugins.len() + 1);
+        subs.push(event::listen_with(layer_surface_size_event));
+        subs.extend(self.plugins.iter().map(|(plugin_id, (_model, funcs))| {
+            let sub_fn_addr = funcs.subscription as usize;
+            Subscription::run_with((plugin_id.clone(), sub_fn_addr), build_plugin_stream)
+                .with(plugin_id.clone())
+                .map(|(id, msg): (String, PluginMsg)| map_plugin_message(id, msg))
+        }));
         Subscription::batch(subs)
     }
 
@@ -519,6 +587,31 @@ fn build_plugin_stream(data: &(String, usize)) -> Pin<Box<PluginStream>> {
     unsafe { Pin::new_unchecked(Box::from_raw(raw)) }
 }
 
+fn layer_surface_size_event(
+    event: iced::Event,
+    _status: event::Status,
+    id: IcedId,
+) -> Option<Message> {
+    let size = match event {
+        iced::Event::Window(window::Event::Opened { size, .. })
+        | iced::Event::Window(window::Event::Resized(size)) => size,
+        _ => return None,
+    };
+    Some(Message::LayerSurfaceResized(
+        id,
+        size_to_u32(size.width),
+        size_to_u32(size.height),
+    ))
+}
+
+fn size_to_u32(value: f32) -> u32 {
+    if value.is_finite() && value > 0.0 {
+        value.round().min(i32::MAX as f32) as u32
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -528,6 +621,8 @@ mod tests {
             theme: Theme::Dark,
             plugins: PluginMap::new(),
             transparent: false,
+            bar_window_id: None,
+            bar_size: layout::DEFAULT_BAR_SIZE,
             start_widgets: vec!["Clock".to_owned()],
             center_widgets: vec!["Network".to_owned()],
             end_widgets: vec!["Notifications".to_owned()],
@@ -562,5 +657,39 @@ mod tests {
 
         assert_eq!(bar.popup_plugin.as_deref(), Some("Clock"));
         assert!(bar.popup_open);
+    }
+
+    #[test]
+    fn layer_resize_updates_bar_dimensions() {
+        let mut bar = empty_bar();
+        let main_window = IcedId::unique();
+
+        let _ = bar.update(Message::LayerSurfaceResized(main_window, 2560, 451));
+
+        assert_eq!(
+            bar.bar_size,
+            BarDimensions {
+                width: 2560,
+                height: 31,
+            }
+        );
+
+        let _ = bar.update(Message::LayerSurfaceResized(IcedId::unique(), 420, 144));
+
+        assert_eq!(bar.bar_size.width, 2560);
+    }
+
+    #[test]
+    fn auxiliary_resize_does_not_claim_bar_window() {
+        let mut bar = empty_bar();
+        let modal_window = IcedId::unique();
+        let main_window = IcedId::unique();
+        bar.modal_window_id = Some(modal_window);
+
+        let _ = bar.update(Message::LayerSurfaceResized(modal_window, 460, 300));
+        let _ = bar.update(Message::LayerSurfaceResized(main_window, 1920, 451));
+
+        assert_eq!(bar.bar_window_id, Some(main_window));
+        assert_eq!(bar.bar_size.width, 1920);
     }
 }

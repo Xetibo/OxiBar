@@ -9,7 +9,7 @@ use oxibar_plugin_api::{
 };
 
 use crate::layout::{
-    BarSection, MODAL_SIZE, PANEL_WIDTH, TOAST_MARGIN_RIGHT, WINDOW_SIZE, popup_x,
+    BarDimensions, BarSection, MODAL_SIZE, PANEL_WIDTH, TOAST_MARGIN_RIGHT, popup_x,
 };
 
 #[derive(Debug, Clone)]
@@ -22,8 +22,15 @@ pub enum Message {
     ClosePluginModal(String),
     SetPopupPlugin(Option<String>),
     SetPopupOpen(bool),
+    LayerSurfaceResized(IcedId, u32, u32),
     RefreshPopupInputRegion(String),
-    SetPopupInputRegion(bool, BarSection, u32, u32),
+    SetPopupInputRegion {
+        open: bool,
+        section: BarSection,
+        width: u32,
+        height: u32,
+        bar_size: BarDimensions,
+    },
     OpenModalLayer(IcedId),
     CloseModalLayer(IcedId),
     OpenPanelLayer(IcedId),
@@ -43,22 +50,31 @@ impl TryInto<LayershellCustomActionWithId> for Message {
 
     fn try_into(self) -> Result<LayershellCustomActionWithId, Self::Error> {
         match self {
-            Message::SetPopupInputRegion(open, section, width, height) => {
-                Ok(LayershellCustomActionWithId::new(
-                    None,
-                    LayershellCustomAction::SetInputRegion(ActionCallback::new(move |region| {
-                        region.add(0, 0, WINDOW_SIZE.0 as i32, WINDOW_SIZE.1 as i32);
-                        if open {
-                            region.add(
-                                popup_x(section, width),
-                                WINDOW_SIZE.1 as i32,
-                                width as i32,
-                                height as i32,
-                            );
-                        }
-                    })),
-                ))
-            }
+            Message::SetPopupInputRegion {
+                open,
+                section,
+                width,
+                height,
+                bar_size,
+            } => Ok(LayershellCustomActionWithId::new(
+                None,
+                LayershellCustomAction::SetInputRegion(ActionCallback::new(move |region| {
+                    region.add(
+                        0,
+                        0,
+                        region_dimension(bar_size.width),
+                        region_dimension(bar_size.height),
+                    );
+                    if open {
+                        region.add(
+                            popup_x(bar_size.width, section, width),
+                            region_dimension(bar_size.height),
+                            region_dimension(width),
+                            region_dimension(height),
+                        );
+                    }
+                })),
+            )),
             Message::OpenModalLayer(id) => Ok(LayershellCustomActionWithId::new(
                 None,
                 LayershellCustomAction::NewLayerShell {
@@ -141,6 +157,10 @@ impl TryInto<LayershellCustomActionWithId> for Message {
             message => Err(message),
         }
     }
+}
+
+fn region_dimension(value: u32) -> i32 {
+    i32::try_from(value).unwrap_or(i32::MAX)
 }
 
 pub(crate) fn map_plugin_message(plugin_id: String, msg: PluginMsg) -> Message {

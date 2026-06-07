@@ -9,9 +9,7 @@ use oxiced::theme::theme_impl::OXITHEME;
 
 use crate::{
     app::OxiBar,
-    layout::{
-        MODAL_SIZE, PANEL_WIDTH, POPUP_CONNECTOR_HEIGHT, POPUP_CONNECTOR_PADDING, WINDOW_SIZE,
-    },
+    layout::{MODAL_SIZE, PANEL_WIDTH, POPUP_CONNECTOR_HEIGHT, POPUP_CONNECTOR_PADDING},
     messages::{Message, map_plugin_message},
     plugins::{
         render_plugin, render_plugin_modal, render_plugin_panel, render_plugin_popup,
@@ -73,7 +71,7 @@ impl OxiBar {
             .align_x(Alignment::Center)
             .align_y(Alignment::Center)
             .width(Length::Fill)
-            .height(WINDOW_SIZE.1 as f32);
+            .height(self.bar_size.height as f32);
 
         Container::new(
             Column::new()
