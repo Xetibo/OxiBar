@@ -83,8 +83,7 @@ impl StartupRetryPolicy {
     /// Whether a further attempt is allowed after `attempts` have already
     /// been consumed. Returns `true` when `max_attempts` is unset (unlimited).
     pub fn can_attempt_more(&self, attempts: u32) -> bool {
-        self.max_attempts
-            .is_none_or(|max| attempts + 1 < max)
+        self.max_attempts.is_none_or(|max| attempts + 1 < max)
     }
 }
 
@@ -120,6 +119,29 @@ pub fn startup_retry_policy(config: &Table) -> StartupRetryPolicy {
             .get("catch_panics")
             .and_then(|v| v.as_bool())
             .unwrap_or(defaults.catch_panics),
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct InstancePolicy {
+    pub allow_multiple_instances: bool,
+    pub lock_path: Option<PathBuf>,
+}
+
+pub fn instance_policy(config: &Table) -> InstancePolicy {
+    let defaults = InstancePolicy::default();
+    let Some(table) = config.get("instance").and_then(|v| v.as_table()) else {
+        return defaults;
+    };
+    InstancePolicy {
+        allow_multiple_instances: table
+            .get("allow_multiple_instances")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(defaults.allow_multiple_instances),
+        lock_path: table
+            .get("lock_path")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from),
     }
 }
 
@@ -222,5 +244,60 @@ mod tests {
         assert!(policy.can_attempt_more(0));
         assert!(policy.can_attempt_more(1));
         assert!(!policy.can_attempt_more(2));
+    }
+
+    #[test]
+    fn instance_policy_defaults_when_table_absent() {
+        let policy = instance_policy(&Table::new());
+        assert!(!policy.allow_multiple_instances);
+        assert!(policy.lock_path.is_none());
+    }
+
+    #[test]
+    fn instance_policy_reads_configured_values() {
+        let mut table = Table::new();
+        table.insert(
+            "instance".to_owned(),
+            toml::Value::Table(
+                [
+                    ("allow_multiple_instances", toml::Value::Boolean(true)),
+                    (
+                        "lock_path",
+                        toml::Value::String("/tmp/other.lock".to_owned()),
+                    ),
+                ]
+                .into_iter()
+                .map(|(k, v)| (k.to_owned(), v))
+                .collect(),
+            ),
+        );
+
+        let policy = instance_policy(&table);
+        assert!(policy.allow_multiple_instances);
+        assert_eq!(policy.lock_path, Some(PathBuf::from("/tmp/other.lock")));
+    }
+
+    #[test]
+    fn instance_policy_ignores_wrong_value_types() {
+        let mut table = Table::new();
+        table.insert(
+            "instance".to_owned(),
+            toml::Value::Table(
+                [
+                    (
+                        "allow_multiple_instances",
+                        toml::Value::String("yes".to_owned()),
+                    ),
+                    ("lock_path", toml::Value::Integer(42)),
+                ]
+                .into_iter()
+                .map(|(k, v)| (k.to_owned(), v))
+                .collect(),
+            ),
+        );
+
+        let policy = instance_policy(&table);
+        assert!(!policy.allow_multiple_instances);
+        assert!(policy.lock_path.is_none());
     }
 }

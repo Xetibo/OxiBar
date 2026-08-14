@@ -5,6 +5,7 @@ pub mod layout;
 pub mod messages;
 mod monitor;
 pub mod plugins;
+pub mod single_instance;
 pub mod surfaces;
 #[doc(hidden)]
 pub mod test_support;

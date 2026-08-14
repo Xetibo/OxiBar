@@ -9,7 +9,7 @@
 
 ## Current Unit Coverage
 
-- Host/config: plugin allow-list parsing, plugin unavailable error formatting, anchor parsing, host-request message mapping, dynamic bar width/height fallback parsing, popup geometry/config/dynamic metrics, toast keyboard interactivity actions, toast output-option fallback mapping, panel output anchoring, bar section lookup, layer resize state updates, and popup state setters.
+- Host/config: plugin allow-list parsing, plugin unavailable error formatting, anchor parsing, host-request message mapping, dynamic bar width/height fallback parsing, popup geometry/config/dynamic metrics, toast keyboard interactivity actions, toast output-option fallback mapping, panel output anchoring, bar section lookup, layer resize state updates, popup state setters, `[instance]` policy parsing (defaults, configured values, wrong value types), and single-instance lock acquisition (second acquire reports already-running; lock released when the guard drops).
 - `audio`: percent parsing, file URL decoding, selected-device fallback, config poll interval, view/popup construction, and error draining.
 - `battery`: sysfs battery availability/parsing, percentage and duration estimates, config poll interval, view construction, and error draining.
 - `bluetooth`: `bluetoothctl` controller availability parsing, device parsing, noise filtering, pairing prompt detection, view/popup/modal construction, and error draining.

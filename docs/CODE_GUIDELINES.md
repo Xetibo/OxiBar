@@ -14,6 +14,7 @@
 - Do not leave magic numbers in code. Use named constants for domain/protocol values, put user-tunable values in config, and use `oxiced` theme/helper tokens for UI spacing, padding, margins, border radii, and font sizes.
 - Keep bar/window dimensions behind `src/layout.rs` helpers. Do not reintroduce monitor-width constants in app, message, or surface code.
 - Startup retry behavior is config-driven via the `[startup]` TOML table parsed into `config::StartupRetryPolicy`. Keep timing constants and retry knobs out of `src/app.rs`; add new user-tunable startup options there (see `DECISIONS.md`).
+- Single-instance behavior is config-driven via the `[instance]` TOML table parsed into `config::InstancePolicy`. Keep lock acquisition in `src/single_instance.rs`; `src/app.rs` only acquires the guard at startup (see `DECISIONS.md`).
 - Add active-output compositor integrations under `src/monitor/` as small backends returning an output name; keep toast/panel layer construction in `src/messages.rs` backend-agnostic.
 - When the same UI number repeats across plugins, add or use a shared `oxiced` token/helper before adding plugin-local constants.
 

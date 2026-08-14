@@ -24,12 +24,28 @@ use crate::{
     },
     messages::{Message, map_plugin_message},
     plugins::{PluginMap, dispatch_update, drain_errors, load_plugins, query_plugin_popup_metrics},
+    single_instance::{self, SingleInstanceError},
 };
 
 pub(crate) static CONFIG: Lazy<Table> = Lazy::new(get_config);
 
 pub fn run() -> Result<(), iced_layershell::Error> {
     init_tracing();
+
+    let _instance_guard = match single_instance::acquire(&config::instance_policy(&CONFIG)) {
+        Ok(guard) => guard,
+        Err(SingleInstanceError::AlreadyRunning) => {
+            eprintln!(
+                "oxibar: another instance is already running; \
+                 set [instance] allow_multiple_instances = true to run concurrent bars"
+            );
+            std::process::exit(1);
+        }
+        Err(SingleInstanceError::Io(err)) => {
+            tracing::warn!(error = ?err, "could not acquire single-instance lock; continuing without");
+            None
+        }
+    };
 
     let policy = config::startup_retry_policy(&CONFIG);
     let mut attempts: u32 = 0;

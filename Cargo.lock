@@ -3159,6 +3159,7 @@ dependencies = [
  "once_cell",
  "oxibar-plugin-api",
  "oxiced",
+ "rustix 1.1.4",
  "toml",
  "tracing",
  "tracing-subscriber",

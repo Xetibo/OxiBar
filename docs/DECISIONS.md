@@ -47,3 +47,31 @@ topics already covered by `ARCHITECTURE.md`.
 - Alternatives rejected: compositor-side `exec-once+sleep` (fragile, WM-specific)
   and patching/pinning a fixed `iced_layershell`/`layershellev` (see
   `TECHNICAL_DEBT.md`).
+
+## Single-Instance Guard (2026-08)
+
+- Problem: rerunning oxibar (e.g. after a `nixos-rebuild switch` regenerates the
+  config) spawned a second identical bar instead of replacing the first.
+- Decision: enforce a config-driven single-instance lock in the host. The
+  `[instance]` TOML table is parsed by `config::instance_policy()` into
+  `config::InstancePolicy` (`allow_multiple_instances`, optional `lock_path`). A
+  new `src/single_instance.rs` module takes an exclusive `flock` on a lock file
+  (default `$XDG_RUNTIME_DIR/oxibar.lock`, falling back to
+  `get_oxirun_dir()/oxibar.lock`). The guard is acquired once at the top of
+  `src/app.rs` `run()` before the startup retry loop and held for the process
+  lifetime; the RAII `SingleInstanceGuard` releases the lock on drop, so crashes
+  and core dumps never leave a stale lock.
+- Behavior when a second instance is denied: it prints an error to stderr
+  mentioning `[instance] allow_multiple_instances = true` and exits non-zero
+  (`std::process::exit(1)`), matching the existing `Message::Exit` exit pattern.
+- `allow_multiple_instances = true` skips the lock entirely - the documented way
+  to run different bars on different monitors. A distinct `lock_path` lets two
+  separate configs run concurrently while still guarding each of them from
+  duplicates.
+- Rationale: flock is kernel-managed (auto-released on process death, no PID
+  liveness probing), needs no new vendored crate beyond already-locked `rustix`,
+  and keeps the fix entirely in the host.
+- Tradeoffs: the guard is best-effort protection, not authorization; it only
+  coordinates oxibar processes that share a runtime dir. If the lock file cannot
+  be opened (e.g. unwritable runtime dir), the host logs a warning and continues
+  without a guard rather than refusing to start.
