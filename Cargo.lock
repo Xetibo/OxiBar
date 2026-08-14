@@ -3150,6 +3150,7 @@ dependencies = [
 name = "oxibar"
 version = "0.1.0"
 dependencies = [
+ "hyprland",
  "iced",
  "iced_anim",
  "iced_layershell",

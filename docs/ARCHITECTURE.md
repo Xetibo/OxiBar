@@ -7,6 +7,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `src/main.rs`: module wiring and binary entry point.
 - `src/app.rs`: iced layershell daemon setup, main application state, update loop, subscriptions, and popup/modal/panel state transitions.
 - `src/layout.rs`: geometry constants, layershell settings, bar dimension config/fallback parsing, popup metrics, popup config parsing, and bar section math.
+- `src/monitor/`: focused-output helpers for host-owned toast layer placement. `mod.rs` owns the compositor-backend registry and `hyprland.rs` implements the current Hyprland query.
 - `src/surfaces.rs`: bar, popup, modal, and panel view construction.
 - `src/messages.rs`: host message enum, layer-shell action conversion, and plugin message routing.
 - `src/font.rs`: bar font config, fontconfig resolution, and font byte loading.
@@ -43,9 +44,9 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `audio`: PulseAudio/PipeWire `pactl` plus MPRIS controls; popup surface.
 - `battery`: Linux power-supply sysfs percentage, charging/draining state, and calendar-style hover tooltip with duration estimates.
 - `bluetooth`: `bluetoothctl` scan, connect, disconnect, and pairing modal; popup and modal surfaces.
-- `clock`: time display, local calendar popup with event-day tooltips, optional HTTPS CalDAV event sync, and configurable external calendar launcher.
+- `clock`: time display, local calendar popup with event-day tooltips, optional HTTPS CalDAV event sync, and configurable external calendar launcher. `tick_seconds` is the real-clock poll interval; when the format shows seconds the plugin still emits a `Tick` every second, simulating intermediate ticks from a monotonic anchor and only re-reading `Local::now()` every `tick_seconds`.
 - `network`: NetworkManager `nmcli` connection management and password modal; popup and modal surfaces.
-- `notifications`: Freedesktop notification server, toast layers, inline replies, DND state, and side panel. Toast layers start with keyboard interactivity disabled and are switched to `OnDemand` only after user hover intent so incoming notifications do not steal keyboard focus. Toast timeout closes only the host toast surface; stored notifications remain in the panel until dismissed, cleared, replied to, or actioned.
+- `notifications`: Freedesktop notification server, toast layers, inline replies, DND state, and side panel. Toast layers start with keyboard interactivity disabled and are switched to `OnDemand` only after user hover intent so incoming notifications do not steal keyboard focus. New toast layers target Hyprland's focused monitor output when available, while the notification panel remains attached to the bar output. Toast timeout closes only the host toast surface; stored notifications remain in the panel until dismissed, cleared, replied to, or actioned.
 - `tray`: StatusNotifier watcher, dynamically sized tray item popup, activation, and DBusMenu-backed detached context menu rendering. Item registration publishes a fallback row immediately and refreshes DBus metadata asynchronously so registering applications are not blocked by property queries.
 - `workspaces`: Hyprland workspace display and dispatch.
 
@@ -57,6 +58,7 @@ Plugin `lib.rs` files should keep ABI symbols, model update, and view compositio
 - The clock plugin's CalDAV sync shells out to `curl` to avoid adding a full HTTP stack to the dynamic plugin. It enforces `https://`, curl HTTPS-only protocol flags, and normal certificate verification.
 - Thunderbird integration is limited to launching `thunderbird --calendar`; date-focused navigation remains a user-configured `calendar_command` concern because Thunderbird has no stable CLI for opening a specific calendar date.
 - Bar width is dynamic from the active layer-shell output when the compositor reports it. `[bar] width` and `[bar] height` provide config fallback/override values, while anchor, layer, margins, keyboard mode, and scale factor remain fixed in `src/layout.rs`.
+- Active-monitor toast placement uses a modular compositor-backend registry. The current backend uses Hyprland monitor data because Wayland/layer-shell and the available `wayland-protocols` output protocols describe/configure outputs but do not expose a compositor-generic focused-output query; non-Hyprland sessions fall back to the previous `LastOutput` behavior.
 - The stream raw-pointer ABI is documented as practical but not fully C-ABI-safe.
 
 ## Nix Packaging

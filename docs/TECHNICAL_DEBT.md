@@ -6,6 +6,14 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ## Runtime Debt
 
+### Compositor-Specific Active Toast Output
+
+- Status: accepted temporary limitation.
+- Affected code: `src/monitor/` and `src/messages.rs`.
+- Current state: toast layer creation asks the `src/monitor/` backend registry for an active output name. The only backend currently queries Hyprland's focused monitor name and passes it to layer-shell as `OutputOption::OutputName`; if no backend returns an output name, toasts fall back to `OutputOption::LastOutput`.
+- Why accepted: the available `wayland-protocols` output protocols describe/configure outputs and surfaces, but do not provide a compositor-neutral global focused-monitor query for layer-shell clients.
+- Target fix: switch to a compositor-neutral focused-output source if `iced_layershell`, layer-shell integration, or a shared workspace/monitor service exposes one.
+
 ### Hardcoded Bar Width
 
 - Status: resolved.
@@ -85,3 +93,10 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Affected code: `plugins/clock/src/caldav.rs`.
 - Current state: CalDAV sync shells out to `curl`, requires `https://`, forces HTTPS protocol use, and stores credentials in a temporary `0600` curl config rather than command-line arguments.
 - Target fix: consider a native minimal HTTP/TLS client if the workspace adopts a stable HTTP dependency.
+
+### Clock Fractional-Second Display
+
+- Status: accepted temporary limitation.
+- Affected code: `plugins/clock/src/lib.rs`.
+- Current state: the display granularity floor is one second. Formats that show sub-second precision (`%f`, `%.3f`) still update at 1 Hz, so fractional digits are anchored to the last re-read of the real clock rather than tracked continuously.
+- Target fix: add sub-second simulation granularity or an explicit precision config if fractional-second display is ever required.

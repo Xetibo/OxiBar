@@ -3,6 +3,7 @@ pub mod config;
 pub mod font;
 pub mod layout;
 pub mod messages;
+mod monitor;
 pub mod plugins;
 pub mod surfaces;
 #[doc(hidden)]

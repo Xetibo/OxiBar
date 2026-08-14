@@ -11,6 +11,7 @@ use oxibar_plugin_api::{
 use crate::layout::{
     BarDimensions, BarSection, MODAL_SIZE, PANEL_WIDTH, TOAST_MARGIN_RIGHT, popup_x,
 };
+use crate::monitor::active_toast_output_option;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -128,7 +129,7 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                             exclusive_zone: None,
                             margin: Some((top, TOAST_MARGIN_RIGHT, 0, 0)),
                             keyboard_interactivity: KeyboardInteractivity::None,
-                            output_option: OutputOption::LastOutput,
+                            output_option: active_toast_output_option(),
                             events_transparent: false,
                             namespace: Some("OxiBar toast".to_owned()),
                         },
@@ -314,6 +315,28 @@ mod tests {
         };
         assert_eq!(action_id, id);
         assert_eq!(settings.keyboard_interactivity, KeyboardInteractivity::None);
+    }
+
+    #[test]
+    fn panel_layers_stay_on_bar_output() {
+        let id = IcedId::unique();
+        let action = <Message as TryInto<LayershellCustomActionWithId>>::try_into(
+            Message::OpenPanelLayer(id),
+        )
+        .unwrap();
+
+        let LayershellCustomActionWithId(
+            None,
+            LayershellCustomAction::NewLayerShell {
+                settings,
+                id: action_id,
+            },
+        ) = action
+        else {
+            panic!("expected panel NewLayerShell action");
+        };
+        assert_eq!(action_id, id);
+        assert_eq!(settings.output_option, OutputOption::LastOutput);
     }
 
     #[test]

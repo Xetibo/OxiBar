@@ -6,14 +6,19 @@
 //! ```toml
 //! [plugins.clock]
 //! format = "%H:%M"      # strftime, default "%H:%M"
-//! tick_seconds = 60     # how often to refresh, default 60
+//! tick_seconds = 60     # how often the real clock is polled, default 60
 //! ```
+//!
+//! `tick_seconds` is the real-clock poll interval. If `format` shows seconds
+//! (or finer), the plugin still emits a tick every second, but derives those
+//! intermediate ticks from a monotonic anchor instead of re-reading the system
+//! clock, only re-syncing to `Local::now()` every `tick_seconds`.
 //!
 //! Clicking the time toggles a host-owned calendar popup.
 
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate};
 use iced::{
@@ -37,6 +42,8 @@ use caldav::{CaldavConfig, CalendarEvent, load_events};
 
 const DEFAULT_FORMAT: &str = "%H:%M";
 const DEFAULT_TICK_SECONDS: u64 = 60;
+/// Floor for how often the display refreshes when the format shows no seconds.
+const MINUTE_DISPLAY_SECONDS: u64 = 60;
 const DEFAULT_FONT_SIZE: f32 = 14.0;
 const DEFAULT_BOLD: bool = false;
 const CALENDAR_POPUP_SIZE: (u32, u32) = (360, 320);
@@ -53,6 +60,11 @@ const TOOLTIP_SHADOW_BLUR: f32 = 18.0;
 /// Tick interval shared with `subscription()`. Set during `model()` so the
 /// subscription thread can read it without the model being passed in.
 static TICK: OnceLock<Duration> = OnceLock::new();
+/// How often the display rolls over, derived from the format string (1s when
+/// seconds are shown, otherwise atomic with the minute). The subscription emits
+/// a `Tick` on this cadence and only re-reads the real clock every [`TICK`],
+/// simulating the intermediate ticks so finer-than-poll formats stay accurate.
+static DISPLAY_INTERVAL: OnceLock<Duration> = OnceLock::new();
 static CALDAV_REFRESH: OnceLock<Duration> = OnceLock::new();
 
 #[derive(Debug)]
@@ -81,6 +93,10 @@ impl Model {
         // First setter wins; if the dylib is reloaded in-process the old
         // value sticks, which is fine — interval changes need a restart.
         let _ = TICK.set(Duration::from_secs(cfg.tick_seconds));
+        let _ = DISPLAY_INTERVAL.set(Duration::from_secs(display_interval(
+            cfg.tick_seconds,
+            &cfg.format,
+        )));
         if let Some(caldav) = cfg.caldav_config.as_ref() {
             let _ = CALDAV_REFRESH.set(Duration::from_secs(caldav.refresh_minutes * 60));
         }
@@ -665,6 +681,71 @@ fn format_time(now: &DateTime<Local>, fmt: &str) -> String {
     })
 }
 
+/// Whether `fmt` contains a strftime specifier that changes within a second
+/// (whole seconds or finer). Used to decide whether the display needs a
+/// per-second refresh. `%%` is a literal percent and is skipped, as is a bare
+/// trailing `%`.
+fn format_shows_seconds(fmt: &str) -> bool {
+    let bytes = fmt.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        let Some(&spec) = bytes.get(i) else {
+            break; // trailing bare `%`
+        };
+        if spec == b'%' {
+            i += 1; // `%%`: literal percent, not a specifier
+            continue;
+        }
+        match spec {
+            // Whole-second level.
+            b'S' | b'T' | b'r' | b'X' | b'c' | b's' => return true,
+            // Fractional seconds (`%f`, `%.3f`, ...).
+            b'f' => return true,
+            b'.' | b'0'..=b'9' => {
+                let mut j = i;
+                if spec == b'.' {
+                    j += 1;
+                    while bytes.get(j).is_some_and(|b| b.is_ascii_digit()) {
+                        j += 1;
+                    }
+                }
+                if bytes.get(j) == Some(&b'f') {
+                    return true;
+                }
+                i = j;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// How often the display emits a `Tick`. When the format shows seconds this is
+/// 1s so the digits roll over; otherwise it is at most the poll interval but at
+/// least once a minute to catch minute/hour/date rollovers. The real clock is
+/// only re-read every `tick_seconds`; intermediate ticks are simulated.
+fn display_interval(tick_seconds: u64, fmt: &str) -> u64 {
+    if format_shows_seconds(fmt) {
+        1
+    } else {
+        tick_seconds.min(MINUTE_DISPLAY_SECONDS)
+    }
+}
+
+/// Advance an anchor time by the measured monotonic elapsed time, clamped to
+/// non-negative so a wall-clock re-sync never overshoots the anchor.
+fn simulated_now(anchor: &DateTime<Local>, elapsed: Duration) -> DateTime<Local> {
+    let offset = ChronoDuration::from_std(elapsed).unwrap_or_default();
+    *anchor + offset
+}
+
 /// Tick the model on a fixed interval. Iced's subscription executor isn't
 /// guaranteed to run inside a tokio reactor (the `tokio` iced feature only
 /// covers `Task::perform`), so we drive the timer from a plain OS thread and
@@ -672,10 +753,14 @@ fn format_time(now: &DateTime<Local>, fmt: &str) -> String {
 /// workspaces plugin's hyprland listener.
 #[unsafe(no_mangle)]
 pub extern "Rust" fn subscription() -> *mut PluginStream {
-    let interval = TICK
+    let poll_interval = TICK
         .get()
         .copied()
         .unwrap_or(Duration::from_secs(DEFAULT_TICK_SECONDS));
+    let display_interval = DISPLAY_INTERVAL
+        .get()
+        .copied()
+        .unwrap_or(Duration::from_secs(MINUTE_DISPLAY_SECONDS));
 
     let s = stream::channel(
         8,
@@ -683,8 +768,22 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
             let output = Arc::new(Mutex::new(output));
             let tick_output = output.clone();
             std::thread::spawn(move || {
+                // We poll the real clock every `poll_interval` and *simulate*
+                // the ticks in between, re-anchoring to `Local::now()` past that
+                // point so monotonic drift and clock/NTP changes are corrected.
+                let mut anchor = Local::now();
+                let mut anchor_at = Instant::now();
                 loop {
-                    let now = Local::now();
+                    std::thread::sleep(display_interval.min(poll_interval));
+                    let elapsed = anchor_at.elapsed();
+                    let now = if elapsed >= poll_interval {
+                        let now = Local::now();
+                        anchor = now;
+                        anchor_at = Instant::now();
+                        now
+                    } else {
+                        simulated_now(&anchor, elapsed)
+                    };
                     if tick_output
                         .lock()
                         .unwrap()
@@ -695,7 +794,6 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
                         // but `try_send` on a full mpsc returns `Full` not
                         // `Closed`, so swallow and try again next tick.
                     }
-                    std::thread::sleep(interval);
                 }
             });
             if let Some(interval) = CALDAV_REFRESH.get().copied() {
@@ -789,6 +887,51 @@ mod tests {
 
         assert_eq!(config.tick_seconds, DEFAULT_TICK_SECONDS);
         assert_eq!(config.font_size, DEFAULT_FONT_SIZE);
+    }
+
+    #[test]
+    fn format_shows_seconds_detects_second_level_specifiers() {
+        assert!(format_shows_seconds("%H:%M:%S"));
+        assert!(format_shows_seconds("%T"));
+        assert!(format_shows_seconds("%r"));
+        assert!(format_shows_seconds("%X"));
+        assert!(format_shows_seconds("%c"));
+        assert!(format_shows_seconds("%s"));
+        assert!(format_shows_seconds("%f"));
+        assert!(format_shows_seconds("%.3f"));
+    }
+
+    #[test]
+    fn format_shows_seconds_ignores_minute_only_and_escaped_percent() {
+        assert!(!format_shows_seconds("%H:%M"));
+        assert!(!format_shows_seconds("%R"));
+        assert!(!format_shows_seconds("%Y-%m-%d"));
+        assert!(!format_shows_seconds("%I %p"));
+        assert!(!format_shows_seconds("%%S"));
+        assert!(!format_shows_seconds("%%"));
+        assert!(!format_shows_seconds("100%"));
+        assert!(!format_shows_seconds("time %"));
+    }
+
+    #[test]
+    fn display_interval_is_per_second_for_seconds_formats() {
+        assert_eq!(display_interval(60, "%H:%M:%S"), 1);
+        assert_eq!(display_interval(300, "%T"), 1);
+    }
+
+    #[test]
+    fn display_interval_without_seconds_is_at_most_tick_and_a_minute() {
+        assert_eq!(display_interval(60, "%H:%M"), 60);
+        assert_eq!(display_interval(300, "%H:%M"), 60);
+        assert_eq!(display_interval(10, "%H:%M"), 10);
+        assert_eq!(display_interval(60, "%Y-%m-%d"), 60);
+    }
+
+    #[test]
+    fn simulated_now_advances_the_anchor_by_elapsed() {
+        let anchor = Local::now();
+        let advanced = simulated_now(&anchor, Duration::from_secs(90));
+        assert_eq!(advanced - anchor, ChronoDuration::seconds(90));
     }
 
     #[test]
