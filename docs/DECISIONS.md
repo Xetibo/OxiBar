@@ -19,4 +19,31 @@ topics already covered by `ARCHITECTURE.md`.
 - Tradeoffs: simulated time drifts only within one poll interval and is
   re-anchored to the real clock each `tick_seconds`, so NTP and timezone changes
   are picked up at each poll. Sub-second formats are capped at 1 Hz (see
+  `TECHNICAL_DEBT.md`).## Startup Retry Strategy (2026-08)
+
+- Problem: launching oxibar from a compositor's startup commands (e.g. Hyprland
+  `exec-once`) failed because the compositor socket was not yet accepting
+  clients; `layershellev::WindowState::build()` calls
+  `Connection::connect_to_env()?` and iced_layershell turns that failure into a
+  `panic!` (`exit 101`) before the app's `Result` is ever returned.
+- Decision: resolve in the host with a config-driven retry loop in `src/app.rs`
+  `run()`, governed by a new `[startup]` TOML table parsed by
+  `config::startup_retry_policy()` into `config::StartupRetryPolicy`
+  (`enabled`, `initial_delay_ms`, `max_delay_ms`, `max_attempts`, `catch_panics`).
+  Two mechanisms combine:
+  1. A pre-flight probe using `wayland_client::Connection::connect_to_env()`
+     that skips work while the compositor is not yet ready (cheap, and hits the
+     exact same code path that currently panics).
+  2. `std::panic::catch_unwind` around `run_bar()` as a safety net for any other
+     startup panic.
+  Backoff doubles per attempt starting at `initial_delay_ms` and caps at
+  `max_delay_ms`. `max_attempts = None` (default) retries indefinitely until the
+  compositor is ready.
+- Rationale: keeps the fix entirely in the host, needs no compositor-side
+  `exec-once` sleep and no dependency patch.
+- Tradeoffs: retrying indefinitely means a permanently absent compositor will
+  wait forever unless `max_attempts` is set; `catch_unwind` swallows panics that
+  are not startup-transient unless they come from within the daemon run.
+- Alternatives rejected: compositor-side `exec-once+sleep` (fragile, WM-specific)
+  and patching/pinning a fixed `iced_layershell`/`layershellev` (see
   `TECHNICAL_DEBT.md`).

@@ -6,6 +6,14 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ## Runtime Debt
 
+### iced_layershell Startup Connection Panic
+
+- Status: mitigated, not root-fixed.
+- Affected code: `src/app.rs` `run()` / `run_bar()`, dependent on iced_layershell 0.17.1 and layershellev 0.17.1.
+- Current state: when the compositor is not yet accepting clients, `layershellev::WindowState::build()` calls `Connection::connect_to_env()?` and iced_layershell -0.17.1 `multi_window.rs` turns that into `.expect("Cannot create layershell")`, a panic. The host works around this with a config-driven retry loop (pre-flight `connect_to_env()` probe plus `catch_unwind` around `run_bar()`), so transient startup failures retry with exponential backoff instead of exiting.
+- Why accepted: a real fix requires surfacing connection errors through iced_layershell's `Error` enum instead of panicking.
+- Target fix: patch or update `iced_layershell`/`layershellev` so `WindowState::build()` connection failures return an `Error` variant rather than panicking; then the probe/`catch_unwind` workaround can be simplified or dropped. Tracked as a future option pending an upstream or vendored dependency update.
+
 ### Compositor-Specific Active Toast Output
 
 - Status: accepted temporary limitation.

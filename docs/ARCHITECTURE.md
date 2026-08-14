@@ -22,6 +22,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 ## Runtime Flow
 
 - `main()` configures tracing, layershell settings, font loading, theme, subscription, update, and view callbacks.
+- `run()` wraps startup in a retry loop driven by `[startup]` config (see `DECISIONS.md`). Tracing is initialized once before the loop. A cheap `wayland_client::Connection::connect_to_env()` probe skips attempts while the compositor socket is not yet accepting clients, and the daemon `run_bar()` is wrapped in `catch_unwind` so the layershell `Cannot create layershell` panic is converted into a backoff-and-retry instead of an immediate exit. Retries use exponential backoff (double the delay, capped at `max_delay_ms`).
 - The main layer asks layer shell for the compositor-selected active output width by using left/right/top anchors and width `0`. Iced window open/resize events report the configured surface size back into `OxiBar`, which then updates popup placement and input-region math.
 - `OxiBar::new()` loads configured and available plugins in the order listed by `plugins = [...]` and reads `[bar]` section placement for start, center, and end widgets.
 - Plugins are keyed by their declared `name()` string, not by filesystem path or load index. Fallback layout order follows config plugin order.

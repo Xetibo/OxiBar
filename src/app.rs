@@ -1,4 +1,8 @@
-use std::pin::Pin;
+use std::{
+    panic::{self, AssertUnwindSafe},
+    pin::Pin,
+    time::Duration,
+};
 
 use iced::{Font, Subscription, Task, Theme, event, theme::Style, window};
 use iced_layershell::reexport::{IcedId, KeyboardInteractivity};
@@ -9,9 +13,10 @@ use oxibar_plugin_api::{
 use oxiced::{theme::theme_impl::get_derived_iced_theme, widgets::oxi_layer::layer_theme};
 use toml::Table;
 use tracing::error;
+use wayland_client::Connection;
 
 use crate::{
-    config::get_config,
+    config::{self, get_config},
     font,
     layout::{
         self, BarDimensions, BarSection, DEFAULT_POPUP_SIZE, PopupMetrics, SCALE_FACTOR,
@@ -24,13 +29,72 @@ use crate::{
 pub(crate) static CONFIG: Lazy<Table> = Lazy::new(get_config);
 
 pub fn run() -> Result<(), iced_layershell::Error> {
-    tracing_subscriber::fmt()
+    init_tracing();
+
+    let policy = config::startup_retry_policy(&CONFIG);
+    let mut attempts: u32 = 0;
+    let mut backoff: u64 = policy.initial_delay_ms;
+
+    loop {
+        let is_last = !policy.can_attempt_more(attempts);
+        let ready = !policy.enabled || compositor_ready();
+
+        if ready || is_last {
+            let outcome = panic::catch_unwind(AssertUnwindSafe(run_bar));
+
+            match outcome {
+                Ok(Ok(())) => return Ok(()),
+                Ok(Err(err)) => {
+                    if is_last || !policy.enabled {
+                        return Err(err);
+                    }
+                    tracing::warn!(
+                        retry = attempts + 1,
+                        error = ?err,
+                        "oxibar daemon failed to start; backing off before retry"
+                    );
+                }
+                Err(payload) => {
+                    let retryable = policy.catch_panics && policy.enabled && !is_last;
+                    if !retryable {
+                        panic::resume_unwind(payload);
+                    }
+                    tracing::warn!(
+                        retry = attempts + 1,
+                        "oxibar startup panicked; backing off before retry"
+                    );
+                }
+            }
+
+            attempts += 1;
+        } else {
+            tracing::info!(
+                retry = attempts + 1,
+                delay_ms = backoff,
+                "wayland compositor not ready yet; waiting before retrying"
+            );
+            attempts += 1;
+        }
+
+        std::thread::sleep(Duration::from_millis(backoff));
+        backoff = backoff.saturating_mul(2).min(policy.max_delay_ms);
+    }
+}
+
+fn init_tracing() {
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
-        .init();
+        .try_init();
+}
 
+fn compositor_ready() -> bool {
+    Connection::connect_to_env().is_ok()
+}
+
+fn run_bar() -> Result<(), iced_layershell::Error> {
     let mut app =
         iced_layershell::daemon(OxiBar::new, OxiBar::namespace, OxiBar::update, OxiBar::view)
             .subscription(OxiBar::subscription)
