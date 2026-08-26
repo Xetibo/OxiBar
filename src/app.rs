@@ -13,7 +13,11 @@ use oxibar_plugin_api::{
 use oxiced::{theme::theme_impl::get_derived_iced_theme, widgets::oxi_layer::layer_theme};
 use toml::Table;
 use tracing::error;
-use wayland_client::Connection;
+use wayland_client::{
+    Connection, Dispatch, QueueHandle,
+    globals::{Global, GlobalListContents, registry_queue_init},
+    protocol::wl_registry,
+};
 
 use crate::{
     config::{self, get_config},
@@ -107,7 +111,37 @@ fn init_tracing() {
 }
 
 fn compositor_ready() -> bool {
-    Connection::connect_to_env().is_ok()
+    let Ok(connection) = Connection::connect_to_env() else {
+        return false;
+    };
+    let Ok((globals, _event_queue)) = registry_queue_init::<CompositorReadiness>(&connection)
+    else {
+        return false;
+    };
+
+    globals
+        .contents()
+        .with_list(has_required_layer_shell_globals)
+}
+
+struct CompositorReadiness;
+
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for CompositorReadiness {
+    fn event(
+        _state: &mut Self,
+        _proxy: &wl_registry::WlRegistry,
+        _event: wl_registry::Event,
+        _data: &GlobalListContents,
+        _connection: &Connection,
+        _queue_handle: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+fn has_required_layer_shell_globals(globals: &[Global]) -> bool {
+    ["wl_compositor", "wl_output", "zwlr_layer_shell_v1"]
+        .into_iter()
+        .all(|required| globals.iter().any(|global| global.interface == required))
 }
 
 fn run_bar() -> Result<(), iced_layershell::Error> {
@@ -771,5 +805,33 @@ mod tests {
 
         assert_eq!(bar.bar_window_id, Some(main_window));
         assert_eq!(bar.bar_size.width, 1920);
+    }
+
+    #[test]
+    fn compositor_readiness_requires_layer_shell_and_an_output() {
+        let globals = [
+            Global {
+                name: 1,
+                interface: "wl_compositor".to_owned(),
+                version: 6,
+            },
+            Global {
+                name: 2,
+                interface: "zwlr_layer_shell_v1".to_owned(),
+                version: 5,
+            },
+        ];
+        assert!(!has_required_layer_shell_globals(&globals));
+
+        let globals = [
+            globals[0].clone(),
+            globals[1].clone(),
+            Global {
+                name: 3,
+                interface: "wl_output".to_owned(),
+                version: 4,
+            },
+        ];
+        assert!(has_required_layer_shell_globals(&globals));
     }
 }
