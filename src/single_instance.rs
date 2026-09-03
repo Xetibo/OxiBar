@@ -80,7 +80,8 @@ mod tests {
     use std::env::temp_dir;
 
     fn temp_lock_path() -> PathBuf {
-        temp_dir().join(format!("oxibar-lock-test-{}", std::process::id()))
+        let tid = std::thread::current().id();
+        temp_dir().join(format!("oxibar-lock-test-{tid:?}"))
     }
 
     #[test]
