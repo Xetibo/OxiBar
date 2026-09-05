@@ -1,11 +1,13 @@
 use std::{
+    os::unix::net::UnixStream,
     panic::{self, AssertUnwindSafe},
+    path::{Path, PathBuf},
     pin::Pin,
     time::Duration,
 };
 
 use iced::{Font, Subscription, Task, Theme, event, theme::Style, window};
-use iced_layershell::reexport::{IcedId, KeyboardInteractivity};
+use iced_layershell::reexport::{IcedId, KeyboardInteractivity, WithConnection};
 use once_cell::sync::Lazy;
 use oxibar_plugin_api::{
     HostToastRequest, PluginMsg, PluginPopupMetrics, PluginStream, SubscriptionFn,
@@ -57,10 +59,15 @@ pub fn run() -> Result<(), iced_layershell::Error> {
 
     loop {
         let is_last = !policy.can_attempt_more(attempts);
-        let ready = !policy.enabled || compositor_ready();
+        let connection = if policy.enabled {
+            compositor_ready()
+        } else {
+            None
+        };
+        let ready = !policy.enabled || connection.is_some();
 
         if ready || is_last {
-            let outcome = panic::catch_unwind(AssertUnwindSafe(run_bar));
+            let outcome = panic::catch_unwind(AssertUnwindSafe(|| run_bar(connection)));
 
             match outcome {
                 Ok(Ok(())) => return Ok(()),
@@ -110,18 +117,62 @@ fn init_tracing() {
         .try_init();
 }
 
-fn compositor_ready() -> bool {
-    let Ok(connection) = Connection::connect_to_env() else {
-        return false;
-    };
-    let Ok((globals, _event_queue)) = registry_queue_init::<CompositorReadiness>(&connection)
-    else {
-        return false;
-    };
+/// Probe the compositor and return a working connection when the layer-shell
+/// globals the bar needs are advertised. Returns `None` while the compositor
+/// is not yet accepting clients (or not reachable), in which case the caller
+/// backs off and retries.
+fn compositor_ready() -> Option<Connection> {
+    let connection = connect_wayland()?;
+    let ready = registry_queue_init::<CompositorReadiness>(&connection)
+        .map(|(globals, _event_queue)| {
+            globals
+                .contents()
+                .with_list(has_required_layer_shell_globals)
+        })
+        .unwrap_or(false);
+    ready.then_some(connection)
+}
 
-    globals
-        .contents()
-        .with_list(has_required_layer_shell_globals)
+/// Connect to the compositor, tolerating a missing, empty, or stale
+/// `WAYLAND_DISPLAY` (e.g. launched from a compositor startup hook before the
+/// environment was populated) by falling back to scanning
+/// `$XDG_RUNTIME_DIR` for a connectable `wayland-*` socket. The returned
+/// connection is handed explicitly to the layer-shell backend, so the bar no
+/// longer depends on the inherited environment at surface-creation time.
+fn connect_wayland() -> Option<Connection> {
+    if let Ok(connection) = Connection::connect_to_env() {
+        return Some(connection);
+    }
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from)?;
+    discover_wayland_connection(&runtime_dir)
+}
+
+fn discover_wayland_connection(runtime_dir: &Path) -> Option<Connection> {
+    wayland_socket_candidates_in(runtime_dir)
+        .into_iter()
+        .find_map(|path| connection_from_socket_path(&path))
+}
+
+fn wayland_socket_candidates_in(runtime_dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(runtime_dir) else {
+        return Vec::new();
+    };
+    let mut candidates: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("wayland-"))
+        })
+        .collect();
+    candidates.sort();
+    candidates
+}
+
+fn connection_from_socket_path(path: &Path) -> Option<Connection> {
+    let stream = UnixStream::connect(path).ok()?;
+    Connection::from_socket(stream).ok()
 }
 
 struct CompositorReadiness;
@@ -139,16 +190,25 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for CompositorReadine
 }
 
 fn has_required_layer_shell_globals(globals: &[Global]) -> bool {
-    ["wl_compositor", "wl_output", "zwlr_layer_shell_v1"]
+    // Minimal on purpose: the layer-shell backend hard-fails without these
+    // two, while anything stricter (e.g. also requiring wl_output) risks a
+    // false negative that waits forever even though the bar could start. A
+    // false positive here only costs one startup attempt, which the retry
+    // loop absorbs.
+    ["wl_compositor", "zwlr_layer_shell_v1"]
         .into_iter()
         .all(|required| globals.iter().any(|global| global.interface == required))
 }
 
-fn run_bar() -> Result<(), iced_layershell::Error> {
+fn run_bar(connection: Option<Connection>) -> Result<(), iced_layershell::Error> {
+    let mut settings = layout::layer_shell_settings(&CONFIG);
+    if let Some(connection) = connection {
+        settings.with_connection = Some(WithConnection::Value(connection));
+    }
     let mut app =
         iced_layershell::daemon(OxiBar::new, OxiBar::namespace, OxiBar::update, OxiBar::view)
             .subscription(OxiBar::subscription)
-            .settings(layout::layer_shell_settings(&CONFIG))
+            .settings(settings)
             .theme(OxiBar::theme)
             .default_font(Font::with_name(font::bar_font(&CONFIG)))
             .style(OxiBar::style)
@@ -808,7 +868,30 @@ mod tests {
     }
 
     #[test]
-    fn compositor_readiness_requires_layer_shell_and_an_output() {
+    fn compositor_readiness_requires_layer_shell() {
+        let globals = [Global {
+            name: 1,
+            interface: "wl_compositor".to_owned(),
+            version: 6,
+        }];
+        assert!(!has_required_layer_shell_globals(&globals));
+
+        let globals = [
+            globals[0].clone(),
+            Global {
+                name: 2,
+                interface: "zwlr_layer_shell_v1".to_owned(),
+                version: 5,
+            },
+        ];
+        assert!(has_required_layer_shell_globals(&globals));
+    }
+
+    #[test]
+    fn compositor_readiness_does_not_require_an_output() {
+        // The bar binds no output when targeting the active monitor, so a
+        // compositor advertising no wl_output yet must still count as ready.
+        // Requiring it here caused an infinite wait on otherwise fine setups.
         let globals = [
             Global {
                 name: 1,
@@ -821,17 +904,53 @@ mod tests {
                 version: 5,
             },
         ];
-        assert!(!has_required_layer_shell_globals(&globals));
-
-        let globals = [
-            globals[0].clone(),
-            globals[1].clone(),
-            Global {
-                name: 3,
-                interface: "wl_output".to_owned(),
-                version: 4,
-            },
-        ];
         assert!(has_required_layer_shell_globals(&globals));
+    }
+
+    #[test]
+    fn wayland_socket_discovery_lists_sorted_wayland_sockets() {
+        let dir = std::env::temp_dir().join(format!(
+            "oxibar-wayland-discovery-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        for name in ["wayland-1", "wayland-0", "oxibar.lock", "hypr"] {
+            std::fs::write(dir.join(name), []).expect("create temp entry");
+        }
+
+        let candidates = wayland_socket_candidates_in(&dir);
+
+        assert_eq!(
+            candidates,
+            vec![dir.join("wayland-0"), dir.join("wayland-1")]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wayland_socket_discovery_handles_missing_dir() {
+        let dir = std::env::temp_dir().join(format!(
+            "oxibar-wayland-discovery-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(wayland_socket_candidates_in(&dir).is_empty());
+        assert!(discover_wayland_connection(&dir).is_none());
+    }
+
+    #[test]
+    fn connection_from_non_socket_path_returns_none() {
+        let dir = std::env::temp_dir().join(format!(
+            "oxibar-wayland-non-socket-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("wayland-9");
+        std::fs::write(&path, []).expect("create regular file");
+
+        assert!(connection_from_socket_path(&path).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

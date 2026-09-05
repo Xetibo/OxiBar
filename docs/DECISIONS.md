@@ -48,6 +48,30 @@ topics already covered by `ARCHITECTURE.md`.
   and patching/pinning a fixed `iced_layershell`/`layershellev` (see
   `TECHNICAL_DEBT.md`).
 
+## Startup Retry Follow-up: Empty `WAYLAND_DISPLAY` (2026-09)
+
+- Problem: the pre-flight probe still waited forever on real setups. Root cause
+  was a stale/empty `WAYLAND_DISPLAY` (Hyprland `exec-once` fires before the
+  variable is populated): `Connection::connect_to_env()` treats `""` as a
+  relative name, joins it onto `$XDG_RUNTIME_DIR` (a directory), and fails, so
+  `compositor_ready()` never became true. The waiter also held the
+  single-instance `flock`, so a manual restart with a correct environment died
+  with `AlreadyRunning` - the bar "no longer opened" with no visible error.
+- Decision: `connect_wayland()` in `src/app.rs` tries `connect_to_env()`
+  first, then falls back to scanning `$XDG_RUNTIME_DIR` for a connectable
+  `wayland-*` socket (`UnixStream::connect` + `Connection::from_socket`). The
+  winning connection is passed explicitly via
+  `Settings::with_connection = Some(WithConnection::Value(..))`, which the
+  iced_layershell daemon path forwards to `layershellev::WindowState::build`,
+  so surface creation no longer depends on the inherited environment.
+- The probe now requires only `wl_compositor` + `zwlr_layer_shell_v1`
+  (previously also `wl_output`, which the backend never hard-requires - a
+  false negative here waits forever, while a false positive only costs one
+  retry attempt).
+- Verified live on Hyprland: `WAYLAND_DISPLAY=` empty starts and shows a
+  layer surface; second copy still exits 1 with the `allow_multiple_instances`
+  hint. `src/single_instance.rs` needed no change (flock logic was correct).
+
 ## Single-Instance Guard (2026-08)
 
 - Problem: rerunning oxibar (e.g. after a `nixos-rebuild switch` regenerates the
