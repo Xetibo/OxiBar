@@ -99,3 +99,27 @@ topics already covered by `ARCHITECTURE.md`.
   coordinates oxibar processes that share a runtime dir. If the lock file cannot
   be opened (e.g. unwritable runtime dir), the host logs a warning and continues
   without a guard rather than refusing to start.
+
+## Input Region Boot Race (2026-09)
+
+- Problem: the bar surface is oversized by design (`bar height +
+  POPUP_MAX_HEIGHT`, 451px) with clicks restricted via `SetPopupInputRegion`.
+  The boot-time region task (`initial_input_region_task`, 50ms delay) races
+  layer-surface creation, and iced_layershell 0.17 silently drops
+  `SetInputRegion` while no surface is ready (early `return`, only a warning
+  when the `wl_region` object itself is missing). Losing the race leaves the
+  Wayland default input region (whole surface), so the invisible popup-reserve
+  strip swallows clicks meant for windows below the bar (e.g. browser tabs).
+  Slow startups (debug builds, post-restart reconnects) lose reliably, and
+  `update_bar_size` previously skipped re-applying whenever the reported size
+  matched the config default.
+- Decision: `update_bar_size` in `src/app.rs` now always emits
+  `current_input_region_task()` on the first size event for the main window
+  (`Window::Opened` also maps to `LayerSurfaceResized`, so the surface is
+  guaranteed to exist), via a tested `should_refresh_input_region()` predicate.
+  The 50ms boot task stays as an early attempt; duplicates are harmless.
+- Rationale: converge the region from an event that implies surface existence
+  instead of a blind timer; host-side only, no dependency change.
+- Tradeoffs: a pathological ordering inside iced_layershell (action processed
+  before its `UpdateInputRegion` event) could still drop one application, but
+  two independent chances (boot task + first-ready event) make that negligible.

@@ -246,6 +246,20 @@ pub(crate) struct ToastEntry {
     pub(crate) height: u32,
 }
 
+/// Decide whether a layer-surface size event must (re)apply the input region.
+/// The boot-time region task races surface creation and iced_layershell
+/// silently drops `SetInputRegion` while no surface is ready, so the first
+/// event for the main window must always re-apply: otherwise the Wayland
+/// default (the whole bar + popup-reserve surface) stays clickable and swallows
+/// clicks meant for windows below the bar.
+fn should_refresh_input_region(
+    first_ready: bool,
+    previous: BarDimensions,
+    current: BarDimensions,
+) -> bool {
+    first_ready || previous != current
+}
+
 fn initial_input_region_task(bar_size: BarDimensions) -> Task<Message> {
     Task::perform(
         async {
@@ -425,6 +439,8 @@ impl OxiBar {
             return Task::none();
         }
 
+        // First event for the main window means its layer surface exists now.
+        let first_ready = self.bar_window_id.is_none();
         if let Some(bar_window_id) = self.bar_window_id {
             if bar_window_id != id {
                 return Task::none();
@@ -435,7 +451,7 @@ impl OxiBar {
 
         let previous = self.bar_size;
         self.bar_size = layout::bar_size_from_layer_surface(previous, layer_width, layer_height);
-        if self.bar_size == previous {
+        if !should_refresh_input_region(first_ready, previous, self.bar_size) {
             return Task::none();
         }
         self.current_input_region_task()
@@ -905,6 +921,24 @@ mod tests {
             },
         ];
         assert!(has_required_layer_shell_globals(&globals));
+    }
+
+    #[test]
+    fn input_region_refreshes_on_first_surface_ready() {
+        // Regression test: the boot-time region task can be dropped while the
+        // surface does not exist yet, so the first size event must re-apply
+        // even when the size matches the default exactly.
+        let size = layout::DEFAULT_BAR_SIZE;
+        assert!(should_refresh_input_region(true, size, size));
+        assert!(should_refresh_input_region(
+            false,
+            size,
+            BarDimensions {
+                width: size.width + 1,
+                ..size
+            }
+        ));
+        assert!(!should_refresh_input_region(false, size, size));
     }
 
     #[test]
