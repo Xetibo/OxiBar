@@ -23,6 +23,21 @@ mod system;
 use system::{BatterySnapshot, BatteryState, read_battery};
 
 const DEFAULT_POLL_SECONDS: u64 = 30;
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn settings_schema() -> Vec<oxibar_plugin_api::SettingDescriptor> {
+    use oxibar_plugin_api::{ApplyMode, SettingDescriptor, SettingKind, toml::Value};
+    vec![SettingDescriptor::new(
+        "battery.poll_seconds",
+        "Battery polling interval",
+        SettingKind::Integer {
+            min: 1,
+            max: i64::MAX,
+        },
+        Some(Value::Integer(DEFAULT_POLL_SECONDS as i64)),
+        ApplyMode::Restart,
+    )]
+}
 const CHARGING_ICON: &str = "󰂄";
 const DRAINING_ICON: &str = "󰁹";
 const UNKNOWN_PERCENTAGE: &str = "?";

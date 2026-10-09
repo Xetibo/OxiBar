@@ -31,9 +31,25 @@ pub struct FakePluginOptions {
     pub popup_size: Option<(u32, u32)>,
     pub popup_input_size: Option<(u32, u32)>,
     pub dynamic_popup_metrics: Option<PluginPopupMetrics>,
+    pub runner: bool,
+    pub runner_score: i64,
+    pub live_settings: bool,
 }
 
 impl FakePluginOptions {
+    pub fn live_settings() -> Self {
+        Self {
+            live_settings: true,
+            ..Self::default()
+        }
+    }
+    pub fn runner(score: i64) -> Self {
+        Self {
+            runner: true,
+            runner_score: score,
+            ..Self::default()
+        }
+    }
     pub fn popup() -> Self {
         Self {
             popup: true,
@@ -100,6 +116,7 @@ struct FakePluginModel {
     seen: Vec<String>,
     errors: Vec<String>,
     dynamic_popup_metrics: Option<PluginPopupMetrics>,
+    runner_score: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -125,13 +142,40 @@ impl TestHost {
         for (name, options) in plugins {
             let name = name.into();
             let model = fake_model(options.dynamic_popup_metrics);
+            model
+                .write()
+                .unwrap()
+                .downcast_mut::<FakePluginModel>()
+                .unwrap()
+                .runner_score = options.runner_score;
             let funcs = Arc::new(fake_funcs(options));
             plugin_map.insert(name.clone(), (model, funcs));
             order.push(name);
         }
 
+        let mut config_store = crate::config::ConfigStore::memory(Table::new(), Table::new());
+        config_store
+            .register_schema(
+                plugin_map
+                    .values()
+                    .flat_map(|(_, funcs)| {
+                        funcs
+                            .settings_schema
+                            .map(|schema| unsafe { schema() })
+                            .unwrap_or_default()
+                    })
+                    .collect(),
+            )
+            .unwrap();
+        let config = crate::settings::ConfigRuntime::new(config_store);
+        let settings = crate::settings::SettingsUi::new(&config.snapshot);
         Self {
             bar: OxiBar {
+                config,
+                settings,
+                plugin_order: order.clone(),
+                plugin_failures: std::collections::BTreeMap::new(),
+                launcher: crate::launcher::Launcher::new(&Table::new()),
                 theme: Theme::Dark,
                 plugins: plugin_map,
                 transparent: false,
@@ -201,6 +245,33 @@ impl TestHost {
 
     pub fn popup_plugin(&self) -> Option<&str> {
         self.bar.popup_plugin.as_deref()
+    }
+
+    pub fn config_snapshot(&self) -> std::sync::Arc<crate::config::ConfigSnapshot> {
+        self.bar.config.snapshot.clone()
+    }
+    pub fn settings_window(&self) -> Option<iced_layershell::reexport::IcedId> {
+        self.bar.settings.window_id
+    }
+    pub fn settings_error(&self) -> Option<&str> {
+        self.bar.settings.error.as_deref()
+    }
+    pub fn restart_fields(&self) -> Vec<String> {
+        self.bar.restart_fields()
+    }
+    pub fn bar_size(&self) -> crate::layout::BarDimensions {
+        self.bar.bar_size
+    }
+    pub fn widgets(&self) -> (&[String], &[String], &[String]) {
+        (
+            &self.bar.start_widgets,
+            &self.bar.center_widgets,
+            &self.bar.end_widgets,
+        )
+    }
+
+    pub fn launcher_window(&self) -> Option<iced_layershell::reexport::IcedId> {
+        self.bar.launcher.window_id
     }
 
     pub fn popup_open(&self) -> bool {
@@ -307,6 +378,9 @@ fn fake_model(dynamic_popup_metrics: Option<PluginPopupMetrics>) -> PluginModel 
 
 fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
     PluginFuncs {
+        filename: "libfake.so".to_owned(),
+        settings_schema: options.live_settings.then_some(fake_settings_schema),
+        config_changed: options.live_settings.then_some(fake_config_changed),
         _lib: Arc::new(current_library()),
         model: fake_model_fn,
         update: fake_update,
@@ -327,6 +401,8 @@ fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
         modal_view: options.modal.then_some(fake_modal_view),
         panel_view: options.panel.then_some(fake_panel_view),
         toast_view: options.toast.then_some(fake_toast_view),
+        runner_query: options.runner.then_some(fake_runner_query),
+        runner_entries: options.runner.then_some(fake_runner_entries),
     }
 }
 
@@ -387,10 +463,60 @@ unsafe extern "Rust" fn fake_update(
 }
 
 unsafe extern "Rust" fn fake_launch(
-    _focused_index: usize,
-    _model: PluginModel,
+    focused_index: usize,
+    model: PluginModel,
 ) -> Option<Task<PluginMsg>> {
+    oxibar_plugin_api::with_model_write::<FakePluginModel, _>(&model, |model| {
+        model.seen.push(format!("launch:{focused_index}"));
+    });
     None
+}
+
+unsafe extern "Rust" fn fake_settings_schema() -> Vec<oxibar_plugin_api::SettingDescriptor> {
+    vec![oxibar_plugin_api::SettingDescriptor::new(
+        "custom.value",
+        "Custom value",
+        oxibar_plugin_api::SettingKind::Integer { min: 0, max: 100 },
+        Some(toml::Value::Integer(1)),
+        oxibar_plugin_api::ApplyMode::Live,
+    )]
+}
+
+unsafe extern "Rust" fn fake_config_changed(
+    model: PluginModel,
+    config: Table,
+) -> Option<Task<PluginMsg>> {
+    oxibar_plugin_api::with_model_write::<FakePluginModel, _>(&model, |model| {
+        if let Some(value) = crate::config::store::get_path(&config, "custom.value") {
+            model.seen.push(format!("config:{value}"));
+        }
+    });
+    None
+}
+
+unsafe extern "Rust" fn fake_runner_query(
+    query: String,
+    model: PluginModel,
+) -> Option<Task<PluginMsg>> {
+    oxibar_plugin_api::with_model_write::<FakePluginModel, _>(&model, |model| {
+        model.seen.push(format!("query:{query}"));
+    });
+    None
+}
+
+unsafe extern "Rust" fn fake_runner_entries(
+    model: PluginModel,
+) -> Vec<oxibar_plugin_api::RunnerEntry> {
+    oxibar_plugin_api::with_model_read::<FakePluginModel, _>(&model, |model| {
+        vec![oxibar_plugin_api::RunnerEntry {
+            index: 42,
+            score: model.runner_score,
+            title: "Fake result".to_owned(),
+            description: String::new(),
+            icon: None,
+        }]
+    })
+    .unwrap_or_default()
 }
 
 unsafe extern "Rust" fn fake_errors(model: PluginModel) -> Vec<String> {

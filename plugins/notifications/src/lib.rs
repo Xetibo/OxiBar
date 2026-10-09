@@ -20,6 +20,32 @@ use oxinoti::{Event, Notification};
 
 const TOAST_ACTIVE_RECHECK_MILLIS: u64 = 1_000;
 
+#[unsafe(no_mangle)]
+pub extern "Rust" fn settings_schema() -> Vec<oxibar_plugin_api::SettingDescriptor> {
+    use oxibar_plugin_api::{ApplyMode, SettingDescriptor, SettingKind, toml::Value};
+    vec![
+        SettingDescriptor::new(
+            "notifications.timeout",
+            "Default toast lifetime",
+            SettingKind::Integer {
+                min: 1,
+                max: i64::MAX,
+            },
+            Some(Value::Integer(3)),
+            ApplyMode::Live,
+        )
+        .description("Seconds; applies to new notifications without an explicit lifetime."),
+    ]
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn config_changed(model: PluginModel, global: Table) -> Option<Task<PluginMsg>> {
+    with_model_write::<Model, _>(&model, |model| {
+        model.timeout = oxinoti::read_timeout(&global);
+    });
+    None
+}
+
 #[derive(Debug)]
 pub struct Model {
     notifications: Vec<Notification>,
@@ -375,6 +401,30 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxibar_plugin_api::toml;
+
+    #[test]
+    fn live_timeout_change_keeps_stored_notifications() {
+        let (model, _) = model(Table::new());
+        let _ = update(
+            model.clone(),
+            oxinoti::msg(Event::Add(Box::new(notification(91, "retained")))),
+        );
+        let _ = config_changed(
+            model.clone(),
+            toml::from_str("[notifications]\ntimeout=9").unwrap(),
+        );
+        with_model_read::<Model, _>(&model, |model| {
+            assert_eq!(model.timeout, Duration::from_secs(9));
+            assert!(
+                model
+                    .notifications
+                    .iter()
+                    .any(|notification| notification.id() == 91)
+            );
+        })
+        .unwrap();
+    }
     use zbus::fdo::RequestNameReply;
 
     fn notification(id: u32, summary: &str) -> Notification {

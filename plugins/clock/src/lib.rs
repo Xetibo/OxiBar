@@ -46,6 +46,77 @@ const DEFAULT_TICK_SECONDS: u64 = 60;
 const MINUTE_DISPLAY_SECONDS: u64 = 60;
 const DEFAULT_FONT_SIZE: f32 = 14.0;
 const DEFAULT_BOLD: bool = false;
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn settings_schema() -> Vec<oxibar_plugin_api::SettingDescriptor> {
+    use oxibar_plugin_api::toml::Value;
+    use oxibar_plugin_api::{
+        ApplyMode::{Live, Restart},
+        SettingDescriptor, SettingKind,
+    };
+    vec![
+        SettingDescriptor::new(
+            "clock.format",
+            "Clock format",
+            SettingKind::Text,
+            Some(Value::String(DEFAULT_FORMAT.to_owned())),
+            Restart,
+        )
+        .description("Restart updates the timer's display granularity."),
+        SettingDescriptor::new(
+            "clock.tick_seconds",
+            "Clock polling interval",
+            SettingKind::Integer {
+                min: 1,
+                max: i64::MAX,
+            },
+            Some(Value::Integer(DEFAULT_TICK_SECONDS as i64)),
+            Restart,
+        ),
+        SettingDescriptor::new(
+            "clock.font_size",
+            "Clock text size",
+            SettingKind::Number {
+                min: 1.0,
+                max: f32::MAX as f64,
+            },
+            Some(Value::Float(DEFAULT_FONT_SIZE as f64)),
+            Live,
+        ),
+        SettingDescriptor::new(
+            "clock.bold",
+            "Bold clock",
+            SettingKind::Boolean,
+            Some(Value::Boolean(DEFAULT_BOLD)),
+            Live,
+        ),
+        SettingDescriptor::new(
+            "clock.calendar_command",
+            "Calendar command",
+            SettingKind::Text,
+            None,
+            Live,
+        ),
+        SettingDescriptor::new(
+            "clock.calendar_app",
+            "Calendar application",
+            SettingKind::Choice(vec!["thunderbird".to_owned()]),
+            None,
+            Live,
+        ),
+    ]
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn config_changed(model: PluginModel, global: Table) -> Option<Task<PluginMsg>> {
+    let next = read_config(&global);
+    with_model_write::<Model, _>(&model, |model| {
+        model.font_size = next.font_size;
+        model.bold = next.bold;
+        model.calendar_command = next.calendar_command;
+    });
+    None
+}
 const CALENDAR_POPUP_SIZE: (u32, u32) = (360, 320);
 const CALENDAR_NAV_TEXT_SIZE: f32 = 20.0;
 const CALENDAR_NAV_HEIGHT: u32 = 28;
@@ -827,6 +898,26 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxibar_plugin_api::toml;
+
+    #[test]
+    fn live_config_keeps_restart_only_clock_format_and_retains_calendar_state() {
+        let model = plugin_model(Model::new(Table::new()));
+        let month = with_model_read::<Model, _>(&model, |model| model.calendar_month).unwrap();
+        let config: Table = toml::from_str(
+            "[clock]\nformat='%S'\nfont_size=20\nbold=true\ncalendar_command='calendar {date}'",
+        )
+        .unwrap();
+        let _ = config_changed(model.clone(), config);
+        with_model_read::<Model, _>(&model, |model| {
+            assert_eq!(model.format, DEFAULT_FORMAT);
+            assert_eq!(model.font_size, 20.0);
+            assert!(model.bold);
+            assert_eq!(model.calendar_command.as_deref(), Some("calendar {date}"));
+            assert_eq!(model.calendar_month, month);
+        })
+        .unwrap();
+    }
 
     #[test]
     fn reads_clock_config_from_top_level_table() {

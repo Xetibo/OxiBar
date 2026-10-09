@@ -30,6 +30,21 @@ use system::{
 };
 
 const DEFAULT_SCAN_SECONDS: u64 = 15;
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn settings_schema() -> Vec<oxibar_plugin_api::SettingDescriptor> {
+    use oxibar_plugin_api::{ApplyMode, SettingDescriptor, SettingKind, toml::Value};
+    vec![SettingDescriptor::new(
+        "network.scan_seconds",
+        "Network scan interval",
+        SettingKind::Integer {
+            min: 1,
+            max: i64::MAX,
+        },
+        Some(Value::Integer(DEFAULT_SCAN_SECONDS as i64)),
+        ApplyMode::Restart,
+    )]
+}
 const WIFI_ICON: &str = "󰤨";
 const POPUP_SIZE: (u32, u32) = (460, 420);
 

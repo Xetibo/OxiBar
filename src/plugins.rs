@@ -26,9 +26,10 @@ use std::sync::Arc;
 
 use libloading::Library;
 use oxibar_plugin_api::{
-    ABI_VERSION, AbiVersionFn, AvailabilityFn, ErrorsFn, LaunchFn, MetadataFn, ModalViewFn,
-    ModelFn, NameFn, PanelViewFn, PluginAvailability, PluginMetadata, PluginModel, PluginMsg,
-    PluginPopupMetrics, PopupMetricsFn, PopupViewFn, SubscriptionFn, ToastViewFn, UpdateFn, ViewFn,
+    ABI_VERSION, AbiVersionFn, AvailabilityFn, ConfigChangedFn, ErrorsFn, LaunchFn, MetadataFn,
+    ModalViewFn, ModelFn, NameFn, PanelViewFn, PluginAvailability, PluginMetadata, PluginModel,
+    PluginMsg, PluginPopupMetrics, PopupMetricsFn, PopupViewFn, RunnerEntriesFn, RunnerQueryFn,
+    SettingsSchemaFn, SubscriptionFn, ToastViewFn, UpdateFn, ViewFn,
 };
 use toml::Table;
 use tracing::{error, info, warn};
@@ -39,6 +40,9 @@ use crate::config::{get_allowed_plugins, get_oxirun_dir};
 /// alive via the `Arc` so that the raw fn pointers remain valid for the
 /// lifetime of this struct.
 pub struct PluginFuncs {
+    pub filename: String,
+    pub settings_schema: Option<SettingsSchemaFn>,
+    pub config_changed: Option<ConfigChangedFn>,
     pub(crate) _lib: Arc<Library>,
     pub model: ModelFn,
     pub update: UpdateFn,
@@ -53,6 +57,8 @@ pub struct PluginFuncs {
     pub modal_view: Option<ModalViewFn>,
     pub panel_view: Option<PanelViewFn>,
     pub toast_view: Option<ToastViewFn>,
+    pub runner_query: Option<RunnerQueryFn>,
+    pub runner_entries: Option<RunnerEntriesFn>,
 }
 
 impl std::fmt::Debug for PluginFuncs {
@@ -72,6 +78,7 @@ pub struct LoadedPlugins {
     pub plugins: PluginMap,
     pub tasks: Vec<iced::Task<crate::Message>>,
     pub order: Vec<String>,
+    pub failures: BTreeMap<String, String>,
 }
 
 /// Errors that can occur while attempting to load a single plugin. Bubbled up
@@ -169,10 +176,20 @@ unsafe fn load_one(
     let modal_view: Option<ModalViewFn> = unsafe { resolve_optional(&lib, "modal_view") };
     let panel_view: Option<PanelViewFn> = unsafe { resolve_optional(&lib, "panel_view") };
     let toast_view: Option<ToastViewFn> = unsafe { resolve_optional(&lib, "toast_view") };
+    let runner_query = unsafe { resolve_optional(&lib, "runner_query") };
+    let runner_entries = unsafe { resolve_optional(&lib, "runner_entries") };
+    let settings_schema = unsafe { resolve_optional(&lib, "settings_schema") };
+    let config_changed = unsafe { resolve_optional(&lib, "config_changed") };
 
     Ok((
         plugin_name,
         PluginFuncs {
+            filename: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            settings_schema,
+            config_changed,
             _lib: Arc::new(lib),
             model,
             update,
@@ -187,6 +204,8 @@ unsafe fn load_one(
             modal_view,
             panel_view,
             toast_view,
+            runner_query,
+            runner_entries,
         },
     ))
 }
@@ -197,6 +216,7 @@ pub fn load_plugins(config: &Table) -> LoadedPlugins {
     let mut plugins = PluginMap::new();
     let mut tasks = Vec::new();
     let mut order = Vec::new();
+    let mut failures = BTreeMap::new();
 
     let plugin_dir = get_oxirun_dir().join("plugins");
     if !plugin_dir.is_dir()
@@ -207,6 +227,7 @@ pub fn load_plugins(config: &Table) -> LoadedPlugins {
             plugins,
             tasks,
             order,
+            failures,
         };
     }
 
@@ -214,6 +235,7 @@ pub fn load_plugins(config: &Table) -> LoadedPlugins {
     for name_str in allowed {
         let path = plugin_dir.join(name_str);
         if !path.is_file() {
+            failures.insert(name_str.to_owned(), "Library missing".to_owned());
             warn!("configured plugin {} was not found", path.display());
             continue;
         }
@@ -236,7 +258,10 @@ pub fn load_plugins(config: &Table) -> LoadedPlugins {
                 order.push(key.clone());
                 plugins.insert(key, (model, funcs));
             }
-            Err(e) => warn!("skipping {}: {e}", path.display()),
+            Err(e) => {
+                failures.insert(name_str.to_owned(), e.to_string());
+                warn!("skipping {}: {e}", path.display());
+            }
         }
     }
 
@@ -244,6 +269,7 @@ pub fn load_plugins(config: &Table) -> LoadedPlugins {
         plugins,
         tasks,
         order,
+        failures,
     }
 }
 

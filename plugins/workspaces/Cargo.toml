@@ -15,6 +15,6 @@ iced = { version = "0.14.0", features = [
 	"svg",
 	"tokio",
 ]}
-oxiced = { git = "https://github.com/Xetibo/oxiced", branch = "iced14" }
+oxiced = { workspace = true }
 hyprland = "0.4.0-beta.3"
 tracing = "0.1"

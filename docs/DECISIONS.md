@@ -4,6 +4,113 @@ This file records LLM-specific continuity decisions and low-impact choices that
 are useful for future agents. Omitted from this file are high-level architecture
 topics already covered by `ARCHITECTURE.md`.
 
+## Settings foundation and GUI (2026-10-09)
+
+- Implement the roadmap's first implementation slice: compiled defaults < base
+  `config.toml` < sparse `overrides.toml`. Reset removes overrides, including
+  parent pruning; explicit equal-to-base values retain GUI intent across rebuilds.
+- The store performs validated, revision-checked transactions under a local
+  mutex and cross-process file lock. Background workers keep writes off the Iced
+  thread. Owner-only temporary writes are synced, renamed and directory-synced.
+- Notify watches the config directory and resolved input files; cache watch paths
+  rather than canonicalizing them on every ordinary UI update. Invalid external
+  edits keep the last valid snapshot. Self writes do not advance revision again.
+- Add version-1 JSON control requests/responses while retaining legacy launcher
+  wire commands. The CLI uses JSON and validates actual command outcomes. The
+  `control.socket` record preserves access while endpoint changes await restart.
+- GUI categories are Appearance, Bar/Layout, Launcher, Plugins and Advanced.
+  Global search, source/base values, reset actions, ordered widget controls,
+  installed-library status, typed plugin fields and a sparse TOML editor are wired.
+- Explicit empty GUI section arrays suppress the legacy all-empty fallback.
+  Resetting those overrides reactivates fallback even when effective array values
+  are unchanged; runtime application must consider provenance as well as values.
+- Live bar geometry updates both layer size and exclusive zone and refreshes
+  input regions. Settings receives initial focus once; resize does not steal
+  focus from a field being edited. Launcher/settings dismiss each other's surfaces.
+- Native plugin additions remain optional at ABI version 6. Current models remain
+  alive. Application terminal/result-limit changes, clock text/bold/calendar
+  commands, and notification timeout support live hooks; fonts/lifecycle/static
+  poll timers show restart requirements. Hooks are idempotent for unrelated edits.
+- Packaged Hyprland smoke verified keyboard-driven GUI edits, geometry, source
+  badges through IPC, Nix symlink regeneration/reset, stale-revision rejection,
+  invalid-input recovery, settings with launcher disabled, launcher activation and
+  persistence across daemon restart. Private temporary fixtures were used.
+- Final checks include workspace tests and strict Clippy, Nix host/application/
+  clock/notification package builds, the real-dylib live-config regression, and
+  Home Manager evaluation with a nonstandard XDG config home. The local Home
+  Manager checkout emits a release-mismatch notice against the project's pinned
+  Nixpkgs, but the relevant generated paths and override ownership evaluated correctly.
+
+## Local oxiced workspace (2026-10-09)
+
+- User authorized bringing shared UI code into this repository. Import exact
+  upstream revision `735181be7340e5916795642efa95a11e08d8f32f` into `crates/oxiced`,
+  preserving its LGPL-3.0-or-later license and recording provenance in `UPSTREAM.md`.
+- Host and bundled plugins use `[workspace.dependencies] oxiced`; root lockfile
+  and flake own builds. Remove the obsolete git-source vendor hash configuration.
+- Shared selectable rows, settings-card chrome and editor styling now live in
+  the workspace library. Root workspace tests/Clippy cover that library too.
+
+## Resident OxiRun Integration (2026-10-09)
+
+- Source reviewed: `/home/dashie/gits/OxiRun` (the requested lowercase `oxirun`
+  path does not exist on this filesystem). Its existing application provider was
+  the only local runner plugin. The source repository was not modified.
+- Port application-provider behavior into `plugins/applications` using Oxibar's
+  owned model/message API and optional `runner_query`/`runner_entries` exports.
+  Legacy OxiRun libraries have different model/update/view signatures and must be
+  ported; loading them as Oxibar dylibs is not compatible.
+- Keep ABI version 6: existing signatures/layouts crossing the dylib boundary did
+  not change, and the new capability symbols are optional.
+- Add `oxibar launcher [toggle|open|close]` as a small Unix-socket client in the
+  existing executable. Handle commands before tracing/font/GPU/daemon startup.
+  The daemon acknowledges queueing a recognized request; this is not an assertion
+  that the compositor has already presented the surface.
+- Reserve `launcher` as a host-owned bar item. Put it before configured plugins
+  only in the all-empty fallback layout; explicit layouts select it themselves.
+- Keep the application index resident, search shared immutable snapshots in
+  workers, bound the exported result list, cache unchanged queries, and discard
+  out-of-order results. Provider-local indexes survive host global ranking.
+- Activation closes the overlay immediately while the selected provider's task
+  continues in the daemon; queued duplicate activation after closure is ignored.
+- The first real Nix-package run exposed duplicated Tokio TLS across dylibs:
+  plugin `tokio::task::spawn_blocking` and timers could not see the host reactor
+  and aborted the process. Replaced those with thread/oneshot tasks and a
+  cancellable/joined refresh timer; added a real-library regression test that runs
+  without entering a host Tokio runtime.
+- Verification: workspace tests, strict Clippy, Nix host/applications/clock builds,
+  opt-in dylib regression, and isolated Hyprland smoke with both application and
+  clock plugins. Typed a fixture app name and launched with Enter; the bar stayed
+  alive through activation and 20 subsequent open/close cycles.
+- Final release-package smoke on this machine: median CLI acknowledgement
+  round trip 3.54 ms over 20 opens; median host-request-to-surface-configure 3.92 ms,
+  max 11.92 ms over 21 opens. These are warm IPC/configuration measurements using
+  one fixture entry, not first-frame latency or a standalone OxiRun comparison.
+- `SHELL_ROADMAP.md` is the requested next-stage plan. Its first major slice is
+  sparse GUI overrides above the immutable Nix/base TOML plus source/reset-aware
+  settings UI; those capabilities are not implemented by the launcher change.
+
+## ReSet Reuse Scope (2026-10-09)
+
+- Follow-up request: review `/home/dashie/gits/ReSet` for useful audio, Bluetooth
+  and monitor handling while retaining Oxibar's different architecture.
+- Reviewed daemon native PulseAudio subscriptions/request handling, BlueZ
+  ObjectManager/property signal logic, the Iced frontend's ID-keyed state, monitor
+  compositor/protocol adapters and geometry tests, and mock Bluetooth endpoints.
+- Roadmap now maps concrete source paths to incremental adapters behind existing
+  Oxibar plugins. Native audio/BlueZ state and read-only monitor inventory are the
+  first reuse candidates; optional display controls and advanced audio follow.
+- ReSet's pairing agent has placeholder responses and its monitor implementation
+  has protocol/threading/refresh-rounding assumptions. Port useful logic with
+  fixtures and current protocol checks rather than copying those limitations.
+- No ReSet runtime dependency or source transplant is part of the launcher
+  integration. The planned service adapters preserve current UI/plugin behavior
+  and do not require ReSet's daemon/plugin loader or GTK frontend.
+- Local-path Nix imports can include ignored Cargo targets. A newly generated
+  workspace `target/` made concurrent final source imports exceed free temporary
+  space; final checks use a filtered `builtins.path` excluding `.git`, `.direnv`,
+  `target` and `tmp`. Session-owned Cargo artifacts were also cleaned selectively.
+
 ## Clock Ticking Strategy (2026-08)
 
 - Problem: a `format` that shows seconds previously required `tick_seconds = 1`,

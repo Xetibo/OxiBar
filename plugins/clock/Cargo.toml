@@ -12,6 +12,6 @@ iced = { version = "0.14.0", features = [
 	"advanced",
 	"tokio",
 ]}
-oxiced = { git = "https://github.com/Xetibo/oxiced", branch = "iced14" }
+oxiced = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tracing = "0.1"

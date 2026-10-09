@@ -18,6 +18,13 @@
 - Tray rows use left-click activation and right-click context menus. Do not add separate per-row action buttons for secondary/context actions.
 - Detached popup overlays may request a larger transparent input region than their visible popup body through `popup_metrics(model)` or metadata; keep visible chrome compact and use the extra region only for overlay hit-testing.
 - Do not introduce arbitrary palettes or random RGB colors. If `oxiced` cannot express a needed style, track the exception in `docs/TECHNICAL_DEBT.md`.
+- Search/task overlays take exclusive keyboard focus only while visible. Scope navigation to the overlay window; Escape and activation dismiss the overlay rather than terminate the daemon. Selected rows must differ from hover, and long result lists must scroll.
+- Settings fields display their effective value, base/default value, source and
+  live/surface/restart classification, with individual reset actions. Invalid edits
+  remain visible without losing the running configuration. Continuous text edits
+  are drafts; Enter/Apply accepts them. Busy operations preserve layout.
+- Use shared selectable rows, settings cards, checkbox/pick-list/input helpers and
+  themed editor styling from the workspace `oxiced` library.
 
 ## Current Surfaces
 

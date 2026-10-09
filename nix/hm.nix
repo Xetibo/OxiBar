@@ -9,6 +9,7 @@ self: {
   defaultPackage = self.packages.${system}.default;
   defaultPlugins = with self.packages.${system}; [
     oxibar-audio
+    oxibar-applications
     oxibar-battery
     oxibar-bluetooth
     oxibar-clock
@@ -57,7 +58,7 @@ in {
     fetchedPlugins = builtins.map pluginLibraryName cfg.config.plugins;
     plugin_files = builtins.listToAttrs (builtins.map
       (pkg: {
-        name = ".config/oxibar/plugins/${pluginLibraryName pkg}";
+        name = "oxibar/plugins/${pluginLibraryName pkg}";
         value = {
           source = "${pkg}/lib/${pluginLibraryName pkg}";
         };
@@ -68,14 +69,14 @@ in {
     cfg.enable
     {
       home.packages = lib.optional (cfg.package != null) cfg.package ++ cfg.config.plugins;
-      home.file = plugin_files;
-
-      xdg.configFile."oxibar/config.toml".source =
+      xdg.configFile = plugin_files // {
+        "oxibar/config.toml".source =
         (pkgs.formats.toml {}).generate "oxibar"
         (lib.recursiveUpdate
           {
             plugins = fetchedPlugins;
           }
           cfg.config.plugin_config);
+      };
     };
 }

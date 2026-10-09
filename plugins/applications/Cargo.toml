@@ -1,0 +1,16 @@
+[package]
+name = "applications"
+version = "0.1.0"
+edition = "2024"
+description = "Resident OxiRun application provider for Oxibar"
+license = "GPL-3.0-only"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+oxibar-plugin-api = { path = "../../crates/oxibar-plugin-api" }
+iced = { version = "0.14.0", features = ["advanced", "tokio"] }
+fuzzy-matcher = "0.3.7"
+shell-words = "1.1"
+xdg = "3.0.0"

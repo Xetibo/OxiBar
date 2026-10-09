@@ -31,6 +31,21 @@ use system::{
 };
 
 const DEFAULT_POLL_SECONDS: u64 = 4;
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn settings_schema() -> Vec<oxibar_plugin_api::SettingDescriptor> {
+    use oxibar_plugin_api::{ApplyMode, SettingDescriptor, SettingKind, toml::Value};
+    vec![SettingDescriptor::new(
+        "audio.poll_seconds",
+        "Audio polling interval",
+        SettingKind::Integer {
+            min: 1,
+            max: i64::MAX,
+        },
+        Some(Value::Integer(DEFAULT_POLL_SECONDS as i64)),
+        ApplyMode::Restart,
+    )]
+}
 const AUDIO_ICON: &str = "󰕾";
 const POPUP_SIZE: (u32, u32) = (460, 420);
 const ARTWORK_PREVIEW_SIZE: u32 = 76;

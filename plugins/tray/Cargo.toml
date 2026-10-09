@@ -14,7 +14,7 @@ iced = { version = "0.14.0", features = [
 	"svg",
 	"tokio",
 ]}
-oxiced = { git = "https://github.com/Xetibo/oxiced", branch = "iced14" }
+oxiced = { workspace = true }
 serde = "1.0"
 tracing = "0.1"
 zbus = "5.14.0"

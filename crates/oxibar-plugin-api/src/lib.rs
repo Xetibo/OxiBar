@@ -7,12 +7,16 @@
 
 use std::any::TypeId;
 use std::fmt::Debug;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
 pub use iced;
 use iced::{Element, Task, futures::Stream};
 pub use toml;
+
+mod settings;
+pub use settings::{ApplyMode, ConfigChangedFn, SettingDescriptor, SettingKind, SettingsSchemaFn};
 
 /// ABI version. Bump on any breaking change to the function signatures or
 /// trait-object layouts crossing the dylib boundary. The host refuses to load
@@ -119,6 +123,10 @@ pub const HOST_REQUEST_CLOSE_MODAL: &str = "oxibar.host.close-modal";
 /// String payload a plugin can send through [`PluginMsg`] to request that the
 /// host toggles that plugin's right-side panel surface.
 pub const HOST_REQUEST_TOGGLE_PANEL: &str = "oxibar.host.toggle-panel";
+
+/// Request the resident launcher without tying it to a plugin-owned surface.
+pub const HOST_REQUEST_TOGGLE_LAUNCHER: &str = "oxibar.host.toggle-launcher";
+pub const HOST_REQUEST_OPEN_SETTINGS: &str = "oxibar.host.open-settings";
 
 /// Backward-compatible name for the clock plugin's original popup request.
 pub const HOST_REQUEST_TOGGLE_CALENDAR_POPUP: &str = HOST_REQUEST_TOGGLE_POPUP;
@@ -255,6 +263,23 @@ pub type UpdateFn =
 
 pub type LaunchFn =
     unsafe extern "Rust" fn(focused_index: usize, model: PluginModel) -> Option<Task<PluginMsg>>;
+
+/// A launcher result. `index` is an opaque, provider-local launch index, not its
+/// position in the host's globally ranked result list.
+#[derive(Debug, Clone)]
+pub struct RunnerEntry {
+    pub index: usize,
+    pub score: i64,
+    pub title: String,
+    pub description: String,
+    pub icon: Option<PathBuf>,
+}
+
+/// Optional launcher hooks. Existing bar plugins need not export these symbols.
+/// Query work should use immutable snapshots and discard stale async results.
+pub type RunnerQueryFn =
+    unsafe extern "Rust" fn(query: String, model: PluginModel) -> Option<Task<PluginMsg>>;
+pub type RunnerEntriesFn = unsafe extern "Rust" fn(model: PluginModel) -> Vec<RunnerEntry>;
 
 pub type ViewFn =
     unsafe extern "Rust" fn(

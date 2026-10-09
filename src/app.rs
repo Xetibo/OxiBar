@@ -3,16 +3,17 @@ use std::{
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
     pin::Pin,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
 use iced::{Font, Subscription, Task, Theme, event, theme::Style, window};
 use iced_layershell::reexport::{IcedId, KeyboardInteractivity, WithConnection};
-use once_cell::sync::Lazy;
 use oxibar_plugin_api::{
     HostToastRequest, PluginMsg, PluginPopupMetrics, PluginStream, SubscriptionFn,
 };
 use oxiced::{theme::theme_impl::get_derived_iced_theme, widgets::oxi_layer::layer_theme};
+#[cfg(test)]
 use toml::Table;
 use tracing::error;
 use wayland_client::{
@@ -22,23 +23,29 @@ use wayland_client::{
 };
 
 use crate::{
-    config::{self, get_config},
+    config::{self, ConfigStore, get_config},
     font,
+    ipc::{self, LauncherCommand},
+    launcher::{self, Launcher},
     layout::{
         self, BarDimensions, BarSection, DEFAULT_POPUP_SIZE, PopupMetrics, SCALE_FACTOR,
         TOAST_MARGIN_TOP, TOAST_SPACING,
     },
     messages::{Message, map_plugin_message},
-    plugins::{PluginMap, dispatch_update, drain_errors, load_plugins, query_plugin_popup_metrics},
+    plugins::{
+        PluginMap, dispatch_launch, dispatch_update, drain_errors, load_plugins,
+        query_plugin_popup_metrics,
+    },
+    settings::{self, ConfigRuntime, SettingsUi},
     single_instance::{self, SingleInstanceError},
 };
 
-pub(crate) static CONFIG: Lazy<Table> = Lazy::new(get_config);
-
 pub fn run() -> Result<(), iced_layershell::Error> {
     init_tracing();
+    let startup_config = get_config();
 
-    let _instance_guard = match single_instance::acquire(&config::instance_policy(&CONFIG)) {
+    let _instance_guard = match single_instance::acquire(&config::instance_policy(&startup_config))
+    {
         Ok(guard) => guard,
         Err(SingleInstanceError::AlreadyRunning) => {
             eprintln!(
@@ -53,7 +60,7 @@ pub fn run() -> Result<(), iced_layershell::Error> {
         }
     };
 
-    let policy = config::startup_retry_policy(&CONFIG);
+    let policy = config::startup_retry_policy(&startup_config);
     let mut attempts: u32 = 0;
     let mut backoff: u64 = policy.initial_delay_ms;
 
@@ -201,25 +208,36 @@ fn has_required_layer_shell_globals(globals: &[Global]) -> bool {
 }
 
 fn run_bar(connection: Option<Connection>) -> Result<(), iced_layershell::Error> {
-    let mut settings = layout::layer_shell_settings(&CONFIG);
+    let store = Arc::new(Mutex::new(ConfigStore::open(config::get_config_dir())));
+    let initial = store.lock().expect("initial configuration").snapshot();
+    let mut settings = layout::layer_shell_settings(&initial.effective);
     if let Some(connection) = connection {
         settings.with_connection = Some(WithConnection::Value(connection));
     }
-    let mut app =
-        iced_layershell::daemon(OxiBar::new, OxiBar::namespace, OxiBar::update, OxiBar::view)
-            .subscription(OxiBar::subscription)
-            .settings(settings)
-            .theme(OxiBar::theme)
-            .default_font(Font::with_name(font::bar_font(&CONFIG)))
-            .style(OxiBar::style)
-            .scale_factor(OxiBar::scale_factor);
-    if let Some(bytes) = font::bar_font_bytes(&CONFIG) {
+    let mut app = iced_layershell::daemon(
+        move || OxiBar::new(store.clone()),
+        OxiBar::namespace,
+        OxiBar::update,
+        OxiBar::view,
+    )
+    .subscription(OxiBar::subscription)
+    .settings(settings)
+    .theme(OxiBar::theme)
+    .default_font(Font::with_name(font::bar_font(&initial.effective)))
+    .style(OxiBar::style)
+    .scale_factor(OxiBar::scale_factor);
+    if let Some(bytes) = font::bar_font_bytes(&initial.effective) {
         app = app.font(bytes);
     }
     app.run()
 }
 
 pub(crate) struct OxiBar {
+    pub(crate) config: ConfigRuntime,
+    pub(crate) settings: SettingsUi,
+    pub(crate) plugin_order: Vec<String>,
+    pub(crate) plugin_failures: std::collections::BTreeMap<String, String>,
+    pub(crate) launcher: Launcher,
     pub(crate) theme: Theme,
     pub(crate) plugins: PluginMap,
     pub(crate) transparent: bool,
@@ -276,9 +294,40 @@ fn initial_input_region_task(bar_size: BarDimensions) -> Task<Message> {
 }
 
 impl OxiBar {
-    fn new() -> (Self, Task<Message>) {
-        let loaded = load_plugins(&CONFIG);
-        let bar_table = CONFIG.get("bar").and_then(|v| v.as_table());
+    fn new(store: Arc<Mutex<ConfigStore>>) -> (Self, Task<Message>) {
+        let initial = store.lock().expect("initial configuration").snapshot();
+        let loaded = load_plugins(&initial.effective);
+        let schema = loaded
+            .plugins
+            .values()
+            .flat_map(|(_, funcs)| {
+                funcs
+                    .settings_schema
+                    .map(|schema| unsafe { schema() })
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|mut field| {
+                        if funcs.config_changed.is_none() {
+                            field.apply = oxibar_plugin_api::ApplyMode::Restart;
+                        }
+                        field
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let mut error = store.lock().expect("initial configuration").error.clone();
+        if let Err(problem) = store
+            .lock()
+            .expect("initial configuration")
+            .register_schema(schema)
+        {
+            error = Some(problem);
+        }
+        let runtime = ConfigRuntime::shared(store);
+        let mut settings_ui = SettingsUi::new(&runtime.snapshot);
+        settings_ui.error = error;
+        let config = &runtime.snapshot.effective;
+        let bar_table = config.get("bar").and_then(|v| v.as_table());
         let transparent = bar_table
             .and_then(|t| t.get("transparent"))
             .and_then(|v| v.as_bool())
@@ -297,14 +346,28 @@ impl OxiBar {
         let start_widgets = read_section("start");
         let center_widgets = read_section("center");
         let end_widgets = read_section("end");
-        let bar_size = layout::bar_size_from_config(&CONFIG);
-        let start_widgets =
-            if start_widgets.is_empty() && center_widgets.is_empty() && end_widgets.is_empty() {
-                loaded.order.clone()
-            } else {
-                start_widgets
-            };
-        let bar = Self {
+        let bar_size = layout::bar_size_from_config(config);
+        let default_layout =
+            config::schema::fallback_layout(&runtime.snapshot.host, &runtime.snapshot.overrides);
+        let start_widgets = if default_layout {
+            loaded.order.clone()
+        } else {
+            start_widgets
+        };
+        let launcher = Launcher::new(config);
+        let mut start_widgets = start_widgets;
+        if launcher.enabled && default_layout {
+            start_widgets.insert(0, "launcher".to_owned());
+        }
+        if default_layout {
+            start_widgets.insert(usize::from(launcher.enabled), "settings".to_owned());
+        }
+        let mut bar = Self {
+            config: runtime,
+            settings: settings_ui,
+            plugin_order: loaded.order,
+            plugin_failures: loaded.failures,
+            launcher,
             plugins: loaded.plugins,
             theme: get_derived_iced_theme(),
             transparent,
@@ -321,6 +384,7 @@ impl OxiBar {
             panel_window_id: None,
             toasts: Vec::new(),
         };
+        bar.refresh_plugin_catalog();
         let mut tasks = loaded.tasks;
         tasks.push(initial_input_region_task(bar.bar_size));
         (bar, Task::batch(tasks))
@@ -333,7 +397,62 @@ impl OxiBar {
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Exit => std::process::exit(0),
+            Message::Settings(action) => self.update_settings(action),
+            Message::SettingsEscape(id) => {
+                if self.settings.window_id == Some(id) {
+                    self.close_settings()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::SettingsFocus(id, forward) => {
+                if self.settings.window_id == Some(id) {
+                    if forward {
+                        iced::widget::operation::focus_next()
+                    } else {
+                        iced::widget::operation::focus_previous()
+                    }
+                } else {
+                    Task::none()
+                }
+            }
+            Message::SettingsSearchFocus(id) => {
+                if self.settings.window_id == Some(id) {
+                    iced::widget::operation::focus(settings::SEARCH_ID)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::SettingsCategory(id, category) => {
+                if self.settings.window_id == Some(id) {
+                    self.update_settings(settings::Action::Category(category))
+                } else {
+                    Task::none()
+                }
+            }
+            Message::ControlRequest(request) => self.control_request(request),
+            Message::ReloadConfig => self.reload_config(None),
+            Message::ConfigUpdated(outcome) => self.config_updated(&outcome),
+            Message::ControlLauncher(command) => self.update_launcher(match command {
+                LauncherCommand::Toggle => launcher::Action::Toggle,
+                LauncherCommand::Open => launcher::Action::Open,
+                LauncherCommand::Close => launcher::Action::Close,
+            }),
+            Message::Launcher(action) => self.update_launcher(action),
+            Message::LauncherKey(id, action) => {
+                if self.launcher.window_id == Some(id) {
+                    self.update_launcher(action)
+                } else {
+                    Task::none()
+                }
+            }
             Message::SetPopupInputRegion { .. }
+            | Message::OpenSettingsLayer(_, _, _)
+            | Message::CloseSettingsLayer(_)
+            | Message::ResizeLayer(_, _, _)
+            | Message::SetExclusiveZone(_, _)
+            | Message::OpenLauncherLayer(_, _, _)
+            | Message::CloseLauncherLayer(_)
             | Message::OpenModalLayer(_)
             | Message::CloseModalLayer(_)
             | Message::OpenPanelLayer(_)
@@ -377,6 +496,9 @@ impl OxiBar {
                 };
                 let task = dispatch_update(funcs, model.clone(), msg);
                 drain_errors(funcs, model);
+                if funcs.runner_entries.is_some() {
+                    self.launcher.refresh(&self.plugins);
+                }
                 let refresh = if self.popup_open
                     && self.popup_plugin.as_deref() == Some(plugin_id.as_str())
                 {
@@ -393,6 +515,98 @@ impl OxiBar {
                 }
             }
         }
+    }
+
+    pub(crate) fn update_launcher(&mut self, action: launcher::Action) -> Task<Message> {
+        use launcher::Action;
+        match action {
+            Action::Toggle if self.launcher.window_id.is_some() => self.close_launcher(),
+            Action::Toggle | Action::Open => {
+                if !self.launcher.enabled || self.launcher.window_id.is_some() {
+                    return Task::none();
+                }
+                let id = IcedId::unique();
+                self.launcher.window_id = Some(id);
+                self.launcher.open_started_at = Some(std::time::Instant::now());
+                self.launcher.query.clear();
+                self.launcher.focused = 0;
+                self.popup_open = false;
+                let close_modal = self.close_modal();
+                let close_panel = self.close_panel();
+                let close_settings = self.close_settings();
+                let input_region = self.current_input_region_task();
+                let query = self.query_runner_plugins();
+                Task::batch([
+                    close_modal,
+                    close_panel,
+                    close_settings,
+                    input_region,
+                    query,
+                    Task::done(Message::OpenLauncherLayer(
+                        id,
+                        self.launcher.size.0,
+                        self.launcher.size.1,
+                    )),
+                ])
+            }
+            Action::Close => self.close_launcher(),
+            Action::Query(query) => {
+                self.launcher.query = query;
+                self.launcher.focused = 0;
+                self.query_runner_plugins()
+            }
+            Action::MoveFocus(forward) => {
+                self.launcher.move_focus(forward);
+                Task::none()
+            }
+            Action::LaunchFocused => self.launch_runner_entry(self.launcher.focused),
+            Action::Launch(index) => self.launch_runner_entry(index),
+        }
+    }
+
+    fn query_runner_plugins(&mut self) -> Task<Message> {
+        let tasks: Vec<_> = self
+            .plugins
+            .iter()
+            .filter_map(|(plugin_id, (model, funcs))| {
+                let query = funcs.runner_query?;
+                funcs.runner_entries?;
+                let task = unsafe { query(self.launcher.query.clone(), model.clone()) };
+                let id = plugin_id.clone();
+                task.map(|task| task.map(move |message| map_plugin_message(id.clone(), message)))
+            })
+            .collect();
+        self.launcher.refresh(&self.plugins);
+        Task::batch(tasks)
+    }
+
+    fn launch_runner_entry(&mut self, index: usize) -> Task<Message> {
+        if self.launcher.window_id.is_none() {
+            return Task::none();
+        }
+        let Some(entry) = self.launcher.entries.get(index) else {
+            return Task::none();
+        };
+        let Some((model, funcs)) = self.plugins.get(&entry.plugin_id) else {
+            return Task::none();
+        };
+        let task = dispatch_launch(funcs, entry.result.index, model.clone());
+        drain_errors(funcs, model);
+        let plugin_id = entry.plugin_id.clone();
+        let task = task
+            .map(|task| task.map(move |message| map_plugin_message(plugin_id.clone(), message)))
+            .unwrap_or_else(Task::none);
+        // Only the launcher surface closes; providers, subscriptions and the bar stay warm.
+        Task::batch([task, self.close_launcher()])
+    }
+
+    pub(crate) fn close_launcher(&mut self) -> Task<Message> {
+        self.launcher.open_started_at = None;
+        self.launcher
+            .window_id
+            .take()
+            .map(|id| Task::done(Message::CloseLauncherLayer(id)))
+            .unwrap_or_else(Task::none)
     }
 
     pub(crate) fn plugin_section(&self, plugin_id: &str) -> BarSection {
@@ -435,6 +649,22 @@ impl OxiBar {
         layer_width: u32,
         layer_height: u32,
     ) -> Task<Message> {
+        if self.settings.window_id == Some(id) {
+            if self.settings.awaiting_focus {
+                self.settings.awaiting_focus = false;
+                return iced::widget::operation::focus(settings::SEARCH_ID);
+            }
+            return Task::none();
+        }
+        if self.launcher.window_id == Some(id) {
+            if let Some(started) = self.launcher.open_started_at.take() {
+                tracing::debug!(
+                    elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                    "launcher surface configured"
+                );
+            }
+            return iced::widget::operation::focus(launcher::SEARCH_ID);
+        }
         if self.is_auxiliary_window(id) {
             return Task::none();
         }
@@ -451,6 +681,7 @@ impl OxiBar {
 
         let previous = self.bar_size;
         self.bar_size = layout::bar_size_from_layer_surface(previous, layer_width, layer_height);
+        self.bar_size.height = self.config.snapshot.host.bar_height;
         if !should_refresh_input_region(first_ready, previous, self.bar_size) {
             return Task::none();
         }
@@ -459,11 +690,13 @@ impl OxiBar {
 
     fn is_auxiliary_window(&self, id: IcedId) -> bool {
         self.modal_window_id == Some(id)
+            || self.settings.window_id == Some(id)
+            || self.launcher.window_id == Some(id)
             || self.panel_window_id == Some(id)
             || self.toasts.iter().any(|toast| toast.window_id == id)
     }
 
-    fn current_input_region_task(&self) -> Task<Message> {
+    pub(crate) fn current_input_region_task(&self) -> Task<Message> {
         if let Some(plugin_id) = self.popup_plugin.as_deref()
             && self.popup_open
         {
@@ -485,7 +718,7 @@ impl OxiBar {
     }
 
     fn popup_size(&self, plugin_id: &str, dynamic: Option<PluginPopupMetrics>) -> (u32, u32) {
-        layout::popup_size_from_config(&CONFIG, plugin_id)
+        layout::popup_size_from_config(&self.config.snapshot.effective, plugin_id)
             .or_else(|| dynamic.and_then(|metrics| metrics.popup_size))
             .or_else(|| {
                 self.plugins
@@ -593,7 +826,7 @@ impl OxiBar {
         }
     }
 
-    fn close_panel(&mut self) -> Task<Message> {
+    pub(crate) fn close_panel(&mut self) -> Task<Message> {
         self.panel_plugin = None;
         let Some(id) = self.panel_window_id.take() else {
             return Task::none();
@@ -608,7 +841,7 @@ impl OxiBar {
         self.close_modal()
     }
 
-    fn close_modal(&mut self) -> Task<Message> {
+    pub(crate) fn close_modal(&mut self) -> Task<Message> {
         self.modal_plugin = None;
         let Some(id) = self.modal_window_id.take() else {
             return Task::none();
@@ -733,6 +966,20 @@ impl OxiBar {
     fn subscription(&self) -> Subscription<Message> {
         let mut subs: Vec<Subscription<Message>> = Vec::with_capacity(self.plugins.len() + 1);
         subs.push(event::listen_with(layer_surface_size_event));
+        subs.push(event::listen_with(settings::key_event));
+        subs.push(Subscription::run_with(
+            self.config.endpoint.clone(),
+            ipc::listen_endpoint,
+        ));
+        if !self.config.directory.as_os_str().is_empty() {
+            subs.push(Subscription::run_with(
+                self.config.watch_paths.clone(),
+                config::watch_changes,
+            ));
+        }
+        if self.launcher.enabled {
+            subs.push(event::listen_with(launcher::key_event));
+        }
         subs.extend(self.plugins.iter().map(|(plugin_id, (_model, funcs))| {
             let sub_fn_addr = funcs.subscription as usize;
             Subscription::run_with((plugin_id.clone(), sub_fn_addr), build_plugin_stream)
@@ -808,6 +1055,11 @@ mod tests {
 
     fn empty_bar() -> OxiBar {
         OxiBar {
+            config: ConfigRuntime::new(ConfigStore::memory(Table::new(), Table::new())),
+            settings: SettingsUi::new(&ConfigStore::memory(Table::new(), Table::new()).snapshot()),
+            plugin_order: Vec::new(),
+            plugin_failures: std::collections::BTreeMap::new(),
+            launcher: Launcher::new(&Table::new()),
             theme: Theme::Dark,
             plugins: PluginMap::new(),
             transparent: false,

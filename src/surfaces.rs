@@ -28,6 +28,12 @@ const POPUP_SURFACE_RADIUS: f32 = PANEL_RADIUS;
 
 impl OxiBar {
     pub(crate) fn view(&self, id: IcedId) -> Element<'_, Message> {
+        if self.settings.window_id == Some(id) {
+            return self.settings_view();
+        }
+        if self.launcher.window_id == Some(id) {
+            return self.launcher.view();
+        }
         if self.modal_window_id == Some(id) {
             return self.modal_surface_view();
         }
@@ -340,6 +346,28 @@ impl OxiBar {
         names
             .iter()
             .flat_map(|name| {
+                if name.eq_ignore_ascii_case("settings") {
+                    return vec![
+                        oxiced::widgets::oxi_plugin::bar_button(
+                            iced::widget::text("Settings").size(OXITHEME.font_md),
+                        )
+                        .on_press(Message::Settings(crate::settings::Action::Open))
+                        .into(),
+                    ];
+                }
+                if name.eq_ignore_ascii_case("launcher") {
+                    return if self.launcher.enabled {
+                        vec![
+                            oxiced::widgets::oxi_plugin::bar_button(
+                                iced::widget::text("Search").size(OXITHEME.font_md),
+                            )
+                            .on_press(Message::Launcher(crate::launcher::Action::Toggle))
+                            .into(),
+                        ]
+                    } else {
+                        Vec::new()
+                    };
+                }
                 let Some((key, (model, funcs))) = self
                     .plugins
                     .iter()

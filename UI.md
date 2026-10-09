@@ -21,6 +21,10 @@ This file is the styling contract for Oxibar plugins. New plugins and UI changes
 - Plugins with model-dependent popup content should export `popup_metrics(model)` and cap long content at the host max height with scrolling.
 - Panels are full-height side surfaces. Use `OXITHEME.padding_md`, top-level spacing from `OXITHEME.padding_md`, and scrolling for long lists.
 - Modals are focused task surfaces. The host provides themed radius, shadow, border, and `OXITHEME.padding_lg`; plugin modal content should use full width and not add another outer card.
+- Search overlays reuse host theme tokens and controls, take keyboard focus while visible, and close on Escape or activation without terminating the shell. Keep result selection distinct from hover and make long lists scrollable.
+- Settings forms use shared `oxi_plugin::settings_card`, selectable rows and
+  themed inputs/editors. Show value provenance and reset controls; preserve drafts
+  on revision conflicts and show restart-only changes explicitly.
 
 ## Bar Controls
 

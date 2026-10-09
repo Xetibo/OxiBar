@@ -6,6 +6,38 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ## Runtime Debt
 
+### Static Theme and Remaining Restart-only Settings
+
+- Status: settings foundation resolved; theme/lifecycle extensions remain planned.
+- Current state: source-aware snapshots, sparse GUI overrides, atomic persistence,
+  filesystem reload and optional plugin config hooks are implemented. Fonts,
+  plugin lifecycle and existing poll timers remain restart-only; `OXITHEME` is
+  independently static in host/plugin libraries.
+- Target fix: cancellable plugin lifecycle and immutable theme snapshots as
+  sequenced in `SHELL_ROADMAP.md`. Add live hooks to further bundled settings as
+  their timer/backend ownership supports them.
+
+### Launcher Index and Desktop-entry Coverage
+
+- Status: accepted initial limitations.
+- Current state: application/icon indexing runs off the UI thread at startup and every configured refresh interval; reopening does not scan. The provider supports XDG precedence, hidden-entry masking, normal Exec fields, terminal commands and desktop visibility filters, but default-language names, hicolor/Adwaita/pixmap icon lookup, and Exec launching remain the supported subset.
+- Gaps: locale-aware names, icon-theme inheritance, DBusActivatable-only applications, desktop actions, persistent/mtime-based caches and filesystem-driven refresh are not implemented. Search results discard stale generations but old computations are not coalesced/cancelled; large configured result lists do not automatically scroll the keyboard selection into view.
+- Target fix: extend the resident provider and overlay navigation incrementally; do not reintroduce per-invocation scans or full application-vector cloning per query.
+
+### Native System Backend Migration
+
+- Status: planned, with existing integrations retained as migration baselines.
+- Current state: audio and Bluetooth still use `pactl`/`bluetoothctl` for substantial device interaction. Reviewed ReSet backends provide native PulseAudio subscriptions, BlueZ object/property events and broader monitor adapters suitable for selective adaptation.
+- Migration requirements: cancellable/reconnecting backend owners, state/action parity, complete pairing-agent responses and protocol/version-aware display capabilities. The donor's placeholders, blocking waits, unsafe thread markers and coarse refresh rounding must be addressed rather than imported.
+- Target fix: the ReSet reuse workstream in `SHELL_ROADMAP.md`; keep existing plugin capabilities and themed Iced views throughout migration.
+
+### Home Manager Plugin Path
+
+- Status: resolved.
+- Current state: base configuration and plugin libraries both use `xdg.configFile`;
+  GUI overrides are excluded from Home Manager ownership. Nonstandard config homes
+  were checked using Home Manager module evaluation.
+
 ### iced_layershell Startup Connection Panic
 
 - Status: mitigated, not root-fixed.
@@ -35,6 +67,21 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Target fix: add a small dynamic-loading integration test once plugin test fixtures can be built reproducibly through the workspace/Nix setup.
 
 ## UI Theme Debt
+
+### Settings Control Accessibility
+
+- Status: follow-up for the initial settings UI.
+- Current state: keyboard search, text-field traversal, Enter/Apply, category
+  shortcuts and window-scoped Escape work. Generic Iced button/checkbox keyboard
+  focus and screen-reader semantics are not yet uniformly exposed by shared controls.
+- Target fix: reusable focusable/accessible controls in `crates/oxiced`, with
+  full form navigation and runtime checks as the settings pages expand.
+
+### Selectable Search Result Row
+
+- Status: resolved.
+- Current state: launcher and settings navigation use the workspace `oxiced`
+  selectable-row helper, sharing neutral/selected/hover/pressed states.
 
 ### Missing Additional Flat Button Variants In `oxiced`
 

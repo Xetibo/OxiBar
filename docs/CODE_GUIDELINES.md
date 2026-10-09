@@ -17,6 +17,16 @@
 - Single-instance behavior is config-driven via the `[instance]` TOML table parsed into `config::InstancePolicy`. Keep lock acquisition in `src/single_instance.rs`; `src/app.rs` only acquires the guard at startup (see `DECISIONS.md`).
 - Add active-output compositor integrations under `src/monitor/` as small backends returning an output name; keep toast/panel layer construction in `src/messages.rs` backend-agnostic.
 - When the same UI number repeats across plugins, add or use a shared `oxiced` token/helper before adding plugin-local constants.
+- Extend plugins with optional capability exports when existing signatures suffice. Preserve provider-local launch indexes when ranking search results globally; never broadcast a selected result's index to unrelated plugins.
+- Keep blocking plugin work in runtime-independent workers with immutable snapshots. Dylibs have independent Tokio TLS; they must not assume the host's reactor is visible. Cancel/join long-lived workers when their owning stream is dropped, and generation-gate asynchronous search results.
+- Read runtime settings from immutable `ConfigSnapshot`s. Route all GUI/IPC writes
+  through the revision-checked config store; never write base/Nix configuration or
+  expand defaults into the sparse override file.
+- Declare full dotted plugin paths in optional `settings_schema` exports. Live
+  fields require a compatible `config_changed` hook; hooks receive the full
+  document and must ignore unrelated changes and retain restart-only running values.
+- Add shared controls/styles to `crates/oxiced` and use the workspace dependency;
+  do not restore per-plugin git/path forks of that library.
 
 ## Testing Expectations
 

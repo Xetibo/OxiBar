@@ -121,14 +121,8 @@
           lockFile = ./Cargo.lock;
           src = craneLib.cleanCargoSource ./.;
           cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-          oxicedSource =
-            "git+https://github.com/Xetibo/oxiced?branch=iced14"
-            + "#735181be7340e5916795642efa95a11e08d8f32f";
-          outputHashes = {
-            ${oxicedSource} = "sha256-z7Dl9G6qBF5KNzlNccnFZOh7HkAid7nPoS2AEDhzG5c=";
-          };
           cargoVendorDir = craneLib.vendorCargoDeps {
-            inherit src outputHashes;
+            inherit src;
             cargoLock = lockFile;
           };
           commonCraneArgs = {
@@ -169,6 +163,7 @@
             inherit inputs craneLib src cargoVendorDir cargoArtifacts lockFile;
           };
           oxibar-audio = pluginPackage "audio";
+          oxibar-applications = pluginPackage "applications";
           oxibar-battery = pluginPackage "battery";
           oxibar-bluetooth = pluginPackage "bluetooth";
           oxibar-clock = pluginPackage "clock";

@@ -33,6 +33,10 @@ pub const POPUP_MAX_HEIGHT: u32 = LARGE_POPUP_SIZE.1;
 pub const POPUP_CONNECTOR_PADDING: u32 = 32;
 pub const POPUP_CONNECTOR_HEIGHT: u32 = 0;
 pub const MODAL_SIZE: (u32, u32) = (460, 300);
+pub const DEFAULT_LAUNCHER_SIZE: (u32, u32) = (600, 600);
+pub const DEFAULT_SETTINGS_SIZE: (u32, u32) = (960, 720);
+pub const SETTINGS_EDITOR_HEIGHT: f32 = 220.0;
+pub const MAX_HOST_SURFACE_DIMENSION: i64 = 16_384;
 pub const PANEL_WIDTH: u32 = 420;
 pub const TOAST_MARGIN_TOP: i32 = 16;
 pub const TOAST_MARGIN_RIGHT: i32 = 16;
@@ -84,6 +88,22 @@ pub(crate) fn bar_size_from_config(config: &Table) -> BarDimensions {
         width: bar_dimension_from_config(config, "width").unwrap_or(DEFAULT_BAR_WIDTH),
         height: bar_dimension_from_config(config, "height").unwrap_or(DEFAULT_BAR_HEIGHT),
     }
+}
+
+pub(crate) fn launcher_size_from_config(config: &Table) -> (u32, u32) {
+    let dimension = |key, fallback| {
+        config
+            .get("launcher")
+            .and_then(|value| value.get(key))
+            .and_then(|value| value.as_integer())
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value > 0 && *value <= i32::MAX as u32)
+            .unwrap_or(fallback)
+    };
+    (
+        dimension("width", DEFAULT_LAUNCHER_SIZE.0),
+        dimension("height", DEFAULT_LAUNCHER_SIZE.1),
+    )
 }
 
 pub(crate) fn bar_size_from_layer_surface(

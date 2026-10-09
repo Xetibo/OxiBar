@@ -4,8 +4,9 @@ use iced_layershell::{
 };
 use oxibar_plugin_api::{
     HOST_REQUEST_CLOSE_MODAL, HOST_REQUEST_OPEN_MODAL, HOST_REQUEST_TOAST_KEYBOARD_NONE_PREFIX,
-    HOST_REQUEST_TOAST_KEYBOARD_ON_DEMAND_PREFIX, HOST_REQUEST_TOGGLE_PANEL,
-    HOST_REQUEST_TOGGLE_POPUP, HostToastAction, HostToastRequest, PluginMsg,
+    HOST_REQUEST_TOAST_KEYBOARD_ON_DEMAND_PREFIX, HOST_REQUEST_TOGGLE_LAUNCHER,
+    HOST_REQUEST_TOGGLE_PANEL, HOST_REQUEST_TOGGLE_POPUP, HostToastAction, HostToastRequest,
+    PluginMsg,
 };
 
 use crate::layout::{
@@ -16,6 +17,23 @@ use crate::monitor::active_toast_output_option;
 #[derive(Debug, Clone)]
 pub enum Message {
     Exit,
+    Settings(crate::settings::Action),
+    SettingsEscape(IcedId),
+    SettingsFocus(IcedId, bool),
+    SettingsSearchFocus(IcedId),
+    SettingsCategory(IcedId, crate::settings::Category),
+    ControlRequest(crate::ipc::ControlRequest),
+    ReloadConfig,
+    ConfigUpdated(std::sync::Arc<crate::settings::ConfigOutcome>),
+    OpenSettingsLayer(IcedId, u32, u32),
+    CloseSettingsLayer(IcedId),
+    ResizeLayer(IcedId, u32, u32),
+    SetExclusiveZone(IcedId, i32),
+    ControlLauncher(crate::ipc::LauncherCommand),
+    Launcher(crate::launcher::Action),
+    LauncherKey(IcedId, crate::launcher::Action),
+    OpenLauncherLayer(IcedId, u32, u32),
+    CloseLauncherLayer(IcedId),
     PluginSubMsg(String, PluginMsg),
     TogglePluginPopup(String),
     TogglePluginPanel(String),
@@ -51,6 +69,56 @@ impl TryInto<LayershellCustomActionWithId> for Message {
 
     fn try_into(self) -> Result<LayershellCustomActionWithId, Self::Error> {
         match self {
+            Message::ResizeLayer(id, width, height) => Ok(LayershellCustomActionWithId::new(
+                Some(id),
+                LayershellCustomAction::SizeChange((width, height)),
+            )),
+            Message::SetExclusiveZone(id, zone) => Ok(LayershellCustomActionWithId::new(
+                Some(id),
+                LayershellCustomAction::ExclusiveZoneChange(zone),
+            )),
+            Message::OpenSettingsLayer(id, width, height) => Ok(LayershellCustomActionWithId::new(
+                None,
+                LayershellCustomAction::NewLayerShell {
+                    settings: NewLayerShellSettings {
+                        size: Some((width, height)),
+                        layer: Layer::Overlay,
+                        anchor: Anchor::empty(),
+                        exclusive_zone: Some(0),
+                        margin: Some((0, 0, 0, 0)),
+                        keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                        output_option: active_toast_output_option(),
+                        events_transparent: false,
+                        namespace: Some("OxiBar settings".to_owned()),
+                    },
+                    id,
+                },
+            )),
+            Message::CloseSettingsLayer(id) => Ok(LayershellCustomActionWithId::new(
+                Some(id),
+                LayershellCustomAction::RemoveWindow,
+            )),
+            Message::OpenLauncherLayer(id, width, height) => Ok(LayershellCustomActionWithId::new(
+                None,
+                LayershellCustomAction::NewLayerShell {
+                    settings: NewLayerShellSettings {
+                        size: Some((width, height)),
+                        layer: Layer::Overlay,
+                        anchor: Anchor::empty(),
+                        exclusive_zone: Some(0),
+                        margin: Some((0, 0, 0, 0)),
+                        keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                        output_option: active_toast_output_option(),
+                        events_transparent: false,
+                        namespace: Some("OxiBar launcher".to_owned()),
+                    },
+                    id,
+                },
+            )),
+            Message::CloseLauncherLayer(id) => Ok(LayershellCustomActionWithId::new(
+                Some(id),
+                LayershellCustomAction::RemoveWindow,
+            )),
             Message::SetPopupInputRegion {
                 open,
                 section,
@@ -193,6 +261,12 @@ pub(crate) fn map_plugin_message(plugin_id: String, msg: PluginMsg) -> Message {
             HOST_REQUEST_OPEN_MODAL => return Message::OpenPluginModal(plugin_id),
             HOST_REQUEST_CLOSE_MODAL => return Message::ClosePluginModal(plugin_id),
             HOST_REQUEST_TOGGLE_PANEL => return Message::TogglePluginPanel(plugin_id),
+            HOST_REQUEST_TOGGLE_LAUNCHER => {
+                return Message::Launcher(crate::launcher::Action::Toggle);
+            }
+            oxibar_plugin_api::HOST_REQUEST_OPEN_SETTINGS => {
+                return Message::Settings(crate::settings::Action::Open);
+            }
             _ => {}
         }
     }

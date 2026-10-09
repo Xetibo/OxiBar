@@ -1,10 +1,14 @@
 pub mod app;
+mod background;
 pub mod config;
 pub mod font;
+pub mod ipc;
+pub mod launcher;
 pub mod layout;
 pub mod messages;
 mod monitor;
 pub mod plugins;
+pub mod settings;
 pub mod single_instance;
 pub mod surfaces;
 #[doc(hidden)]

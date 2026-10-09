@@ -2,7 +2,10 @@
 
 Oxibar reads its configuration from `$XDG_CONFIG_HOME/oxibar/config.toml`
 (usually `~/.config/oxibar/config.toml`). The file is plain TOML. If it is
-missing, oxibar starts with all defaults and no plugins enabled.
+missing, oxibar starts with built-in defaults and no plugins enabled. GUI edits
+are stored separately in `$XDG_CONFIG_HOME/oxibar/overrides.toml` and override base
+values. Tables merge recursively; scalars and arrays replace as whole values.
+Explicit GUI values remain overrides even when equal to the base.
 
 Plugins are loaded from `$XDG_CONFIG_HOME/oxibar/plugins/`. Drop the built
 `.so` files there (e.g. `libclock.so`, `libworkspaces.so`) and list the file
@@ -55,6 +58,15 @@ As a backward-compat shortcut, if **all three** of `start`, `center` and
 the same order as the top-level `plugins = [...]` array — the old single-row
 layout, now deterministic.
 
+When the launcher is enabled, fallback layout also adds the host-owned
+`"launcher"` search button first. In explicit layouts, add `"launcher"` to any
+section to display it. It is a host control, not a plugin library name.
+
+Fallback layout also includes a host-owned `"settings"` control. Explicit GUI
+section overrides suppress fallback even when all arrays are empty, allowing
+the GUI to remove every widget. Resetting those overrides restores the legacy
+fallback. Add `"settings"` to an explicit Nix/base layout to show its button.
+
 Popup size precedence is: `[bar.popup_sizes]` override, runtime
 `popup_metrics(model)`, plugin metadata, then the host default `320 × 300`.
 `audio`, `bluetooth`, and `network` declare `460 × 420` via metadata.
@@ -88,6 +100,184 @@ later pass:
 - Keyboard interactivity — `None` for the main bar/popup layer; modal dialogs use `Exclusive`. Will become `[bar] keyboard = "none" | "on-demand" | "exclusive"`.
 - Scale factor — `1.0`. Will become `[bar] scale = ...`.
 
+## Resident launcher
+
+Start `oxibar` once from the compositor/session startup configuration, then bind
+your launcher key to:
+
+```sh
+oxibar launcher          # toggle
+oxibar launcher open
+oxibar launcher close
+```
+
+For example, a Hyprland binding can use `bind = SUPER, SPACE, exec, oxibar launcher`.
+The command sends a request to the running bar without starting another GUI
+process. Escape closes the overlay, Up/Down or Tab/Shift+Tab selects a result,
+and Enter/click activates it. The bar and plugin subscriptions continue running.
+The overlay targets the focused Hyprland output when available, with the same
+fallback as toast output selection on other compositors.
+
+Load `libapplications.so` in `plugins = [...]` for desktop application search.
+It is packaged as `oxibar-applications` and included in the Home Manager module's
+default plugins. If you supply a custom plugin package list, include it there.
+No separate OxiRun executable or legacy OxiRun library is needed. Other plugins
+can opt into search through the shared API's optional runner hooks.
+
+```toml
+plugins = ["libapplications.so", "libclock.so"]
+
+[bar]
+start = ["launcher"]
+center = ["clock"]
+
+[launcher]
+enabled = true
+width = 600
+height = 600
+max_entries = 7
+
+[applications]
+terminal = "kitty"         # include terminal execution flags here if needed
+max_entries = 7
+refresh_seconds = 300
+```
+
+### `[launcher]` — host overlay
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | bool | `true` | Enable launcher surfaces, bar control and command listener. |
+| `width` / `height` | integer (`> 0`) | `600` / `600` | Overlay dimensions in logical units. |
+| `max_entries` | integer (`> 0`) | `7` | Maximum globally ranked visible results, capped at `50`. |
+
+### `[applications]` — application provider
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `terminal` | string | `"kitty"` | Terminal command prefix, including any needed execution flags, for `Terminal=true` entries. Parsed as arguments; no implicit shell evaluation. |
+| `max_entries` | integer (`> 0`) | `7` | Provider result limit, capped at `50`. Increase alongside the host limit for more application results. |
+| `refresh_seconds` | integer (`> 0`) | `300` | Background index refresh interval; opening/querying never scans the filesystem. |
+
+The provider searches desktop entry names, categories, keywords and generic names.
+Empty search displays initial alphabetically ordered applications. XDG user data
+directories take precedence over system directories, including hidden-entry
+masking. Commands use argument-based process launching and support common desktop
+Exec field codes; icons use hicolor/Adwaita/pixmap lookup or absolute image paths.
+See `docs/TECHNICAL_DEBT.md` for advanced desktop-entry/icon features not yet covered.
+
+### `[ipc]` — command socket
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `socket_path` | string | `$XDG_RUNTIME_DIR/oxibar.sock` | Optional custom socket path. Without a runtime directory, falls back to the Oxibar config directory. |
+
+The socket is created with owner-only permissions and stale sockets are recovered
+on restart. Multiple independently controlled bars need distinct instance locks
+and socket paths. The CLI must read the same config/environment as its daemon.
+
+## GUI settings and overrides
+
+Open from the settings bar control, launcher footer, or:
+
+```sh
+oxibar settings
+oxibar settings open
+oxibar settings close
+```
+
+Pages cover Appearance, Bar/Layout, Launcher, Plugins and Advanced. Search spans
+all declared settings. Fields show effective value, base/default value, source
+and application mode. Text/number drafts save with Enter/Apply; checkbox/pick-list
+changes save immediately. Reset removes the GUI override and reveals the current
+base/default. The Advanced page edits sparse override TOML while preserving
+unknown plugin fields.
+
+Keyboard controls: Ctrl+F focuses search, Alt+1 through Alt+5 selects pages,
+Tab/Shift+Tab traverses text fields, Enter applies a field, and Escape closes the
+settings surface. Settings access remains available when the launcher is disabled.
+
+Base `config.toml` may remain an immutable Home Manager/Nix-store symlink. Oxibar
+never writes it. Override writes are validated, revision-checked, owner-only and
+atomic. File edits and base-symlink replacement reload automatically; invalid
+input retains the last valid running configuration and shows an error.
+
+```toml
+# overrides.toml: only settings explicitly changed in the GUI
+[bar]
+height = 38
+
+[launcher]
+max_entries = 10
+```
+
+A Nix rebuild changing base height to 34 leaves GUI height at 38. Resetting the
+height then reveals 34. Unoverridden fields follow the regenerated base.
+
+### Application modes
+
+- **Live / surface update:** bar transparency/order/geometry, launcher enablement,
+  dimensions and result limit, settings dimensions, application-provider terminal
+  and result limit, clock text size/bold/calendar command, notification default timeout.
+- **Restart required:** font loading, plugin enable/disable/order, instance/control
+  endpoint/startup policy, existing plugin poll timers and clock format granularity.
+  Pending changes are displayed; loaded plugin models and system functionality stay
+  available until restart. Resetting back to the running value clears the indicator.
+- Plugin schemas/hooks are optional. Legacy plugin settings can be edited through
+  Advanced and are treated as restart-only. Plugins are selected from installed
+  libraries; adding missing packages remains a Nix/package-manager operation.
+
+Explicit surface dimensions are validated within `1..16384` logical units.
+Launcher/provider result limits are `1..50`. The terminal prefix must parse into
+at least one executable/argument token. Geometry changes also update bar exclusive
+zone and input regions.
+
+### `[settings]` — settings surface
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `width` | positive integer | `960` | Settings surface width. |
+| `height` | positive integer | `720` | Settings surface height. |
+
+### Configuration commands
+
+```sh
+oxibar config get
+oxibar config get bar.height
+oxibar config set bar.height 38
+oxibar config set bar.start '["launcher", "settings", "workspaces"]'
+oxibar config set bar.font '"Adwaita Sans"'
+oxibar config reset bar.height
+oxibar config reset-all
+oxibar config reload
+oxibar config schema
+oxibar config export effective
+oxibar config export overrides
+oxibar status
+```
+
+Set values are TOML literals. Configuration/status commands return versioned JSON
+with revision, success, data and error fields; export prints TOML. The schema
+response describes typed bounds/options and source/application mode. Mutations
+report validation/persistence failures instead of only acknowledging a queue.
+
+Socket clients may supply a revision to reject stale edits:
+
+```json
+{"version":1,"command":"config","action":"set","path":"bar.height","value":"38","revision":2}
+```
+
+The daemon records its active endpoint in `control.socket` under the config
+directory, so CLI access continues while a new `ipc.socket_path` awaits restart.
+Legacy text launcher socket commands remain supported.
+
+Home Manager owns the base and installed plugin symlinks using the configured
+`xdg.configHome`; it does not manage `overrides.toml`. Existing
+`programs.oxibar.config.plugin_config` remains the declarative base interface.
+
+Further shell milestones are tracked in `docs/SHELL_ROADMAP.md`. Shared UI helpers
+now live in this repository at `crates/oxiced`.
+
 ## Plugin configuration
 
 Each plugin reads its own block. The canonical location is a top-level table
@@ -103,7 +293,7 @@ internal `calendar_open` flag and opens a popup calendar.
 | Key            | Type            | Default   | Description                                                                                                                                                                              |
 | -------------- | --------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `format`       | string          | `"%H:%M"` | `chrono` strftime spec. See <https://docs.rs/chrono/latest/chrono/format/strftime/index.html>. Invalid specs are caught at render time and fall back to RFC3339 with a `tracing::warn!`. |
-| `tick_seconds` | integer (`> 0`) | `60`      | How often the clock refreshes, in whole seconds. Use `1` if your `format` includes seconds (`%S`). Read once at startup; changes require a restart.                                      |
+| `tick_seconds` | integer (`> 0`) | `60`      | Real-clock polling interval. Seconds formats still display simulated per-second ticks between polls. Timer changes require restart. |
 | `font_size`    | number (`> 0`)  | `14.0`    | Time-label font size in iced units. Accepts integers or floats.                                                                                                                          |
 | `bold`         | bool            | `false`   | When `true`, the time label is rendered with a bold font weight. Falls back to a sans-serif family when bold is enabled.                                                                 |
 | `calendar_command` | string | _unset_ | Shell command run when clicking a calendar day. Supports `{date}`, `{year}`, `{month}`, `{day}` placeholders, e.g. `gnome-calendar --date {date}`. |

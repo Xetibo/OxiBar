@@ -1,4 +1,5 @@
 use oxibar::{
+    launcher::Action as LauncherAction,
     messages::Message,
     test_support::{
         CLOSE_MODAL, FakePluginOptions, OPEN_MODAL, TOGGLE_PANEL, TOGGLE_POPUP, TestHost,
@@ -10,6 +11,52 @@ fn contains_host_request(messages: &[Message], plugin_id: &str, request: &str) -
     messages
         .iter()
         .any(|message| is_host_request(message, plugin_id, request))
+}
+
+#[test]
+fn launcher_launches_only_selected_provider_and_keeps_bar_plugins_alive() {
+    let mut host = TestHost::with_plugins([
+        ("Clock", FakePluginOptions::popup()),
+        ("Low", FakePluginOptions::runner(10)),
+        ("High", FakePluginOptions::runner(100)),
+    ]);
+    host.drive_plugin_request("Clock", TOGGLE_POPUP);
+    host.drive(Message::Launcher(LauncherAction::Open));
+    assert!(!host.popup_open());
+    assert!(host.launcher_window().is_some());
+    let applied = host.drive(Message::Launcher(LauncherAction::LaunchFocused));
+    assert!(
+        applied
+            .iter()
+            .any(|message| matches!(message, Message::CloseLauncherLayer(_)))
+    );
+    assert_eq!(host.launcher_window(), None);
+    assert_eq!(host.seen_by_plugin("High"), ["query:", "launch:42"]);
+    assert_eq!(host.seen_by_plugin("Low"), ["query:"]);
+    // A queued double activation after closing cannot launch a second time.
+    host.drive(Message::Launcher(LauncherAction::LaunchFocused));
+    assert_eq!(host.seen_by_plugin("High"), ["query:", "launch:42"]);
+    host.drive_plugin_record("Clock", "still running");
+    assert_eq!(
+        host.seen_by_plugin("Clock"),
+        [TOGGLE_POPUP, "still running"]
+    );
+}
+
+#[test]
+fn launcher_keyboard_events_are_scoped_to_its_window() {
+    let mut host = TestHost::with_plugins([("Apps", FakePluginOptions::runner(10))]);
+    host.drive(Message::Launcher(LauncherAction::Open));
+    let window = host.launcher_window().unwrap();
+    host.drive(Message::LauncherKey(
+        iced_layershell::reexport::IcedId::unique(),
+        LauncherAction::Close,
+    ));
+    assert_eq!(host.launcher_window(), Some(window));
+    host.drive(Message::LauncherKey(window, LauncherAction::Close));
+    assert_eq!(host.launcher_window(), None);
+    host.drive(Message::Launcher(LauncherAction::Open));
+    assert_ne!(host.launcher_window(), Some(window));
 }
 
 #[test]

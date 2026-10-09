@@ -12,9 +12,21 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `src/surfaces.rs`: bar, popup, modal, and panel view construction.
 - `src/messages.rs`: host message enum, layer-shell action conversion, and plugin message routing.
 - `src/font.rs`: bar font config, fontconfig resolution, and font byte loading.
-- `src/config.rs`: XDG config discovery and TOML config helpers.
+- `src/config/`: source-aware snapshots, typed host/plugin schemas, recursive
+  base/GUI merging, atomic override persistence, revision checks and filesystem
+  watching. Startup/instance compatibility helpers remain in `mod.rs`.
+- `src/settings/`: themed settings views and host-side command/application logic.
+- `src/background.rs`: runtime-independent bridge for serialized filesystem jobs
+  into Iced tasks; rendering uses immutable snapshots without locking the store.
+- `src/launcher.rs`: resident search-overlay state, cached global result ranking, keyboard routing, and themed view.
+- `src/ipc.rs`: bounded, versioned Unix-socket commands for launcher/settings,
+  configuration queries/mutations and status. CLI invocations exit before
+  daemon/font/renderer initialization; an active-endpoint record keeps clients
+  connected while socket-setting changes await restart.
 - `src/plugins.rs`: dynamic library discovery, ABI symbol resolution, optional plugin availability checks, plugin model initialization, and safe wrappers for plugin view/update/error calls.
 - `crates/oxibar-plugin-api`: shared ABI types used by host and plugins.
+- `crates/oxiced`: local shared theme/widget library imported from the previously
+  pinned upstream revision; host/plugins use one workspace dependency and lockfile.
 - `plugins/*`: dynamic plugin crates loaded from `$XDG_CONFIG_HOME/oxibar/plugins/` when their library filename appears in `plugins = [...]`.
 - `plugins/{audio,battery,bluetooth,network,tray}/src/system.rs`: command/DBus/sysfs integration, parsing, and domain data extracted from plugin ABI/UI files.
 - `plugins/clock/src/caldav.rs`: HTTPS-only CalDAV sync, current-month calendar queries, minimal iCalendar parsing, common recurrence expansion, and Nextcloud-compatible calendar query support.
@@ -31,12 +43,29 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - Plugin messages are wrapped as `PluginMsg` and mapped to host messages when they carry a known host request string.
 - Host-request mapping is centralized in `map_plugin_message()`, so plugin subscription messages and plugin initialization tasks use the same routing rules.
 - The host owns popup, modal, panel, and toast layer-shell surfaces. Plugins render only inner content for those surfaces. Popup open/close layout animation uses a fixed quick ease-out transition so app-side popups track notification-panel layer opening speed more closely.
+- The host also owns a keyboard-focused launcher overlay. Opening it reuses the resident renderer and plugin models; closing or activating a result removes only that surface. Compositor bindings invoke `oxibar launcher` over a runtime Unix socket.
+- Optional runner providers return bounded result data with stable provider-local launch indexes. The host caches a globally ranked list on state updates and dispatches activation only to the selected provider's existing `launch` hook.
+- Settings writes are serialized behind the config store on background workers.
+  Validated sparse overrides are written with owner-only permissions using a
+  temporary file, file sync, atomic rename and directory sync. Base/Nix files are
+  read-only inputs. External writes and symlink replacement reload snapshots;
+  invalid edits retain the last valid state and surface diagnostics.
+- Bar height/width, transparency, layout and launcher settings apply live through
+  layer actions and explicit input-region refresh. Effective-value and override
+  provenance changes both affect layout: explicit empty GUI arrays suppress the
+  legacy all-empty fallback. Settings and launcher focus are window-scoped.
+- Plugin lifecycle/font/timer changes are classified as restart-required. Current
+  plugin libraries/models stay loaded; optional config hooks apply supported live
+  values without losing plugin state. Applications, clock presentation/calendar
+  commands, and notification default timeout currently support live updates.
 - Visible popup size comes from `[bar.popup_sizes]`, then optional runtime `popup_metrics(model)`, then optional plugin metadata, then host default size. Plugins can also request a larger transparent popup input region through runtime metrics or metadata for detached overlays such as tray context menus.
 
 ## Plugin ABI
 
 - Required symbols: `abi_version`, `name`, `model`, `update`, `launch`, `view`, `errors`, and `subscription`.
-- Optional symbols: `availability`, `metadata`, `popup_metrics`, `popup_view`, `modal_view`, and `panel_view`.
+- Optional symbols: `availability`, `metadata`, `popup_metrics`, `popup_view`,
+  `modal_view`, `panel_view`, `toast_view`, `runner_query`, `runner_entries`,
+  `settings_schema`, and `config_changed`.
 - `availability(config)` lets a plugin skip loading before model initialization, init tasks, and subscriptions when required hardware or system services are unavailable.
 - `ABI_VERSION` in `oxibar-plugin-api` gates host/plugin compatibility.
 - Plugin models are `Arc<RwLock<Box<dyn OxiAny>>>`; plugin messages are `Arc<dyn OxiAny>`.
@@ -52,6 +81,7 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `notifications`: Freedesktop notification server, toast layers, inline replies, DND state, and side panel. Toast layers start with keyboard interactivity disabled and are switched to `OnDemand` only after user hover intent so incoming notifications do not steal keyboard focus. New toast layers target Hyprland's focused monitor output when available, while the notification panel remains attached to the bar output. Toast timeout closes only the host toast surface; stored notifications remain in the panel until dismissed, cleared, replied to, or actioned.
 - `tray`: StatusNotifier watcher, dynamically sized tray item popup, activation, and DBusMenu-backed detached context menu rendering. Item registration publishes a fallback row immediately and refreshes DBus metadata asynchronously so registering applications are not blocked by property queries.
 - `workspaces`: Hyprland workspace display and dispatch.
+- `applications`: ported OxiRun desktop-entry/icon indexing, fuzzy matching, terminal command support, and application launching; a resident runner provider rather than a bar/popup view. Indexing/search use immutable snapshots and runtime-independent background workers; stale query generations are discarded.
 
 Plugin `lib.rs` files should keep ABI symbols, model update, and view composition. External-system logic and parsers should live in sibling modules once they grow beyond small helpers.
 
@@ -63,6 +93,19 @@ Plugin `lib.rs` files should keep ABI symbols, model update, and view compositio
 - Bar width is dynamic from the active layer-shell output when the compositor reports it. `[bar] width` and `[bar] height` provide config fallback/override values, while anchor, layer, margins, keyboard mode, and scale factor remain fixed in `src/layout.rs`.
 - Active-monitor toast placement uses a modular compositor-backend registry. The current backend uses Hyprland monitor data because Wayland/layer-shell and the available `wayland-protocols` output protocols describe/configure outputs but do not expose a compositor-generic focused-output query; non-Hyprland sessions fall back to the previous `LastOutput` behavior.
 - The stream raw-pointer ABI is documented as practical but not fully C-ABI-safe.
+- Dynamic plugins cannot assume the host's Tokio runtime is visible through their own copy of Tokio TLS. The runner uses worker-thread/oneshot tasks and a cancellable timer whose worker is joined before drop.
+
+## Shell Expansion
+
+`SHELL_ROADMAP.md` defines the proposed Rust/Iced widget shell, compatible plugin
+capability extensions, and source-aware GUI overrides over immutable Nix defaults.
+Source-aware overrides, structured control commands and the initial settings UI
+are implemented. Multi-output surfaces, native backend reuse, dock/desktop widgets
+and live theme snapshots remain subsequent milestones.
+
+The roadmap also identifies selective ReSet native audio/BlueZ and monitor
+backend reuse. These are planned adapters within existing plugin/service
+boundaries, preserving the Rust/Iced host and plugin API.
 
 ## Nix Packaging
 

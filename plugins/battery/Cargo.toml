@@ -12,4 +12,4 @@ iced = { version = "0.14.0", features = [
 	"advanced",
 	"tokio",
 ]}
-oxiced = { git = "https://github.com/Xetibo/oxiced", branch = "iced14" }
+oxiced = { workspace = true }

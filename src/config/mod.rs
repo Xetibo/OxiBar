@@ -1,7 +1,15 @@
-use std::{fs, io::Read, path::PathBuf};
+use std::path::PathBuf;
 
 use iced_layershell::reexport::Anchor;
 use toml::Table;
+
+pub mod schema;
+pub mod store;
+#[cfg(test)]
+mod tests;
+mod watch;
+pub use store::{ConfigSnapshot, ConfigStore, Mutation, Source};
+pub(crate) use watch::{WatchPaths, watch_changes};
 
 pub fn get_allowed_plugins(config: &Table) -> Vec<&str> {
     match config.get("plugins") {
@@ -16,36 +24,27 @@ pub fn get_allowed_plugins(config: &Table) -> Vec<&str> {
     }
 }
 
-fn read_config(oxirun_config: &PathBuf) -> Table {
-    let mut read_config = String::new();
-    let mut file = fs::File::open(oxirun_config).expect("Could not open config file");
-    let _ = file
-        .read_to_string(&mut read_config)
-        .expect("Could not read config file");
-
-    toml::from_str(&read_config).expect("Could not deserialize config")
+pub fn get_config_dir() -> PathBuf {
+    let base_dirs = xdg::BaseDirectories::new();
+    base_dirs
+        .get_config_home()
+        .expect("Could not get config home")
+        .join("oxibar")
 }
 
 pub fn get_oxirun_dir() -> PathBuf {
-    let base_dirs = xdg::BaseDirectories::new();
-    let config_home = base_dirs.get_config_home();
-    let oxirun_dir = config_home
-        .expect("Could not get config home")
-        .join("oxibar");
-    if !oxirun_dir.is_dir() {
-        std::fs::create_dir(&oxirun_dir).expect("Could not create config dir");
+    let dir = get_config_dir();
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        tracing::warn!(%error, "could not create config directory");
     }
-    oxirun_dir
+    dir
 }
 
 pub fn get_config() -> Table {
-    let oxirun_dir = get_oxirun_dir();
-    let oxirun_config = oxirun_dir.join("config.toml");
-    if !oxirun_config.is_file() {
-        Table::new()
-    } else {
-        read_config(&oxirun_config)
-    }
+    ConfigStore::open(get_config_dir())
+        .snapshot()
+        .effective
+        .clone()
 }
 
 fn anchor_from_string(anchor_str: &str) -> Anchor {
@@ -154,7 +153,7 @@ pub fn anchor_from_strings(anchor_strs: Vec<&str>) -> Anchor {
 }
 
 #[cfg(test)]
-mod tests {
+mod policy_tests {
     use super::*;
 
     #[test]
