@@ -83,8 +83,32 @@ pub fn selectable_row<'a, M>(content: impl Into<Element<'a, M>>, selected: bool)
 pub fn settings_card<'a, M>(content: impl Into<Element<'a, M>>) -> Container<'a, M> {
     Container::new(content)
         .style(compact_card_style(OXITHEME.mantle_hover))
-        .padding(OXITHEME.padding_md)
+        .padding(OXITHEME.padding_xl)
         .width(Length::Fill)
+}
+
+pub fn surface_button<'a, M>(content: impl Into<Element<'a, M>>, primary: bool) -> Button<'a, M> {
+    button(content)
+        .style(if primary {
+            flat_primary_bg_button_style
+        } else {
+            flat_secondary_bg_button_style
+        })
+        .padding([OXITHEME.padding_md, OXITHEME.padding_lg])
+}
+
+pub fn badge<'a, M>(label: impl Into<String>, accent: bool) -> Container<'a, M> {
+    container(text(label.into()).size(OXITHEME.font_md).style(if accent {
+        text_accent
+    } else {
+        text_muted
+    }))
+    .style(compact_card_style(if accent {
+        OXITHEME.primary_bg
+    } else {
+        OXITHEME.secondary_bg
+    }))
+    .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
 }
 
 fn flat_bg_button_style(status: button::Status, bg: Color, text: Color) -> button::Style {
@@ -99,7 +123,7 @@ fn flat_bg_button_style(status: button::Status, bg: Color, text: Color) -> butto
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: Radius::from(8.0),
+            radius: Radius::from(OXITHEME.border_radius),
         },
         shadow: Shadow::default(),
         snap: false,
@@ -118,7 +142,7 @@ pub fn compact_card_style(bg: Color) -> impl Fn(&Theme) -> container::Style {
     move |_| container::Style {
         background: Some(Background::Color(bg)),
         border: Border {
-            radius: Radius::from(10.0),
+            radius: Radius::from(OXITHEME.border_radius),
             color: Color::TRANSPARENT,
             width: 0.0,
         },

@@ -24,6 +24,7 @@ use wayland_client::{
 
 use crate::{
     config::{self, ConfigStore, get_config},
+    control_center::{self, ControlCenter},
     font,
     ipc::{self, LauncherCommand},
     launcher::{self, Launcher},
@@ -37,6 +38,7 @@ use crate::{
         query_plugin_popup_metrics,
     },
     settings::{self, ConfigRuntime, SettingsUi},
+    shell::{Shell, SurfaceKind},
     single_instance::{self, SingleInstanceError},
 };
 
@@ -146,7 +148,7 @@ fn compositor_ready() -> Option<Connection> {
 /// `$XDG_RUNTIME_DIR` for a connectable `wayland-*` socket. The returned
 /// connection is handed explicitly to the layer-shell backend, so the bar no
 /// longer depends on the inherited environment at surface-creation time.
-fn connect_wayland() -> Option<Connection> {
+pub(crate) fn connect_wayland() -> Option<Connection> {
     if let Ok(connection) = Connection::connect_to_env() {
         return Some(connection);
     }
@@ -210,12 +212,13 @@ fn has_required_layer_shell_globals(globals: &[Global]) -> bool {
 fn run_bar(connection: Option<Connection>) -> Result<(), iced_layershell::Error> {
     let store = Arc::new(Mutex::new(ConfigStore::open(config::get_config_dir())));
     let initial = store.lock().expect("initial configuration").snapshot();
+    let inventory = crate::monitor::read_inventory();
     let mut settings = layout::layer_shell_settings(&initial.effective);
     if let Some(connection) = connection {
         settings.with_connection = Some(WithConnection::Value(connection));
     }
     let mut app = iced_layershell::daemon(
-        move || OxiBar::new(store.clone()),
+        move || OxiBar::new(store.clone(), inventory.clone()),
         OxiBar::namespace,
         OxiBar::update,
         OxiBar::view,
@@ -233,8 +236,10 @@ fn run_bar(connection: Option<Connection>) -> Result<(), iced_layershell::Error>
 }
 
 pub(crate) struct OxiBar {
+    pub(crate) shell: Shell,
     pub(crate) config: ConfigRuntime,
     pub(crate) settings: SettingsUi,
+    pub(crate) control_center: ControlCenter,
     pub(crate) plugin_order: Vec<String>,
     pub(crate) plugin_failures: std::collections::BTreeMap<String, String>,
     pub(crate) launcher: Launcher,
@@ -278,23 +283,11 @@ fn should_refresh_input_region(
     first_ready || previous != current
 }
 
-fn initial_input_region_task(bar_size: BarDimensions) -> Task<Message> {
-    Task::perform(
-        async {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        },
-        move |_| Message::SetPopupInputRegion {
-            open: false,
-            section: BarSection::End,
-            width: 0,
-            height: 0,
-            bar_size,
-        },
-    )
-}
-
 impl OxiBar {
-    fn new(store: Arc<Mutex<ConfigStore>>) -> (Self, Task<Message>) {
+    fn new(
+        store: Arc<Mutex<ConfigStore>>,
+        inventory: Result<crate::monitor::OutputSnapshot, String>,
+    ) -> (Self, Task<Message>) {
         let initial = store.lock().expect("initial configuration").snapshot();
         let loaded = load_plugins(&initial.effective);
         let schema = loaded
@@ -350,21 +343,16 @@ impl OxiBar {
         let default_layout =
             config::schema::fallback_layout(&runtime.snapshot.host, &runtime.snapshot.overrides);
         let start_widgets = if default_layout {
-            loaded.order.clone()
+            config::schema::fallback_widgets(&runtime.snapshot.host, &loaded.order)
         } else {
             start_widgets
         };
         let launcher = Launcher::new(config);
-        let mut start_widgets = start_widgets;
-        if launcher.enabled && default_layout {
-            start_widgets.insert(0, "launcher".to_owned());
-        }
-        if default_layout {
-            start_widgets.insert(usize::from(launcher.enabled), "settings".to_owned());
-        }
         let mut bar = Self {
+            shell: Shell::new(inventory),
             config: runtime,
             settings: settings_ui,
+            control_center: ControlCenter::default(),
             plugin_order: loaded.order,
             plugin_failures: loaded.failures,
             launcher,
@@ -386,7 +374,7 @@ impl OxiBar {
         };
         bar.refresh_plugin_catalog();
         let mut tasks = loaded.tasks;
-        tasks.push(initial_input_region_task(bar.bar_size));
+        tasks.push(bar.reconcile_bars());
         (bar, Task::batch(tasks))
     }
 
@@ -397,7 +385,37 @@ impl OxiBar {
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Exit => std::process::exit(0),
+            Message::OutputsChanged(result) => self.outputs_changed(result),
+            Message::SurfaceClosed(id) => self.surface_closed(id),
+            Message::FromSurface(id, message) => self.source_message(id, *message),
+            Message::PluginTask(source, message) => {
+                if let Some(id) = source
+                    && self.shell.registry.get(id).is_some()
+                {
+                    self.source_message(id, *message)
+                } else {
+                    self.update(*message)
+                }
+            }
             Message::Settings(action) => self.update_settings(action),
+            Message::ControlCenter(action) => self.update_control_center(action),
+            Message::ControlCenterKey(id, action) => {
+                if self.control_center.window_id == Some(id) {
+                    self.update_control_center(action)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::ControlCenterFocus(id, forward) => {
+                if self.control_center.window_id != Some(id) {
+                    return Task::none();
+                }
+                if forward {
+                    iced::widget::operation::focus_next()
+                } else {
+                    iced::widget::operation::focus_previous()
+                }
+            }
             Message::SettingsEscape(id) => {
                 if self.settings.window_id == Some(id) {
                     self.close_settings()
@@ -447,7 +465,13 @@ impl OxiBar {
                 }
             }
             Message::SetPopupInputRegion { .. }
+            | Message::OnOutput(_, _)
+            | Message::OpenBarLayer(_, _, _)
+            | Message::ConfigureBar(_, _)
+            | Message::RemoveSurface(_)
+            | Message::SetBarInputRegion { .. }
             | Message::OpenSettingsLayer(_, _, _)
+            | Message::OpenControlCenterLayer(_, _, _)
             | Message::CloseSettingsLayer(_)
             | Message::ResizeLayer(_, _, _)
             | Message::SetExclusiveZone(_, _)
@@ -509,7 +533,18 @@ impl OxiBar {
                 match task {
                     Some(task) => {
                         let id = plugin_id.clone();
-                        refresh.chain(task.map(move |msg| map_plugin_message(id.clone(), msg)))
+                        let source = self
+                            .shell
+                            .request_source
+                            .or_else(|| self.shell.plugin_origins.get(&plugin_id).copied());
+                        refresh.chain(task.map(move |msg| {
+                            let message = map_plugin_message(id.clone(), msg);
+                            if source.is_some() {
+                                Message::PluginTask(source, Box::new(message))
+                            } else {
+                                message
+                            }
+                        }))
                     }
                     None => refresh,
                 }
@@ -526,6 +561,13 @@ impl OxiBar {
                     return Task::none();
                 }
                 let id = IcedId::unique();
+                let output = self.overlay_output();
+                self.register_overlay(
+                    id,
+                    SurfaceKind::Launcher,
+                    self.shell.active_bar,
+                    output.clone(),
+                );
                 self.launcher.window_id = Some(id);
                 self.launcher.open_started_at = Some(std::time::Instant::now());
                 self.launcher.query.clear();
@@ -534,18 +576,23 @@ impl OxiBar {
                 let close_modal = self.close_modal();
                 let close_panel = self.close_panel();
                 let close_settings = self.close_settings();
+                let close_control_center = self.close_control_center();
                 let input_region = self.current_input_region_task();
                 let query = self.query_runner_plugins();
                 Task::batch([
                     close_modal,
                     close_panel,
                     close_settings,
+                    close_control_center,
                     input_region,
                     query,
-                    Task::done(Message::OpenLauncherLayer(
-                        id,
-                        self.launcher.size.0,
-                        self.launcher.size.1,
+                    Task::done(Message::OnOutput(
+                        output,
+                        Box::new(Message::OpenLauncherLayer(
+                            id,
+                            self.launcher.size.0,
+                            self.launcher.size.1,
+                        )),
                     )),
                 ])
             }
@@ -605,7 +652,10 @@ impl OxiBar {
         self.launcher
             .window_id
             .take()
-            .map(|id| Task::done(Message::CloseLauncherLayer(id)))
+            .map(|id| {
+                self.shell.registry.remove(id);
+                Task::done(Message::CloseLauncherLayer(id))
+            })
             .unwrap_or_else(Task::none)
     }
 
@@ -632,15 +682,10 @@ impl OxiBar {
             return Task::none();
         }
 
-        let section = self.plugin_section(plugin_id);
-        let metrics = self.popup_input_metrics(plugin_id);
-        Task::done(Message::SetPopupInputRegion {
-            open: true,
-            section,
-            width: metrics.connector_width,
-            height: metrics.height,
-            bar_size: self.bar_size,
-        })
+        self.shell
+            .popup_bar
+            .map(|id| self.bar_input_region_task(id))
+            .unwrap_or_else(Task::none)
     }
 
     fn update_bar_size(
@@ -665,51 +710,31 @@ impl OxiBar {
             }
             return iced::widget::operation::focus(launcher::SEARCH_ID);
         }
-        if self.is_auxiliary_window(id) {
+        let Some(bar) = self.shell.bar_mut(id) else {
+            return Task::none();
+        };
+        let first_ready = !bar.ready;
+        let previous = bar.size;
+        bar.ready = true;
+        bar.size = layout::bar_size_from_layer_surface(previous, layer_width, layer_height);
+        bar.size.height = bar.config.height;
+        let current = bar.size;
+        if self.bar_window_id == Some(id) {
+            self.bar_size = current;
+        }
+        if !should_refresh_input_region(first_ready, previous, current) {
             return Task::none();
         }
-
-        // First event for the main window means its layer surface exists now.
-        let first_ready = self.bar_window_id.is_none();
-        if let Some(bar_window_id) = self.bar_window_id {
-            if bar_window_id != id {
-                return Task::none();
-            }
-        } else {
-            self.bar_window_id = Some(id);
-        }
-
-        let previous = self.bar_size;
-        self.bar_size = layout::bar_size_from_layer_surface(previous, layer_width, layer_height);
-        self.bar_size.height = self.config.snapshot.host.bar_height;
-        if !should_refresh_input_region(first_ready, previous, self.bar_size) {
-            return Task::none();
-        }
-        self.current_input_region_task()
-    }
-
-    fn is_auxiliary_window(&self, id: IcedId) -> bool {
-        self.modal_window_id == Some(id)
-            || self.settings.window_id == Some(id)
-            || self.launcher.window_id == Some(id)
-            || self.panel_window_id == Some(id)
-            || self.toasts.iter().any(|toast| toast.window_id == id)
+        self.bar_input_region_task(id)
     }
 
     pub(crate) fn current_input_region_task(&self) -> Task<Message> {
-        if let Some(plugin_id) = self.popup_plugin.as_deref()
-            && self.popup_open
-        {
-            return self.refresh_popup_input_region(plugin_id);
-        }
-
-        Task::done(Message::SetPopupInputRegion {
-            open: false,
-            section: BarSection::End,
-            width: 0,
-            height: 0,
-            bar_size: self.bar_size,
-        })
+        Task::batch(
+            self.shell
+                .bars
+                .values()
+                .map(|bar| self.bar_input_region_task(bar.id)),
+        )
     }
 
     fn plugin_popup_metrics(&self, plugin_id: &str) -> Option<PluginPopupMetrics> {
@@ -741,28 +766,14 @@ impl OxiBar {
             return Task::none();
         }
 
-        let section = self.plugin_section(&plugin_id);
+        self.shell.popup_bar = self.shell.active_bar.or(self.bar_window_id);
         if self.popup_open && self.popup_plugin.as_deref() == Some(plugin_id.as_str()) {
-            Task::done(Message::SetPopupOpen(false)).chain(Task::done(
-                Message::SetPopupInputRegion {
-                    open: false,
-                    section,
-                    width: 0,
-                    height: 0,
-                    bar_size: self.bar_size,
-                },
-            ))
+            self.popup_open = false;
+            self.current_input_region_task()
         } else {
-            let metrics = self.popup_input_metrics(&plugin_id);
-            Task::done(Message::SetPopupPlugin(Some(plugin_id)))
-                .chain(Task::done(Message::SetPopupInputRegion {
-                    open: true,
-                    section,
-                    width: metrics.connector_width,
-                    height: metrics.height,
-                    bar_size: self.bar_size,
-                }))
-                .chain(Task::done(Message::SetPopupOpen(true)))
+            self.popup_plugin = Some(plugin_id);
+            self.popup_open = true;
+            self.current_input_region_task()
         }
     }
 
@@ -784,14 +795,39 @@ impl OxiBar {
 
         let id = IcedId::unique();
         let close_existing = self.modal_window_id.take();
+        let owner = self
+            .shell
+            .plugin_origins
+            .get(&plugin_id)
+            .copied()
+            .or(self.shell.active_bar);
+        let output = if self.shell.request_source.is_some() {
+            self.overlay_output()
+        } else {
+            self.output_for_bar(owner).or_else(|| self.overlay_output())
+        };
+        self.register_overlay(
+            id,
+            SurfaceKind::Modal(plugin_id.clone()),
+            owner,
+            output.clone(),
+        );
+        if let Some(existing) = close_existing {
+            self.shell.registry.remove(existing);
+        }
         self.modal_plugin = Some(plugin_id);
         self.modal_window_id = Some(id);
 
         if let Some(existing) = close_existing {
-            Task::done(Message::CloseModalLayer(existing))
-                .chain(Task::done(Message::OpenModalLayer(id)))
+            Task::done(Message::CloseModalLayer(existing)).chain(Task::done(Message::OnOutput(
+                output,
+                Box::new(Message::OpenModalLayer(id)),
+            )))
         } else {
-            Task::done(Message::OpenModalLayer(id))
+            Task::done(Message::OnOutput(
+                output,
+                Box::new(Message::OpenModalLayer(id)),
+            ))
         }
     }
 
@@ -813,6 +849,26 @@ impl OxiBar {
 
         let id = IcedId::unique();
         let close_existing = self.panel_window_id.take();
+        let owner = self
+            .shell
+            .plugin_origins
+            .get(&plugin_id)
+            .copied()
+            .or(self.shell.active_bar);
+        let output = if self.shell.request_source.is_some() {
+            self.overlay_output()
+        } else {
+            self.output_for_bar(owner).or_else(|| self.overlay_output())
+        };
+        self.register_overlay(
+            id,
+            SurfaceKind::Panel(plugin_id.clone()),
+            owner,
+            output.clone(),
+        );
+        if let Some(existing) = close_existing {
+            self.shell.registry.remove(existing);
+        }
         self.panel_plugin = Some(plugin_id);
         self.panel_window_id = Some(id);
         let close_toasts = self.close_all_toasts();
@@ -820,9 +876,15 @@ impl OxiBar {
         if let Some(existing) = close_existing {
             close_toasts
                 .chain(Task::done(Message::ClosePanelLayer(existing)))
-                .chain(Task::done(Message::OpenPanelLayer(id)))
+                .chain(Task::done(Message::OnOutput(
+                    output,
+                    Box::new(Message::OpenPanelLayer(id)),
+                )))
         } else {
-            close_toasts.chain(Task::done(Message::OpenPanelLayer(id)))
+            close_toasts.chain(Task::done(Message::OnOutput(
+                output,
+                Box::new(Message::OpenPanelLayer(id)),
+            )))
         }
     }
 
@@ -831,6 +893,7 @@ impl OxiBar {
         let Some(id) = self.panel_window_id.take() else {
             return Task::none();
         };
+        self.shell.registry.remove(id);
         Task::done(Message::ClosePanelLayer(id))
     }
 
@@ -846,11 +909,15 @@ impl OxiBar {
         let Some(id) = self.modal_window_id.take() else {
             return Task::none();
         };
+        self.shell.registry.remove(id);
         Task::done(Message::CloseModalLayer(id))
     }
 
     fn show_plugin_toast(&mut self, plugin_id: String, request: HostToastRequest) -> Task<Message> {
-        if self.panel_plugin.is_some() {
+        if self.panel_plugin.is_some()
+            || (self.control_center.window_id.is_some()
+                && self.control_center.selected.as_deref() == Some(plugin_id.as_str()))
+        {
             return Task::none();
         }
         let Some((_model, funcs)) = self.plugins.get(&plugin_id) else {
@@ -890,6 +957,13 @@ impl OxiBar {
         }
 
         let window_id = IcedId::unique();
+        let output = self.overlay_output();
+        self.register_overlay(
+            window_id,
+            SurfaceKind::Toast(plugin_id.clone(), request.toast_id.clone()),
+            None,
+            output.clone(),
+        );
         self.toasts.push(ToastEntry {
             plugin_id,
             toast_id: request.toast_id,
@@ -897,11 +971,14 @@ impl OxiBar {
             width: request.width,
             height: request.height,
         });
-        Task::done(Message::OpenToastLayer(
-            window_id,
-            request.width,
-            request.height,
-            TOAST_MARGIN_TOP,
+        Task::done(Message::OnOutput(
+            output,
+            Box::new(Message::OpenToastLayer(
+                window_id,
+                request.width,
+                request.height,
+                TOAST_MARGIN_TOP,
+            )),
         ))
         .chain(Task::batch(self.toast_layout_tasks()))
     }
@@ -915,6 +992,7 @@ impl OxiBar {
             return Task::none();
         };
         let toast = self.toasts.remove(index);
+        self.shell.registry.remove(toast.window_id);
         Task::done(Message::CloseToastLayer(toast.window_id))
             .chain(Task::batch(self.toast_layout_tasks()))
     }
@@ -938,22 +1016,31 @@ impl OxiBar {
         ))
     }
 
-    fn close_all_toasts(&mut self) -> Task<Message> {
+    pub(crate) fn close_all_toasts(&mut self) -> Task<Message> {
         let tasks = self
             .toasts
             .drain(..)
-            .map(|toast| Task::done(Message::CloseToastLayer(toast.window_id)))
+            .map(|toast| {
+                self.shell.registry.remove(toast.window_id);
+                Task::done(Message::CloseToastLayer(toast.window_id))
+            })
             .collect::<Vec<_>>();
         Task::batch(tasks)
     }
 
     fn toast_layout_tasks(&self) -> Vec<Task<Message>> {
-        let mut top = TOAST_MARGIN_TOP;
+        let mut offsets = std::collections::BTreeMap::<Option<String>, i32>::new();
         let mut tasks = Vec::with_capacity(self.toasts.len());
 
         for toast in self.toasts.iter().rev() {
-            tasks.push(Task::done(Message::MoveToastLayer(toast.window_id, top)));
-            top += toast.height as i32 + TOAST_SPACING;
+            let output = self
+                .shell
+                .registry
+                .get(toast.window_id)
+                .and_then(|record| record.output.clone());
+            let top = offsets.entry(output).or_insert(TOAST_MARGIN_TOP);
+            tasks.push(Task::done(Message::MoveToastLayer(toast.window_id, *top)));
+            *top += toast.height as i32 + TOAST_SPACING;
         }
 
         tasks
@@ -966,7 +1053,18 @@ impl OxiBar {
     fn subscription(&self) -> Subscription<Message> {
         let mut subs: Vec<Subscription<Message>> = Vec::with_capacity(self.plugins.len() + 1);
         subs.push(event::listen_with(layer_surface_size_event));
+        let refresh = crate::config::store::get_path(
+            &self.config.snapshot.effective,
+            "monitor.refresh_seconds",
+        )
+        .and_then(|value| value.as_integer())
+        .unwrap_or(2) as u64;
+        subs.push(Subscription::run_with(
+            refresh,
+            crate::monitor::watch_inventory,
+        ));
         subs.push(event::listen_with(settings::key_event));
+        subs.push(event::listen_with(control_center::key_event));
         subs.push(Subscription::run_with(
             self.config.endpoint.clone(),
             ipc::listen_endpoint,
@@ -1030,6 +1128,7 @@ fn layer_surface_size_event(
     id: IcedId,
 ) -> Option<Message> {
     let size = match event {
+        iced::Event::Window(window::Event::Closed) => return Some(Message::SurfaceClosed(id)),
         iced::Event::Window(window::Event::Opened { size, .. })
         | iced::Event::Window(window::Event::Resized(size)) => size,
         _ => return None,
@@ -1054,9 +1153,11 @@ mod tests {
     use super::*;
 
     fn empty_bar() -> OxiBar {
-        OxiBar {
+        let mut bar = OxiBar {
+            shell: Shell::new(Err("Test".to_owned())),
             config: ConfigRuntime::new(ConfigStore::memory(Table::new(), Table::new())),
             settings: SettingsUi::new(&ConfigStore::memory(Table::new(), Table::new()).snapshot()),
+            control_center: ControlCenter::default(),
             plugin_order: Vec::new(),
             plugin_failures: std::collections::BTreeMap::new(),
             launcher: Launcher::new(&Table::new()),
@@ -1075,7 +1176,9 @@ mod tests {
             panel_plugin: None,
             panel_window_id: None,
             toasts: Vec::new(),
-        }
+        };
+        let _ = bar.reconcile_bars();
+        bar
     }
 
     #[test]
@@ -1104,7 +1207,7 @@ mod tests {
     #[test]
     fn layer_resize_updates_bar_dimensions() {
         let mut bar = empty_bar();
-        let main_window = IcedId::unique();
+        let main_window = bar.bar_window_id.unwrap();
 
         let _ = bar.update(Message::LayerSurfaceResized(main_window, 2560, 451));
 
@@ -1125,7 +1228,7 @@ mod tests {
     fn auxiliary_resize_does_not_claim_bar_window() {
         let mut bar = empty_bar();
         let modal_window = IcedId::unique();
-        let main_window = IcedId::unique();
+        let main_window = bar.bar_window_id.unwrap();
         bar.modal_window_id = Some(modal_window);
 
         let _ = bar.update(Message::LayerSurfaceResized(modal_window, 460, 300));

@@ -127,6 +127,7 @@ pub const HOST_REQUEST_TOGGLE_PANEL: &str = "oxibar.host.toggle-panel";
 /// Request the resident launcher without tying it to a plugin-owned surface.
 pub const HOST_REQUEST_TOGGLE_LAUNCHER: &str = "oxibar.host.toggle-launcher";
 pub const HOST_REQUEST_OPEN_SETTINGS: &str = "oxibar.host.open-settings";
+pub const HOST_REQUEST_TOGGLE_CONTROL_CENTER: &str = "oxibar.host.toggle-control-center";
 
 /// Backward-compatible name for the clock plugin's original popup request.
 pub const HOST_REQUEST_TOGGLE_CALENDAR_POPUP: &str = HOST_REQUEST_TOGGLE_POPUP;
@@ -281,10 +282,28 @@ pub type RunnerQueryFn =
     unsafe extern "Rust" fn(query: String, model: PluginModel) -> Option<Task<PluginMsg>>;
 pub type RunnerEntriesFn = unsafe extern "Rust" fn(model: PluginModel) -> Vec<RunnerEntry>;
 
+#[derive(Debug, Clone)]
+pub struct PluginViewContext {
+    pub instance_id: String,
+    pub output_name: Option<String>,
+    pub output_scale: f64,
+}
+
+/// Optional context-aware bar view; ordinary `view(model)` remains the fallback.
+pub type ContextViewFn =
+    unsafe extern "Rust" fn(
+        model: PluginModel,
+        context: PluginViewContext,
+    ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
+
 pub type ViewFn =
     unsafe extern "Rust" fn(
         model: PluginModel,
     ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
+
+/// Optional `control_center_view(model)` body. The host owns scrolling, chrome,
+/// and surface routing; the plugin reuses its existing model and messages.
+pub type ControlCenterViewFn = ViewFn;
 
 pub type PopupViewFn =
     unsafe extern "Rust" fn(

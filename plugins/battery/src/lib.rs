@@ -147,6 +147,48 @@ pub extern "Rust" fn view(
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn control_center_view(
+    model: PluginModel,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| {
+        let mut body = Column::new()
+            .spacing(OXITHEME.padding_lg)
+            .width(Length::Fill);
+        if let Some(snapshot) = &model.snapshot {
+            body = body
+                .push(
+                    text(exact_percentage_label(snapshot.percentage))
+                        .size(OXITHEME.font_xxl)
+                        .style(text_primary),
+                )
+                .push(
+                    text(state_label(snapshot.state))
+                        .size(OXITHEME.font_lg)
+                        .style(text_primary),
+                )
+                .push(
+                    text(time_summary(snapshot))
+                        .size(OXITHEME.font_md)
+                        .style(text_muted),
+                );
+        } else {
+            body = body.push(
+                text("Waiting for battery data")
+                    .size(OXITHEME.font_md)
+                    .style(text_muted),
+            );
+        }
+        vec![
+            body.push(
+                oxi_plugin::surface_button(text("Refresh").size(OXITHEME.font_md), false)
+                    .on_press(msg(Message::Refresh)),
+            )
+            .into(),
+        ]
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn subscription() -> *mut PluginStream {
     let interval = *POLL_INTERVAL
         .get()

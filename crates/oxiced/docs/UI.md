@@ -9,6 +9,10 @@
 - Use `oxi_plugin::text_primary`, `text_muted`, and `text_accent` for common text roles instead of repeating local closures.
 - Search and settings rows use `oxi_plugin::selectable_row`; neutral, selected,
   hovered and pressed states share theme tokens and remain shadowless.
-- Settings field groups use `oxi_plugin::settings_card` for shared themed chrome.
+- Spacious field groups use `oxi_plugin::settings_card` with `padding_xl` for
+  shared themed chrome. Normal surface actions use `oxi_plugin::surface_button`;
+  source/mode chips use `oxi_plugin::badge`. Keep compact bar controls separate.
+- Use `oxi_toggler::toggler` for a switch styled directly from `OXITHEME`, including
+  hover/disabled states. The existing custom animated toggler remains available.
 - Multiline settings editors use `oxi_text_input::editor_style`, matching input
   focus, border, value, selection and disabled colors.

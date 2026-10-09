@@ -26,10 +26,11 @@ use std::sync::Arc;
 
 use libloading::Library;
 use oxibar_plugin_api::{
-    ABI_VERSION, AbiVersionFn, AvailabilityFn, ConfigChangedFn, ErrorsFn, LaunchFn, MetadataFn,
-    ModalViewFn, ModelFn, NameFn, PanelViewFn, PluginAvailability, PluginMetadata, PluginModel,
-    PluginMsg, PluginPopupMetrics, PopupMetricsFn, PopupViewFn, RunnerEntriesFn, RunnerQueryFn,
-    SettingsSchemaFn, SubscriptionFn, ToastViewFn, UpdateFn, ViewFn,
+    ABI_VERSION, AbiVersionFn, AvailabilityFn, ConfigChangedFn, ContextViewFn, ControlCenterViewFn,
+    ErrorsFn, LaunchFn, MetadataFn, ModalViewFn, ModelFn, NameFn, PanelViewFn, PluginAvailability,
+    PluginMetadata, PluginModel, PluginMsg, PluginPopupMetrics, PopupMetricsFn, PopupViewFn,
+    RunnerEntriesFn, RunnerQueryFn, SettingsSchemaFn, SubscriptionFn, ToastViewFn, UpdateFn,
+    ViewFn,
 };
 use toml::Table;
 use tracing::{error, info, warn};
@@ -40,6 +41,8 @@ use crate::config::{get_allowed_plugins, get_oxirun_dir};
 /// alive via the `Arc` so that the raw fn pointers remain valid for the
 /// lifetime of this struct.
 pub struct PluginFuncs {
+    pub context_view: Option<ContextViewFn>,
+    pub control_center_view: Option<ControlCenterViewFn>,
     pub filename: String,
     pub settings_schema: Option<SettingsSchemaFn>,
     pub config_changed: Option<ConfigChangedFn>,
@@ -180,10 +183,14 @@ unsafe fn load_one(
     let runner_entries = unsafe { resolve_optional(&lib, "runner_entries") };
     let settings_schema = unsafe { resolve_optional(&lib, "settings_schema") };
     let config_changed = unsafe { resolve_optional(&lib, "config_changed") };
+    let context_view = unsafe { resolve_optional(&lib, "view_with_context") };
+    let control_center_view = unsafe { resolve_optional(&lib, "control_center_view") };
 
     Ok((
         plugin_name,
         PluginFuncs {
+            context_view,
+            control_center_view,
             filename: path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -286,6 +293,20 @@ pub fn render_plugin(
             Vec::new()
         }
     }
+}
+
+pub fn render_plugin_control_center(
+    funcs: &PluginFuncs,
+    model: &PluginModel,
+) -> Result<Vec<iced::Element<'static, PluginMsg>>, std::io::Error> {
+    let Some(view) = funcs
+        .control_center_view
+        .or(funcs.popup_view)
+        .or(funcs.panel_view)
+    else {
+        return Ok(Vec::new());
+    };
+    unsafe { view(model.clone()) }
 }
 
 /// Read optional model-dependent popup metrics from a plugin.

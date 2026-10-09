@@ -27,6 +27,20 @@
   document and must ignore unrelated changes and retain restart-only running values.
 - Add shared controls/styles to `crates/oxiced` and use the workspace dependency;
   do not restore per-plugin git/path forks of that library.
+- Register every surface before creation; route view/events by its known ID and
+  kind. Never infer that an unknown window is a bar. Surface tasks must use explicit
+  target IDs for geometry/input updates.
+- Normalize output inventory off the UI thread, preserve refresh-rate precision,
+  and separate logical output geometry from pixel modes/native buffer scale.
+- Keep plugin service ownership independent of output/view count. Preserve source
+  context for UI-initiated asynchronous work without dropping model updates after
+  the originating surface disappears.
+- Embedded capability views reuse the existing model and return inner content;
+  host surfaces own chrome and scrolling. Factor shared popup/embedded view logic
+  without creating another subscription, backend or polling owner.
+- Keep schema-driven view construction separate from settings state/actions and
+  persistence. Use shared oxiced surface buttons, badges and themed switches for
+  spacious forms; preserve compact bar controls and the existing theme palette.
 
 ## Testing Expectations
 

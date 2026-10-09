@@ -1,12 +1,12 @@
 # Oxibar Plugin UI
 
-This file is the styling contract for Oxibar plugins. New plugins and UI changes must match these rules so the bar, popups, panels, and modals feel like one product.
+This file is the styling contract for Oxibar plugins and shell surfaces. New plugins and UI changes must match these rules so the bar, popups, panels, modals, settings and control center feel like one product.
 
 ## Source Of Truth
 
 - All components must adhere to the `oxiced` theme. This is mandatory for bar items, popup content, panels, modals, cards, buttons, inputs, sliders, picklists, icons, text, and empty states.
 - Use `oxiced::theme::theme_impl::OXITHEME` for colors, radius defaults, and derived iced theme behavior.
-- Use shared `oxiced` widgets when available: `oxi_button`, `oxi_text_input`, `oxi_picklist`, and `oxi_slider`.
+- Use shared `oxiced` widgets when available: `oxi_button`, `oxi_text_input`, `oxi_picklist`, `oxi_slider`, `oxi_toggler`, and `oxi_plugin` surface helpers.
 - Do not use raw numeric literals for spacing, padding, margins, border radii, or font sizes. Use `OXITHEME` tokens, `oxi_plugin` constants/helpers, or a named local constant for plugin-specific geometry.
 - Do not introduce plugin-local palettes, random RGB values, or one-off control styles unless the shared theme cannot express the state.
 - If `oxiced` cannot express a required component state, a local themed style is allowed only as temporary technical debt documented in `docs/TECHNICAL_DEBT.md`.
@@ -14,7 +14,7 @@ This file is the styling contract for Oxibar plugins. New plugins and UI changes
 
 ## Surfaces
 
-- Main bar spans the compositor-selected active output width unless `[bar] width` overrides it. Its background uses `OXITHEME.mantle` unless `[bar] transparent = true` is set.
+- Each bar spans its selected output width unless common/profile `width` overrides it. Its background uses `OXITHEME.mantle` unless its effective `transparent = true` is set.
 - Popup, panel, and modal host surfaces use `OXITHEME.mantle`. Plugin content should not repaint the full surface with another base color.
 - Popup open/close animation uses quick `Easing::EASE_OUT` timing to align with notification-center layer opening.
 - Popups are compact overlays. Keep content inside `Length::Fill`, with body padding based on `OXITHEME.padding_md`/`padding_lg` and vertical spacing from `OXITHEME.padding_sm`.
@@ -25,6 +25,16 @@ This file is the styling contract for Oxibar plugins. New plugins and UI changes
 - Settings forms use shared `oxi_plugin::settings_card`, selectable rows and
   themed inputs/editors. Show value provenance and reset controls; preserve drafts
   on revision conflicts and show restart-only changes explicitly.
+- Settings and control center use spacious, Android-inspired grouping with the
+  same oxiced palette, radius and components. Use `padding_xl` outer/card padding,
+  `padding_lg`/`padding_xl` gaps, readable descriptions and normal-sized actions.
+  Boolean fields use themed switches rather than a separate cramped checkbox row.
+- Desktop settings use a category sidebar; narrow settings use a pick-list.
+  Control-center tiles use two columns or one at narrow widths. Stack layout-editor
+  sections vertically so reorder/remove controls have room.
+- Multiple output bars retain independent geometry and input regions. Attached
+  popups appear below top bars or above bottom bars, on the originating output.
+  Removing an output dismisses its surfaces without discarding plugin state.
 
 ## Bar Controls
 
@@ -50,6 +60,9 @@ This file is the styling contract for Oxibar plugins. New plugins and UI changes
 - Empty states: `OXITHEME.font_md`, color `OXITHEME.text_muted` unless the empty state is the only popup content, where `OXITHEME.primary` is acceptable.
 - Plugins should inherit the bar font. If a plugin needs explicit weight, resolve `[bar] font` first and then set only the weight.
 - Use semibold only for compact identity controls such as workspace pills.
+- Spacious settings/control-center typography uses `font_xxl`/`text` for page
+  titles, `font_xl` for group headings, `font_lg` for field/tile labels and
+  `font_md` for descriptions/actions. Reserve `font_sm` for technical metadata.
 
 ## Color Roles
 
@@ -67,6 +80,10 @@ This file is the styling contract for Oxibar plugins. New plugins and UI changes
 ## Buttons
 
 - Prefer `oxi_button::button` variants for normal actions.
+- Settings/control-center actions use shadowless `oxi_plugin::surface_button`
+  with `padding_md`/`padding_lg`; reserve `bar_button` height for compact bar items.
+  Source/mode chips use `oxi_plugin::badge`, and switches use
+  `oxi_toggler::toggler`, all styled directly from `OXITHEME`.
 - Primary action: `ButtonVariant::Primary`, `OXITHEME.font_md`, padding from `OXITHEME.padding_sm`/`padding_md`.
 - Secondary action: `ButtonVariant::SecondaryBg`, `OXITHEME.font_md`, padding from `OXITHEME.padding_xs`/`padding_sm` for compact controls or `padding_sm`/`padding_md` for modal actions.
 - Row actions may use custom transparent button styles only when the row container already supplies the hover background.
@@ -118,6 +135,11 @@ This file is the styling contract for Oxibar plugins. New plugins and UI changes
 - Popup content should be useful at the host default popup size. Larger plugins may rely on named popup-size constants or `[bar.popup_sizes]`, but must still scroll instead of overflowing.
 - Panel content should assume the host `PANEL_WIDTH` and full height.
 - Modal content should assume the host `MODAL_SIZE` and themed host padding.
+- Optional `control_center_view(model)` returns inner content for the existing
+  model. The host owns scrolling/cards/chrome; avoid nested full-height scrolling,
+  duplicated outer padding or new subscriptions for an embedded view. Popup/panel
+  content is the compatibility fallback. All content messages retain source output
+  routing, including asynchronous password/pairing requests.
 
 ## Checklist
 

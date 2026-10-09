@@ -266,6 +266,26 @@ pub extern "Rust" fn popup_view(
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn control_center_view(
+    model: PluginModel,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| {
+        vec![
+            Column::new()
+                .push(media_card(
+                    model.snapshot.player.as_ref(),
+                    model.pending.is_some(),
+                ))
+                .push(output_section(&model.snapshot))
+                .push(input_section(&model.snapshot))
+                .spacing(OXITHEME.padding_xl)
+                .width(Length::Fill)
+                .into(),
+        ]
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn subscription() -> *mut PluginStream {
     let interval = *POLL_INTERVAL
         .get()

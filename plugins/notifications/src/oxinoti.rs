@@ -387,6 +387,57 @@ pub(crate) fn panel_view(
             .spacing(OXITHEME.padding_sm)
             .align_y(Alignment::Center);
 
+    let list = notification_list(notifications, reply_drafts, hovered_notifications);
+
+    Column::new()
+        .push(header)
+        .push(iced::widget::scrollable(list).height(Length::Fill))
+        .spacing(OXITHEME.padding_md)
+        .padding(OXITHEME.padding_md)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+pub(crate) fn control_center_view(
+    notifications: &[Notification],
+    reply_drafts: &std::collections::BTreeMap<u32, String>,
+    hovered_notifications: &BTreeSet<u32>,
+    do_not_disturb: bool,
+) -> Element<'static, PluginMsg> {
+    let header = Row::new()
+        .push(
+            text("Do not disturb")
+                .size(OXITHEME.font_md)
+                .style(oxi_plugin::text_primary)
+                .width(Length::Fill),
+        )
+        .push(
+            oxiced::widgets::oxi_toggler::toggler(do_not_disturb)
+                .on_toggle(|_| msg(Event::ToggleDoNotDisturb)),
+        )
+        .push(
+            oxi_plugin::surface_button(text("Clear all").size(OXITHEME.font_md), false)
+                .on_press(msg(Event::ClearAll)),
+        )
+        .spacing(OXITHEME.padding_lg)
+        .align_y(Alignment::Center);
+    Column::new()
+        .push(header)
+        .push(
+            notification_list(notifications, reply_drafts, hovered_notifications)
+                .spacing(OXITHEME.padding_lg),
+        )
+        .spacing(OXITHEME.padding_xl)
+        .width(Length::Fill)
+        .into()
+}
+
+fn notification_list(
+    notifications: &[Notification],
+    reply_drafts: &std::collections::BTreeMap<u32, String>,
+    hovered_notifications: &BTreeSet<u32>,
+) -> Column<'static, PluginMsg> {
     let mut list = Column::new()
         .spacing(OXITHEME.padding_sm)
         .width(Length::Fill);
@@ -406,14 +457,7 @@ pub(crate) fn panel_view(
         }
     }
 
-    Column::new()
-        .push(header)
-        .push(iced::widget::scrollable(list).height(Length::Fill))
-        .spacing(OXITHEME.padding_md)
-        .padding(OXITHEME.padding_md)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    list
 }
 
 pub(crate) fn toast_view(

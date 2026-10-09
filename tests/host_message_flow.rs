@@ -87,7 +87,7 @@ fn popup_request_uses_input_metadata_for_detached_overlays() {
 
     assert!(applied.iter().any(|message| matches!(
         message,
-        Message::SetPopupInputRegion {
+        Message::SetBarInputRegion {
             open: true,
             width: 332,
             height: 420,
@@ -107,7 +107,7 @@ fn popup_request_uses_dynamic_metrics_when_available() {
 
     assert!(applied.iter().any(|message| matches!(
         message,
-        Message::SetPopupInputRegion {
+        Message::SetBarInputRegion {
             open: true,
             width: 332,
             height: 420,

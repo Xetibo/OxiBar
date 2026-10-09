@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use iced_layershell::reexport::Anchor;
 use toml::Table;
 
+pub mod bars;
 pub mod schema;
 pub mod store;
 #[cfg(test)]

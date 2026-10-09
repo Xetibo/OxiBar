@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use iced::{Element, Task, Theme, widget::text};
+use iced_layershell::reexport::IcedId;
 use iced_runtime::Action;
 use oxibar_plugin_api::{
     HOST_REQUEST_CLOSE_MODAL, HOST_REQUEST_OPEN_MODAL, HOST_REQUEST_TOGGLE_PANEL,
@@ -34,6 +35,7 @@ pub struct FakePluginOptions {
     pub runner: bool,
     pub runner_score: i64,
     pub live_settings: bool,
+    pub control_center: bool,
 }
 
 impl FakePluginOptions {
@@ -169,10 +171,12 @@ impl TestHost {
             .unwrap();
         let config = crate::settings::ConfigRuntime::new(config_store);
         let settings = crate::settings::SettingsUi::new(&config.snapshot);
-        Self {
+        let mut host = Self {
             bar: OxiBar {
+                shell: crate::shell::Shell::new(Err("Test inventory".to_owned())),
                 config,
                 settings,
+                control_center: crate::control_center::ControlCenter::default(),
                 plugin_order: order.clone(),
                 plugin_failures: std::collections::BTreeMap::new(),
                 launcher: crate::launcher::Launcher::new(&Table::new()),
@@ -192,7 +196,9 @@ impl TestHost {
                 panel_window_id: None,
                 toasts: Vec::new(),
             },
-        }
+        };
+        let _ = collect_task(host.bar.reconcile_bars());
+        host
     }
 
     pub fn drive_plugin_request(&mut self, plugin_id: &str, request: &str) -> Vec<Message> {
@@ -250,8 +256,43 @@ impl TestHost {
     pub fn config_snapshot(&self) -> std::sync::Arc<crate::config::ConfigSnapshot> {
         self.bar.config.snapshot.clone()
     }
+
+    pub fn main_window(&self) -> iced_layershell::reexport::IcedId {
+        self.bar.bar_window_id.expect("test bar")
+    }
+    pub fn bar_windows(&self) -> Vec<iced_layershell::reexport::IcedId> {
+        self.bar.shell.bars.values().map(|bar| bar.id).collect()
+    }
+    pub fn bar_output(&self, id: iced_layershell::reexport::IcedId) -> Option<String> {
+        self.bar.output_for_bar(Some(id))
+    }
+    pub fn bar_dimensions(
+        &self,
+        id: iced_layershell::reexport::IcedId,
+    ) -> Option<crate::layout::BarDimensions> {
+        self.bar.shell.bar(id).map(|bar| bar.size)
+    }
+    pub fn popup_window(&self) -> Option<iced_layershell::reexport::IcedId> {
+        self.bar.shell.popup_bar
+    }
     pub fn settings_window(&self) -> Option<iced_layershell::reexport::IcedId> {
         self.bar.settings.window_id
+    }
+    pub fn control_center_window(&self) -> Option<IcedId> {
+        self.bar.control_center.window_id
+    }
+    pub fn control_center_selected(&self) -> Option<&str> {
+        self.bar.control_center.selected.as_deref()
+    }
+    pub fn control_center_widgets(&self) -> Vec<String> {
+        self.bar.control_center_plugins()
+    }
+    pub fn surface_output(&self, id: IcedId) -> Option<&str> {
+        self.bar
+            .shell
+            .registry
+            .get(id)
+            .and_then(|record| record.output.as_deref())
     }
     pub fn settings_error(&self) -> Option<&str> {
         self.bar.settings.error.as_deref()
@@ -378,6 +419,8 @@ fn fake_model(dynamic_popup_metrics: Option<PluginPopupMetrics>) -> PluginModel 
 
 fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
     PluginFuncs {
+        context_view: None,
+        control_center_view: options.control_center.then_some(fake_view),
         filename: "libfake.so".to_owned(),
         settings_schema: options.live_settings.then_some(fake_settings_schema),
         config_changed: options.live_settings.then_some(fake_config_changed),

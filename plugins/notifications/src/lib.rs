@@ -364,6 +364,20 @@ pub extern "Rust" fn panel_view(
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn control_center_view(
+    model: PluginModel,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| {
+        vec![oxinoti::control_center_view(
+            &model.notifications,
+            &model.reply_texts,
+            &model.hovered_notifications,
+            model.do_not_disturb,
+        )]
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn toast_view(
     model: PluginModel,
     toast_id: &str,

@@ -47,6 +47,7 @@ rustix = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 tokio = { version = "1", features = ["net", "io-util", "time", "rt"] }
 notify = "8.2"
 serde_json = "1"

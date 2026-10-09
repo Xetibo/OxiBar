@@ -4,6 +4,81 @@ This file records LLM-specific continuity decisions and low-impact choices that
 are useful for future agents. Omitted from this file are high-level architecture
 topics already covered by `ARCHITECTURE.md`.
 
+## Spacious settings and control-center composition (2026-10-10)
+
+- Resume the approved shell roadmap after the multi-output slice. User requested
+  Android-inspired spacing/components while retaining the oxiced theme. Replace
+  cramped settings bar buttons with normal surface actions, xl card/outer padding,
+  source/mode badges, readable titles/descriptions and theme-colored switches.
+- Split settings views into `src/settings/view.rs`; state/actions and revisioned
+  drafts stay in `mod.rs`, persistence/application stays in `runtime.rs`. Desktop
+  navigation uses a sidebar, narrow navigation a category picker. Widget layout
+  sections stack vertically. Preserve the first six category shortcuts; append
+  Control Center as Alt+7.
+- Add the host-owned centered control-center overlay and reserved `control-center`
+  bar item. Default dimensions are 680x760; configured provider order defaults to
+  Audio, Network, Bluetooth, Battery, Notifications and Clock. CLI/JSON commands
+  use `control-center` and the existing version-1 protocol.
+- Add optional `control_center_view` at ABI 6, using the existing view signature.
+  Dedicated content takes precedence over legacy popup/panel fallbacks. Bundled
+  control providers reuse existing models/actions; calendar remains a popup
+  fallback. Do not initialize another backend or subscription per embedded view.
+- Opening settings/launcher/control center dismisses the other overlay. Center
+  source routing carries through async password/pairing modals; hiding a bar on
+  a connected output retains the overlay, actual output removal dismisses it,
+  and late plugin results still update the model.
+- Viewing the notification inbox closes visible toasts and suppresses subsequent
+  notification toasts without removing stored records. Selecting another provider
+  restores later toasts. Preserve existing actions/replies/DND/panel behavior.
+- Verification: 165 workspace tests/doctests and strict Clippy passed; Nix built
+  the host and applications/audio/battery/Bluetooth/clock/network/notification
+  libraries. Packaged settings/Nix-symlink regeneration smoke passed unchanged.
+  Private-bus control-center smoke rendered all six providers, verified inbox/toast
+  behavior, live preferences, disabled bars, overlay dismissal, scoped Escape and
+  ten reopen cycles with the same seven loaded plugins.
+- Inspect normal/narrow screenshots privately: theme/compositor translucency can
+  reveal desktop content. Initial standard private-bus smoke autoactivated portal
+  services and stalled; a bus config without service directories completed cleanly.
+  No application change was inferred from that first test-environment failure.
+- Native PulseAudio/BlueZ migration and brightness/power/session/OSD capabilities
+  are the next milestone-4 work; this slice completes composition and visual
+  consistency. Preserve staged multi-output work and the unrelated staged `result`
+  deletion. No additional commit was requested during this continuation.
+
+## Multi-output registry and inventory (2026-10-09)
+
+- Commit the completed launcher/settings/local-oxiced work as `12d48a8`, preserving
+  the pre-existing staged build-result symlink deletion outside that commit.
+- Use `StartMode::Background` and explicit IDs for all bar creation, removing the
+  first-unknown-window-as-main-bar assumption. Registry metadata owns kind, output
+  and source-bar relationships; retired IDs return empty views/ignore resize.
+- `bar.outputs = []` retains one selected output; `["*"]` targets all connected
+  outputs. Named selections use configurable fallback, and `bar.enabled = false`
+  leaves launcher/settings/IPC available. Per-output `bar.profiles` override common
+  geometry/layout/transparency and top/bottom placement.
+- ReSet reuse in this slice is domain-pattern adaptation: normalized output DTOs,
+  scale/rotation/logical geometry and separate backend boundaries. Hyprland uses
+  bounded read-only IPC; generic Wayland uses wl_output/xdg_output. Keep fractional
+  scales/precise refresh rather than donor rounding/unsafe threading assumptions.
+- Inventory refresh is one background subscription (default two seconds); unchanged
+  snapshots are suppressed. A failed refresh preserves current bars/last inventory.
+- Keep one shared plugin model/subscription. Optional `view_with_context` receives
+  stable output/section/plugin-occurrence identity and native output scale. ABI 6
+  required signatures remain unchanged.
+- Source-window routing preserves popup/modal/panel ownership through asynchronous
+  plugin tasks; late model updates survive output removal. Auxiliary registry
+  ownership is normalized to its actual target output. Toast layout is per output.
+- Deterministic multi-output tests and packaged Hyprland smoke verified three
+  physical outputs, portrait widths, independent bottom profile, live selection,
+  disabled bars with settings access, and temporary headless add/remove. Shared
+  Applications/Clock models remained loaded. Serial Nix package builds avoided
+  temporary storage exhaustion from parallel cache unpacking.
+- Generic Wayland inventory was forced by removing the Hyprland session signature
+  from the test daemon environment; the same three-output/profile/hotplug scenario
+  passed. This is protocol fallback verification on Hyprland, not a separate
+  Sway/Niri runtime claim. Existing settings/Nix-regeneration smoke and real runner
+  dylib regression passed after the refactor.
+
 ## Settings foundation and GUI (2026-10-09)
 
 - Implement the roadmap's first implementation slice: compiled defaults < base

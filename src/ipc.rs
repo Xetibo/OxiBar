@@ -40,8 +40,10 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Outputs,
     Launcher(WindowCommand),
     Settings(WindowCommand),
+    ControlCenter(WindowCommand),
     Config(ConfigCommand),
     Status,
 }
@@ -99,7 +101,7 @@ fn parse_request(text: &str) -> Result<Command, String> {
         Some(value) => Some(value.as_u64().ok_or("Invalid revision")?),
     };
     Ok(match string("command")? {
-        "launcher" | "settings" => {
+        "launcher" | "settings" | "control-center" => {
             let action = match string("action")? {
                 "toggle" => WindowCommand::Toggle,
                 "open" => WindowCommand::Open,
@@ -108,11 +110,14 @@ fn parse_request(text: &str) -> Result<Command, String> {
             };
             if string("command")? == "launcher" {
                 Command::Launcher(action)
-            } else {
+            } else if string("command")? == "settings" {
                 Command::Settings(action)
+            } else {
+                Command::ControlCenter(action)
             }
         }
         "status" => Command::Status,
+        "outputs" => Command::Outputs,
         "config" => Command::Config(match string("action")? {
             "get" => ConfigCommand::Get(
                 request
@@ -225,12 +230,13 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
     {
         ["--help"] | ["-h"] => {
             println!(
-                "Usage: oxibar [launcher|settings [toggle|open|close]]\n\
+                "Usage: oxibar [launcher|settings|control-center [toggle|open|close]]\n\
                  oxibar config get [path]\n\
                  oxibar config set <path> <TOML value>\n\
                  oxibar config reset <path> | reset-all | reload | schema\n\
                  oxibar config export [effective|overrides]\n\
                  oxibar status\n\n\
+                 oxibar outputs\n\n\
                  No arguments: start the bar and resident launcher.\n\
                  launcher: send a command to the running bar."
             );
@@ -258,15 +264,20 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
                 let arguments: Vec<_> = args.iter().map(String::as_str).collect();
                 let mut request = serde_json::json!({"version": PROTOCOL_VERSION});
                 match arguments.as_slice() {
-                    ["settings"] | ["settings", "toggle"] => {
-                        request["command"] = "settings".into();
+                    [command @ ("settings" | "control-center")]
+                    | [command @ ("settings" | "control-center"), "toggle"] => {
+                        request["command"] = (*command).into();
                         request["action"] = "toggle".into();
                     }
-                    ["settings", action @ ("open" | "close")] => {
-                        request["command"] = "settings".into();
+                    [
+                        command @ ("settings" | "control-center"),
+                        action @ ("open" | "close"),
+                    ] => {
+                        request["command"] = (*command).into();
                         request["action"] = (*action).into();
                     }
                     ["status"] => request["command"] = "status".into(),
+                    ["outputs"] => request["command"] = "outputs".into(),
                     ["config", "get"] => {
                         request["command"] = "config".into();
                         request["action"] = "get".into();
@@ -510,6 +521,17 @@ fn serve(path: PathBuf, record: Option<PathBuf>) -> impl iced::futures::Stream<I
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_center_commands_share_the_versioned_window_protocol() {
+        assert!(matches!(
+            parse_request(r#"{"version":1,"command":"control-center","action":"open"}"#).unwrap(),
+            Command::ControlCenter(WindowCommand::Open)
+        ));
+        assert!(
+            parse_request(r#"{"version":1,"command":"control-center","action":"select"}"#).is_err()
+        );
+    }
 
     #[test]
     fn typed_commands_validate_version_revision_and_toml_literals() {

@@ -84,21 +84,33 @@ impl OxiBar {
                 self.refresh_plugin_catalog();
                 self.settings.sync_editor(&self.config.snapshot);
                 let id = IcedId::unique();
+                let output = self.overlay_output();
+                self.register_overlay(
+                    id,
+                    crate::shell::SurfaceKind::Settings,
+                    self.shell.active_bar,
+                    output.clone(),
+                );
                 self.settings.window_id = Some(id);
                 self.settings.awaiting_focus = true;
                 self.popup_open = false;
                 let close_launcher = self.close_launcher();
                 let close_modal = self.close_modal();
                 let close_panel = self.close_panel();
+                let close_control_center = self.close_control_center();
                 Task::batch([
                     close_launcher,
                     close_modal,
                     close_panel,
+                    close_control_center,
                     self.current_input_region_task(),
-                    Task::done(Message::OpenSettingsLayer(
-                        id,
-                        self.config.snapshot.host.settings_size.0,
-                        self.config.snapshot.host.settings_size.1,
+                    Task::done(Message::OnOutput(
+                        output,
+                        Box::new(Message::OpenSettingsLayer(
+                            id,
+                            self.config.snapshot.host.settings_size.0,
+                            self.config.snapshot.host.settings_size.1,
+                        )),
                     )),
                 ])
             }
@@ -262,7 +274,10 @@ impl OxiBar {
         self.settings
             .window_id
             .take()
-            .map(|id| Task::done(Message::CloseSettingsLayer(id)))
+            .map(|id| {
+                self.shell.registry.remove(id);
+                Task::done(Message::CloseSettingsLayer(id))
+            })
             .unwrap_or_else(Task::none)
     }
 
@@ -423,13 +438,23 @@ impl OxiBar {
         self.center_widgets = host.center.clone();
         self.end_widgets = host.end.clone();
         if crate::config::schema::fallback_layout(&host, &self.config.snapshot.overrides) {
-            self.start_widgets = self.plugin_order.clone();
-            self.start_widgets.insert(0, "settings".to_owned());
-            if host.launcher_enabled {
-                self.start_widgets.insert(0, "launcher".to_owned());
-            }
+            self.start_widgets = crate::config::schema::fallback_widgets(&host, &self.plugin_order);
         }
         self.launcher.configure(&host);
+        self.normalize_control_center_selection();
+        tasks.push(self.close_control_center_toasts());
+        if !host.control_center_enabled {
+            tasks.push(self.close_control_center());
+        }
+        if let Some(id) = self.control_center.window_id
+            && old.host.control_center_size != host.control_center_size
+        {
+            tasks.push(Task::done(Message::ResizeLayer(
+                id,
+                host.control_center_size.0,
+                host.control_center_size.1,
+            )));
+        }
         if !host.launcher_enabled {
             tasks.push(self.close_launcher());
         }
@@ -451,23 +476,7 @@ impl OxiBar {
                 host.settings_size.1,
             )));
         }
-        self.bar_size.height = host.bar_height;
-        if let Some(width) = host.bar_width {
-            self.bar_size.width = width;
-        }
-        if let Some(id) = self.bar_window_id
-            && (host.bar_width != old.host.bar_width || host.bar_height != old.host.bar_height)
-        {
-            tasks.push(Task::done(Message::ResizeLayer(
-                id,
-                host.bar_width.unwrap_or(0),
-                host.bar_height + crate::layout::POPUP_MAX_HEIGHT,
-            )));
-            tasks.push(Task::done(Message::SetExclusiveZone(
-                id,
-                host.bar_height as i32,
-            )));
-        }
+        tasks.push(self.reconcile_bars());
         tasks.push(self.current_input_region_task());
         Task::batch(tasks)
     }
@@ -554,12 +563,24 @@ impl OxiBar {
 
     fn status_data(&self) -> serde_json::Value {
         json!({"launcher_open": self.launcher.window_id.is_some(), "settings_open": self.settings.window_id.is_some(),
-            "restart_required": self.restart_fields(), "loaded_plugins": self.plugins.keys().collect::<Vec<_>>(), "config_error": self.settings.error})
+            "control_center_open": self.control_center.window_id.is_some(), "control_center_selected": self.control_center.selected, "control_center_widgets": self.control_center_plugins(),
+            "restart_required": self.restart_fields(), "loaded_plugins": self.plugins.keys().collect::<Vec<_>>(), "config_error": self.settings.error,
+            "monitor_backend": self.shell.inventory.as_ref().map(|inventory| &inventory.backend), "monitor_error": self.shell.inventory_error,
+            "outputs": self.shell.inventory.as_ref().map(|inventory| inventory.outputs.iter().map(|output| output.json()).collect::<Vec<_>>()).unwrap_or_default(),
+            "bars": self.shell.bars.iter().map(|(instance, bar)| json!({"instance": instance, "output": bar.output, "width": bar.size.width, "height": bar.size.height, "position": format!("{:?}", bar.config.position)})).collect::<Vec<_>>()})
     }
 
     pub(crate) fn control_request(&mut self, request: ControlRequest) -> Task<Message> {
         let snapshot = &self.config.snapshot;
         match request.command {
+            Command::Outputs => {
+                let data = json!({"backend": self.shell.inventory.as_ref().map(|inventory| &inventory.backend), "error": self.shell.inventory_error,
+                    "outputs": self.shell.inventory.as_ref().map(|inventory| inventory.outputs.iter().map(|output| output.json()).collect::<Vec<_>>()).unwrap_or_default()});
+                request
+                    .reply
+                    .send(ipc::response(snapshot.revision, data, None));
+                Task::none()
+            }
             Command::Launcher(action) => {
                 let disabled = !self.launcher.enabled && !matches!(action, WindowCommand::Close);
                 let task = self.update_launcher(match action {
@@ -584,6 +605,21 @@ impl OxiBar {
                     self.config.snapshot.revision,
                     self.status_data(),
                     None,
+                ));
+                task
+            }
+            Command::ControlCenter(action) => {
+                let disabled = !self.config.snapshot.host.control_center_enabled
+                    && !matches!(action, WindowCommand::Close);
+                let task = self.update_control_center(match action {
+                    WindowCommand::Open => crate::control_center::Action::Open,
+                    WindowCommand::Close => crate::control_center::Action::Close,
+                    WindowCommand::Toggle => crate::control_center::Action::Toggle,
+                });
+                request.reply.send(ipc::response(
+                    self.config.snapshot.revision,
+                    self.status_data(),
+                    disabled.then_some("Control center disabled in configuration"),
                 ));
                 task
             }

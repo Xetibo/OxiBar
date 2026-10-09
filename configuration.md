@@ -58,13 +58,13 @@ As a backward-compat shortcut, if **all three** of `start`, `center` and
 the same order as the top-level `plugins = [...]` array — the old single-row
 layout, now deterministic.
 
-When the launcher is enabled, fallback layout also adds the host-owned
-`"launcher"` search button first. In explicit layouts, add `"launcher"` to any
-section to display it. It is a host control, not a plugin library name.
+Fallback layout starts with the enabled host-owned `"launcher"` and
+`"control-center"` controls, then `"settings"`, then plugins. In explicit layouts,
+add these names to any section to display their buttons; they are host controls,
+not plugin library names. The control-center button is labeled `Controls`.
 
-Fallback layout also includes a host-owned `"settings"` control. Explicit GUI
-section overrides suppress fallback even when all arrays are empty, allowing
-the GUI to remove every widget. Resetting those overrides restores the legacy
+Explicit GUI section overrides suppress fallback even when all arrays are empty,
+allowing the GUI to remove every widget. Resetting those overrides restores the legacy
 fallback. Add `"settings"` to an explicit Nix/base layout to show its button.
 
 Popup size precedence is: `[bar.popup_sizes]` override, runtime
@@ -92,13 +92,70 @@ clock = [340, 320]
 These are currently fixed in `src/layout.rs` and will move to `[bar]` in a
 later pass:
 
-- Anchor — `Top`. Will become `[bar] anchor = ["top"]` (array because layer
-  shell anchors are bitflags).
 - Layer — `Top`. Will become `[bar] layer = "background" | "bottom" | "top" | "overlay"`.
 - Margins — `(0, 0, 0, 0)`. Will become `[bar] margin = [t, r, b, l]`.
 - Exclusive zone: follows `[bar] height`. A separate `[bar] exclusive_zone = N` may be added later.
 - Keyboard interactivity — `None` for the main bar/popup layer; modal dialogs use `Exclusive`. Will become `[bar] keyboard = "none" | "on-demand" | "exclusive"`.
-- Scale factor — `1.0`. Will become `[bar] scale = ...`.
+
+Top/bottom placement is already configured through `bar.position`. Native output
+and buffer scaling follow the compositor through the layer-shell backend.
+
+## Outputs and per-output bars
+
+The default `bar.outputs = []` retains one selected output, matching earlier
+single-bar behavior. Use `["*"]` for every connected output or a list of connector
+names for selected outputs. Selection changes apply live. One plugin model and
+subscription remains shared across all bar views.
+
+```toml
+[bar]
+outputs = ["*"]
+enabled = true
+position = "top"
+output_fallback = true
+height = 31
+start = ["launcher", "control-center", "settings"]
+center = ["clock"]
+
+[bar.profiles."DP-2"]
+position = "bottom"
+height = 44
+center = ["clock"]
+```
+
+Profiles support `width`, `height`, `transparent`, `position`, `start`, `center`
+and `end`; omitted fields inherit common settings. Profile widget arrays replace
+the corresponding common arrays. Dimensions and positions are logical units;
+native output/buffer scaling is handled by the layer-shell backend. Top bars place
+popups below; bottom bars place them above, with output-local input regions.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `bar.enabled` | bool | `true` | Show bars; IPC/settings/launcher/control center remain available when false. |
+| `bar.outputs` | string array | `[]` | One retained selected output, `["*"]` for all, or explicit names. |
+| `bar.position` | `"top"` / `"bottom"` | `"top"` | Common bar edge; may be overridden by profile. |
+| `bar.output_fallback` | bool | `true` | Fall back to a connected output if all selected outputs disappear. |
+| `monitor.refresh_seconds` | integer `1..3600` | `2` | Background inventory refresh interval; unchanged snapshots are suppressed. |
+
+View the read-only inventory in the Monitors settings page (Alt+6) or:
+
+```sh
+oxibar outputs
+oxibar status
+oxibar config set bar.outputs '["*"]'
+oxibar config set bar.profiles.DP-2.height 44
+```
+
+Hyprland IPC reports mode/scale/rotation/position/refresh and available modes;
+generic wl_output/xdg_output provides a Wayland fallback. Refresh rates retain
+fractional precision. Monitor discovery does not change display modes, compositor
+configuration or Nix-managed files.
+
+Hotplug creates/removes only the affected surfaces. Popup/modal/panel requests
+follow their originating bar; removed outputs dismiss owned surfaces while
+retaining plugin state. Unknown/retired window events cannot become bars. Plugins
+may optionally export `view_with_context` for output-aware views; existing views
+remain supported.
 
 ## Resident launcher
 
@@ -176,9 +233,55 @@ The socket is created with owner-only permissions and stale sockets are recovere
 on restart. Multiple independently controlled bars need distinct instance locks
 and socket paths. The CLI must read the same config/environment as its daemon.
 
+## Control center
+
+Open the `Controls` bar button or bind a compositor shortcut to:
+
+```sh
+oxibar control-center           # toggle
+oxibar control-center open
+oxibar control-center close
+```
+
+The center combines existing audio/media, network, Bluetooth, battery,
+notification and calendar controls in the resident host. Alt+number selects a
+provider tile; Escape closes this surface. The same plugin models/subscriptions
+serve bar, popup/panel and center, including password/pairing modals and
+notification actions/replies. Settings, launcher and center dismiss each other.
+
+```toml
+[control_center]
+enabled = true
+width = 680
+height = 760
+widgets = ["Audio", "Network", "Bluetooth", "Battery", "Notifications", "Clock"]
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | bool | `true` | Enable the overlay, bar control and open/toggle commands. |
+| `width` / `height` | integer `1..16384` | `680` / `760` | Overlay dimensions in logical units; live resize. |
+| `widgets` | string array | Six providers shown above | Ordered plugin names, matched case-insensitively and deduplicated. Empty means no controls. |
+
+Only running, available plugins with dedicated control-center or popup/panel
+content appear. Listing a provider here does not load/install its library;
+configure `plugins` and packaged libraries as usual. Plugins may optionally
+export `control_center_view`; legacy popup/panel content remains supported.
+
+Preferences apply live and are editable on the Control Center settings page
+(Alt+7). Tiles collapse to one column at narrow widths, and detail content scrolls.
+Opening from a bar targets that output; global commands use focused-output
+selection. Hiding bars retains the center; removing its output closes the surface
+without discarding plugin state.
+
+Selecting Notifications closes visible toasts and suppresses new notification
+toasts while that inbox is visible. Stored notifications remain available; later
+toasts resume after switching away or closing. Native backend migration and new
+brightness/power/session/OSD features remain tracked in `docs/SHELL_ROADMAP.md`.
+
 ## GUI settings and overrides
 
-Open from the settings bar control, launcher footer, or:
+Open from the settings bar control, launcher/control-center footer, or:
 
 ```sh
 oxibar settings
@@ -186,14 +289,18 @@ oxibar settings open
 oxibar settings close
 ```
 
-Pages cover Appearance, Bar/Layout, Launcher, Plugins and Advanced. Search spans
-all declared settings. Fields show effective value, base/default value, source
-and application mode. Text/number drafts save with Enter/Apply; checkbox/pick-list
+Pages cover Appearance, Bar/Layout, Launcher, Plugins, Advanced, Monitors and
+Control Center. Search spans all declared settings. Fields show effective value,
+base/default value, source
+and application mode. Text/number drafts save with Enter/Apply; switch/pick-list
 changes save immediately. Reset removes the GUI override and reveals the current
 base/default. The Advanced page edits sparse override TOML while preserving
 unknown plugin fields.
 
-Keyboard controls: Ctrl+F focuses search, Alt+1 through Alt+5 selects pages,
+Forms use spacious themed cards, normal-sized actions and switches. Desktop
+widths use category navigation on the left; narrow widths use a category picker.
+
+Keyboard controls: Ctrl+F focuses search, Alt+1 through Alt+7 selects pages,
 Tab/Shift+Tab traverses text fields, Enter applies a field, and Escape closes the
 settings surface. Settings access remains available when the launcher is disabled.
 
@@ -217,8 +324,10 @@ height then reveals 34. Unoverridden fields follow the regenerated base.
 ### Application modes
 
 - **Live / surface update:** bar transparency/order/geometry, launcher enablement,
-  dimensions and result limit, settings dimensions, application-provider terminal
-  and result limit, clock text size/bold/calendar command, notification default timeout.
+  dimensions and result limit, settings/control-center dimensions, control-center
+  enablement/order, output selection/profiles, inventory interval,
+  application-provider terminal and result limit, clock text size/bold/calendar
+  command, notification default timeout.
 - **Restart required:** font loading, plugin enable/disable/order, instance/control
   endpoint/startup policy, existing plugin poll timers and clock format granularity.
   Pending changes are displayed; loaded plugin models and system functionality stay

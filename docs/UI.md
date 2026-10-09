@@ -23,13 +23,34 @@
   live/surface/restart classification, with individual reset actions. Invalid edits
   remain visible without losing the running configuration. Continuous text edits
   are drafts; Enter/Apply accepts them. Busy operations preserve layout.
-- Use shared selectable rows, settings cards, checkbox/pick-list/input helpers and
+- Use shared selectable rows, settings cards, switch/pick-list/input helpers and
   themed editor styling from the workspace `oxiced` library.
+- Settings and control-center surfaces use Android-inspired grouped cards and
+  generous spacing within the existing palette: `padding_xl` outer/card padding,
+  `padding_lg`/`padding_xl` group gaps, `font_xxl` page titles, `font_lg` field labels
+  and `font_md` descriptions. Technical paths may use `font_sm`.
+- Use `oxi_plugin::surface_button` for normal settings/control-center actions,
+  `oxi_plugin::badge` for source/application-mode chips, and
+  `oxi_toggler::toggler` for themed boolean switches. Keep normal input padding;
+  compact bar-button sizing belongs to the bar.
+- Settings navigation uses a sidebar at desktop widths and a category pick-list
+  at narrow widths. Control-center tiles collapse to one column when narrow;
+  detail content scrolls inside host-owned chrome without duplicating service
+  subscriptions or repainting the full host surface.
+- Per-output bars may use independent layout, height, transparency and top/bottom
+  placement. Popups and detached input overlays remain local to their source bar;
+  all bars keep one shared model for each plugin.
+- Monitor settings expose read-only inventory and logical/pixel geometry. Physical
+  output changes remain compositor operations.
 
 ## Current Surfaces
 
-- Main bar background uses `OXITHEME.mantle` unless `[bar] transparent = true`; the bar spans the compositor-selected active output width unless `[bar] width` overrides it.
-- Popup, modal, and panel host surfaces use `OXITHEME.mantle`.
+- Each bar uses `OXITHEME.mantle` unless its effective transparency is enabled,
+  and spans its selected output width unless common/profile width overrides it.
+- Popup, modal, panel, settings and control-center host surfaces use `OXITHEME.mantle`.
 - Notification panel host surface remains on the bar output; toast host surfaces target the active monitor independently.
 - Popup open/close animation uses quick `Easing::EASE_OUT` timing to align with notification-center layer opening.
 - Plugins request host surfaces through `HOST_REQUEST_TOGGLE_POPUP`, `HOST_REQUEST_OPEN_MODAL`, `HOST_REQUEST_CLOSE_MODAL`, and `HOST_REQUEST_TOGGLE_PANEL`.
+- Control-center providers optionally export `control_center_view`; the host also
+  supports existing popup/panel views. `HOST_REQUEST_TOGGLE_CONTROL_CENTER` opens
+  the host surface, and settings/launcher/control-center dismiss each other.

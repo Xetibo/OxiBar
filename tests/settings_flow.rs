@@ -10,7 +10,7 @@ use toml::Value;
 #[test]
 fn live_height_changes_surface_and_input_region_without_replacing_plugins() {
     let mut host = TestHost::with_plugins([("Clock", FakePluginOptions::popup())]);
-    let bar = IcedId::unique();
+    let bar = host.main_window();
     host.drive(Message::LayerSurfaceResized(bar, 1920, 451));
     let messages = host.drive(Message::Settings(Action::Set(
         "bar.height".to_owned(),
@@ -20,14 +20,14 @@ fn live_height_changes_surface_and_input_region_without_replacing_plugins() {
     assert!(
         messages
             .iter()
-            .any(|message| matches!(message, Message::ResizeLayer(id, 0, 458) if *id == bar))
+            .any(|message| matches!(message, Message::ConfigureBar(id, config) if *id == bar && config.height == 38))
     );
     assert!(
         messages
             .iter()
             .any(|message| matches!(message, Message::SetExclusiveZone(id, 38) if *id == bar))
     );
-    assert!(messages.iter().any(|message| matches!(message, Message::SetPopupInputRegion { bar_size, .. } if bar_size.height == 38)));
+    assert!(messages.iter().any(|message| matches!(message, Message::SetBarInputRegion { bar_size, .. } if bar_size.height == 38)));
     assert!(host.restart_fields().is_empty());
     host.drive_plugin_record("Clock", "still alive");
     assert_eq!(host.seen_by_plugin("Clock"), ["still alive"]);

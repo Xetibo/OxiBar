@@ -47,6 +47,48 @@ use iced::window;
 use iced::{Border, Color, Element, Event, Length, Pixels, Rectangle, Size, Theme};
 use lilt::Animated;
 
+use crate::theme::theme_impl::OXITHEME;
+
+pub fn toggler<'a, M>(enabled: bool) -> widget::Toggler<'a, M> {
+    widget::toggler(enabled)
+        .size(OXITHEME.font_lg + OXITHEME.padding_sm)
+        .spacing(OXITHEME.padding_lg)
+        .text_size(OXITHEME.font_md)
+        .style(toggler_style)
+}
+
+fn toggler_style(_: &Theme, status: widget::toggler::Status) -> widget::toggler::Style {
+    use widget::toggler::Status;
+    let enabled = match status {
+        Status::Active { is_toggled }
+        | Status::Hovered { is_toggled }
+        | Status::Disabled { is_toggled } => is_toggled,
+    };
+    let background = match status {
+        Status::Hovered { .. } if enabled => OXITHEME.primary_hover,
+        Status::Hovered { .. } => OXITHEME.secondary_bg_hover,
+        Status::Disabled { .. } if enabled => OXITHEME.primary_bg,
+        _ if enabled => OXITHEME.primary,
+        _ => OXITHEME.secondary_bg,
+    };
+    widget::toggler::Style {
+        background: background.into(),
+        foreground: if enabled {
+            OXITHEME.text
+        } else {
+            OXITHEME.text_muted
+        }
+        .into(),
+        background_border_width: 0.0,
+        background_border_color: Color::TRANSPARENT,
+        foreground_border_width: 0.0,
+        foreground_border_color: Color::TRANSPARENT,
+        text_color: Some(OXITHEME.text),
+        border_radius: Some(OXITHEME.border_radius.into()),
+        padding_ratio: 0.1,
+    }
+}
+
 fn mix(a: Color, b: Color, factor: f32) -> Color {
     let b_amount = factor.clamp(0.0, 1.0);
     let a_amount = 1.0 - b_amount;

@@ -27,9 +27,35 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 ### Native System Backend Migration
 
 - Status: planned, with existing integrations retained as migration baselines.
-- Current state: audio and Bluetooth still use `pactl`/`bluetoothctl` for substantial device interaction. Reviewed ReSet backends provide native PulseAudio subscriptions, BlueZ object/property events and broader monitor adapters suitable for selective adaptation.
+- Current state: audio and Bluetooth still use `pactl`/`bluetoothctl` for substantial device interaction. The control center reuses these existing models/views without adding pollers. Reviewed ReSet backends provide native PulseAudio subscriptions, BlueZ object/property events and broader monitor adapters suitable for selective adaptation.
 - Migration requirements: cancellable/reconnecting backend owners, state/action parity, complete pairing-agent responses and protocol/version-aware display capabilities. The donor's placeholders, blocking waits, unsafe thread markers and coarse refresh rounding must be addressed rather than imported.
 - Target fix: the ReSet reuse workstream in `SHELL_ROADMAP.md`; keep existing plugin capabilities and themed Iced views throughout migration.
+
+### Remaining Control-center Services and OSDs
+
+- Status: composition implemented; additional service capabilities remain planned.
+- Current state: host-owned control-center selection, live preferences, source
+  routing and existing audio/network/Bluetooth/battery/notification/calendar views
+  work with one shared model/subscription per provider.
+- Gaps: brightness, power profiles, session actions and volume/brightness/media
+  OSDs remain future plugins/services. Native backend migration is a separate
+  parity/reconnect/cancellation workstream.
+- Target fix: complete milestone 4 incrementally, preserving existing actions and
+  avoiding one backend/poller per surface.
+
+### Output Inventory Refresh and Remaining Shell Capabilities
+
+- Status: initial multi-output slice implemented.
+- Current state: explicit surface registry, per-output profiles, hotplug
+  reconciliation and read-only Hyprland/Wayland inventory work. Inventory is
+  refreshed on background workers at `monitor.refresh_seconds` (default 2), and
+  unchanged snapshots do not redraw the UI.
+- Gaps: fully event-driven inventory and further compositor focus adapters remain
+  follow-ups. Generic Wayland output names/logical geometry do not provide global
+  focus, VRR/HDR state or persistent display configuration. Compositors without
+  output names retain compositor-selected placement.
+- Target fix: event-driven output service and optional display-settings backends;
+  do not conflate shell placement with display-mode/compositor ownership.
 
 ### Home Manager Plugin Path
 
@@ -68,11 +94,11 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ## UI Theme Debt
 
-### Settings Control Accessibility
+### Settings and Control-center Accessibility
 
 - Status: follow-up for the initial settings UI.
-- Current state: keyboard search, text-field traversal, Enter/Apply, category
-  shortcuts and window-scoped Escape work. Generic Iced button/checkbox keyboard
+- Current state: keyboard search, text-field traversal, Enter/Apply, category/tab
+  shortcuts and window-scoped Escape work. Generic Iced button/switch keyboard
   focus and screen-reader semantics are not yet uniformly exposed by shared controls.
 - Target fix: reusable focusable/accessible controls in `crates/oxiced`, with
   full form navigation and runtime checks as the settings pages expand.
@@ -87,7 +113,11 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 - Status: partially resolved.
 - Affected code: popup row actions in `plugins/bluetooth/src/lib.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, `plugins/tray/src/lib.rs`, plus workspace pills in `plugins/workspaces/src/lib.rs`.
-- Current state: `oxiced::widgets::oxi_plugin` provides shadowless bar buttons and flat background styles. Some popup row/action buttons still use local styles or `oxi_button::button`.
+- Current state: `oxiced::widgets::oxi_plugin` provides shadowless bar buttons,
+  normal-sized surface buttons, source/mode badges and flat background styles;
+  themed switches are shared through `oxi_toggler`. Settings/control-center actions
+  use these helpers. Some compact popup row/action buttons still use local styles
+  or `oxi_button::button`.
 - Target fix: migrate remaining compact popup row/action buttons to `oxi_plugin` helpers or add more helper variants as needed.
 
 ### Duplicated Bar Button Styling

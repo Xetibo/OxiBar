@@ -25,12 +25,20 @@
   writes, managed-symlink refusal, revision conflicts, invalid-input retention,
   live geometry/input-region actions, widget layout, retained plugin models and
   structured socket replies. Plugin tests cover live hook state preservation.
+- Multi-output: stable IDs, independent logical dimensions/profiles, popup/modal
+  source routing, output fallback/disable, hotplug cleanup, retained plugin models,
+  late task results and unknown-window rejection. Monitor parser tests preserve
+  fractional scale/rotation, negative coordinates and precise refresh rates.
+- Control center: optional capability/fallback selection, configured ordering and
+  deduplication, retained provider state, source-scoped async modals, overlay
+  dismissal, live resize/disable/reset, visible-inbox toast suppression, hidden-bar
+  retention, output-removal cleanup and late model updates.
 
 ## Expected Commands
 
 - `cargo fmt --all`
 - `nix develop -c cargo test --workspace`
-- `nix develop -c cargo clippy --workspace --all-targets`
+- `nix develop -c cargo clippy --workspace --all-targets -- -D warnings`
 - `nix build .#oxibar .#oxibar-audio` after Nix packaging changes, with more plugin package targets as needed.
 
 For this runner integration, build `oxibar`, `oxibar-applications`, and a retained
@@ -109,6 +117,59 @@ both base and library symlinks target that directory and `overrides.toml` is not
 managed. No real Home Manager activation is needed for this module check.
 
 Run commands through `nix develop` when the ambient Rust toolchain was installed through Nix or rustup with a Nix linker wrapper.
+
+## Multi-output Runtime Verification
+
+Use private XDG config/locks/socket and application/clock plugins. Set
+`bar.outputs = ["*"]`, compare actual layer widths with logical output geometry,
+and apply a named bottom/height profile without altering the other bars. Check
+`oxibar outputs`, the Monitor settings page, live output selection and settings
+access while `bar.enabled = false`.
+
+The isolated Hyprland smoke passed across three physical outputs, including a
+portrait output. A temporary headless output was added/removed to verify hotplug
+reconciliation; cleanup removed only that test output. Loaded plugin set remained
+Applications/Clock throughout. Deterministic tests cover source-owned surface
+cleanup and late background results.
+
+The same packaged smoke also passed with `HYPRLAND_INSTANCE_SIGNATURE` omitted,
+forcing the generic wl_output/xdg_output backend. This verifies protocol fallback
+inventory/geometry/hotplug on the running compositor; a separate Sway/Niri session
+has not been exercised. Existing settings/Nix-override smoke and the opt-in real
+runner dylib test also passed after the surface refactor.
+
+For limited temporary storage, build packages with `nix build --max-jobs 1 ...`:
+each final derivation unpacks the shared Crane artifact cache.
+
+## Control-center and Visual Runtime Verification
+
+Build the host and application/audio/battery/Bluetooth/clock/network/notification
+libraries with the same pinned toolchain. Use a private XDG config and distinct
+lock/socket. Test notifications on a private session bus with no service
+autoactivation, so fixtures do not involve the desktop notification daemon or
+start unrelated portal services.
+
+Check `oxibar control-center [open|close|toggle]`, Alt+number selection, scoped
+Escape, repeated reopen, live width/widget/enablement changes, and settings/
+launcher dismissal. Open the center while bars are hidden, and verify invalid
+dimensions retain the last valid state. Render every available provider, including
+the legacy calendar popup fallback.
+
+Send fixture notifications while another provider is selected, then select the
+inbox: visible toasts close and new notifications remain stored without toasts.
+Switch away and verify later toasts resume. Provider state and the loaded plugin
+set must survive close/reopen.
+
+Inspect settings/control-center screenshots at normal and narrow widths. Verify
+roomy themed cards/actions/switches, sidebar-to-picker and two-to-one-column
+transitions, scrollable content and consistent oxiced colors. Repeat the existing
+keyboard-driven settings/Nix-base regeneration scenario after form changes.
+
+The isolated packaged Hyprland scenario passed with all six control providers and
+seven loaded plugins, ten reopen cycles, live preferences and private-bus inbox/
+toast checks. Both width variants and the settings regression passed. Screenshots
+are private because compositor translucency may reveal desktop content. Workspace
+tests and strict Clippy passed; host and all seven library packages built with Nix.
 
 ## Coverage Goals
 

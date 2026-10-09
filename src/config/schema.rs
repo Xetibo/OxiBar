@@ -14,6 +14,44 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
     let count = Integer { min: 1, max: 50 };
     vec![
         SettingDescriptor::new(
+            "bar.enabled",
+            "Enable bars",
+            Boolean,
+            Some(Value::Boolean(true)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "bar.outputs",
+            "Bar outputs",
+            TextList,
+            Some(Value::Array(Vec::new())),
+            Surface,
+        )
+        .description(
+            "[\"*\"] shows a bar on every output; [] retains one compositor-selected output.",
+        ),
+        SettingDescriptor::new(
+            "bar.position",
+            "Bar edge",
+            SettingKind::Choice(vec!["top".to_owned(), "bottom".to_owned()]),
+            Some(Value::String("top".to_owned())),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "bar.output_fallback",
+            "Fallback when selected outputs disappear",
+            Boolean,
+            Some(Value::Boolean(true)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "monitor.refresh_seconds",
+            "Monitor inventory interval",
+            Integer { min: 1, max: 3600 },
+            Some(Value::Integer(2)),
+            Live,
+        ),
+        SettingDescriptor::new(
             "bar.height",
             "Bar height",
             dimension.clone(),
@@ -92,6 +130,49 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
             dimension.clone(),
             Some(Value::Integer(layout::DEFAULT_SETTINGS_SIZE.0 as i64)),
             Surface,
+        ),
+        SettingDescriptor::new(
+            "control_center.enabled",
+            "Enable control center",
+            Boolean,
+            Some(Value::Boolean(true)),
+            Live,
+        ),
+        SettingDescriptor::new(
+            "control_center.width",
+            "Control center width",
+            dimension.clone(),
+            Some(Value::Integer(layout::DEFAULT_CONTROL_CENTER_SIZE.0 as i64)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "control_center.height",
+            "Control center height",
+            dimension.clone(),
+            Some(Value::Integer(layout::DEFAULT_CONTROL_CENTER_SIZE.1 as i64)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "control_center.widgets",
+            "Control center widgets",
+            TextList,
+            Some(Value::Array(
+                [
+                    "Audio",
+                    "Network",
+                    "Bluetooth",
+                    "Battery",
+                    "Notifications",
+                    "Clock",
+                ]
+                .into_iter()
+                .map(|name| Value::String(name.to_owned()))
+                .collect(),
+            )),
+            Live,
+        )
+        .description(
+            "Ordered plugin names. Available control views share the running plugin models.",
         ),
         SettingDescriptor::new(
             "settings.height",
@@ -182,7 +263,16 @@ pub fn defaults(schema: &[SettingDescriptor]) -> Result<Table, String> {
 }
 
 pub fn validate(config: &Table, schema: &[SettingDescriptor]) -> Result<(), String> {
-    for section in ["bar", "launcher", "settings", "startup", "instance", "ipc"] {
+    for section in [
+        "bar",
+        "launcher",
+        "settings",
+        "control_center",
+        "startup",
+        "instance",
+        "ipc",
+        "monitor",
+    ] {
         if config.get(section).is_some_and(|value| !value.is_table()) {
             return Err(format!("{section}: expected a table"));
         }
@@ -213,7 +303,7 @@ pub fn validate(config: &Table, schema: &[SettingDescriptor]) -> Result<(), Stri
             }
         }
     }
-    Ok(())
+    super::bars::validate_profiles(config, schema)
 }
 
 pub fn validate_value(field: &SettingDescriptor, value: &Value) -> Result<(), String> {
@@ -271,6 +361,9 @@ pub struct HostConfig {
     pub launcher_size: (u32, u32),
     pub launcher_limit: usize,
     pub settings_size: (u32, u32),
+    pub control_center_enabled: bool,
+    pub control_center_size: (u32, u32),
+    pub control_center_widgets: Vec<String>,
 }
 
 pub(crate) fn fallback_layout(host: &HostConfig, overrides: &Table) -> bool {
@@ -316,6 +409,25 @@ impl HostConfig {
             launcher_size: (integer("launcher.width"), integer("launcher.height")),
             launcher_limit: integer("launcher.max_entries") as usize,
             settings_size: (integer("settings.width"), integer("settings.height")),
+            control_center_enabled: boolean("control_center.enabled"),
+            control_center_size: (
+                integer("control_center.width"),
+                integer("control_center.height"),
+            ),
+            control_center_widgets: list("control_center.widgets"),
         }
     }
+}
+
+pub(crate) fn fallback_widgets(host: &HostConfig, order: &[String]) -> Vec<String> {
+    host.launcher_enabled
+        .then_some("launcher".to_owned())
+        .into_iter()
+        .chain(
+            host.control_center_enabled
+                .then_some("control-center".to_owned()),
+        )
+        .chain(std::iter::once("settings".to_owned()))
+        .chain(order.iter().cloned())
+        .collect()
 }

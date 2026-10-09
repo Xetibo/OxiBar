@@ -18,8 +18,11 @@ consistent surfaces, a discoverable control center, immediate settings, and
 per-monitor widget editing. Its implementation stack is not a dependency.
 
 **Status:** milestone 0, milestone 1 and the initial GUI/settings slice of milestone
-2 are implemented. Multi-output shell surfaces and subsequent service/dock/widget/
-theme work remain planned. Shared `oxiced` now lives in this workspace.
+2 are implemented, plus the initial multi-output registry/inventory slice of
+milestone 3 and control-center composition from milestone 4. Settings/control-center
+surfaces use spacious Android-inspired grouping with the existing oxiced theme.
+Native services, OSDs, dock/widgets and live themes remain planned. Shared `oxiced`
+now lives in this workspace.
 
 ## Starting Point
 
@@ -125,6 +128,7 @@ Grow along existing modules before introducing additional workspace crates:
 | `src/shell/` | Surface registry, output routing, keyboard/focus policy, widget instances and interaction state |
 | `src/ipc.rs` / future `src/ipc/` | Versioned control protocol and typed commands into the daemon |
 | `src/settings/` | Iced settings screens and reusable schema-driven controls |
+| `src/control_center.rs` | Host-owned provider selection, embedded controls and surface lifecycle |
 | `src/services/` | Shared output/app/icon/session state and reusable system backends when several widgets need them |
 | `crates/oxibar-plugin-api` | Existing exports plus optional settings, view-context, runner, desktop-widget, and lifecycle capabilities |
 | `plugins/*` | Existing domain functionality, plugin-specific configuration and widget content |
@@ -285,15 +289,17 @@ installation. Revision/merge/invalid-input tests and packaged runtime smoke pass
 rebuild; changes survive daemon restart and `home-manager switch`; individual
 reset works; keyboard navigation is complete; restart-only settings are explicit.
 
-Current UI includes Appearance, Bar/Layout, Launcher, Plugins and Advanced pages,
-global search, source/reset controls, widget ordering, installed-library status,
-typed plugin fields and sparse TOML editing. It opens from bar, launcher or IPC.
+Current UI includes Appearance, Bar/Layout, Launcher, Plugins, Advanced, Monitors
+and Control Center pages, global search, source/reset controls, widget ordering,
+installed-library status, typed plugin fields and sparse TOML editing. It opens
+from bar, launcher, control center or IPC. Spacious oxiced cards/actions/switches
+and responsive sidebar/picker navigation retain the existing theme.
 Keyboard search, field traversal, Enter application, category shortcuts and Escape
-are supported. Further palette/preset/monitor/control-center settings follow their
-dependent milestones; generic button/checkbox keyboard accessibility remains a
+are supported. Further palette/preset/display-control settings follow their
+dependent milestones; generic button/switch keyboard accessibility remains a
 shared-control follow-up.
 
-### 3. Multi-output Shell Host — P1
+### 3. Multi-output Shell Host — Initial Slice Implemented, P1
 
 **Depends on:** milestone 1; can develop alongside milestone 2 once schema is fixed.
 
@@ -314,7 +320,14 @@ shared-control follow-up.
 notifications remain correctly routed; Escape affects only the active overlay;
 disabled/hidden surfaces release input and keyboard focus.
 
-### 4. Control Center and OSD — P1
+Implemented: explicit registered surface IDs, per-output top/bottom bars and
+profiles, source-aware popup/modal/panel routing, hotplug reconciliation, shared
+plugin state/subscriptions, optional context-aware views, read-only Hyprland and
+generic Wayland inventories, and monitor UI/IPC diagnostics. Tests and three-
+output/headless-hotplug smoke pass. Event-driven inventory and additional global-
+focus adapters remain follow-ups; current refresh is background/coalesced polling.
+
+### 4. Control Center and OSD — Composition Implemented, P1
 
 **Depends on:** milestones 2 and 3.
 
@@ -334,6 +347,15 @@ disabled/hidden surfaces release input and keyboard focus.
 **Acceptance:** the same state updates bar, panel and OSD consistently; one
 subscription/poller per domain; feature/availability fallback is visible; existing
 interactive plugin flows remain usable.
+
+Implemented: host-owned control center with optional dedicated views and legacy
+popup/panel fallbacks, ordered provider tiles, shared models/subscriptions, scoped
+keyboard navigation, live configuration, output ownership and retained async modal
+routing. Audio/network/Bluetooth/battery/notifications have embedded views; calendar
+uses its existing popup. Viewing the inbox suppresses toasts while retaining stored
+notifications. Tests and a private-bus packaged compositor scenario pass, including
+roomy/narrow layouts and repeated reopen. Native audio/BlueZ, brightness, power,
+session actions and OSDs remain the next part of this milestone.
 
 ### 5. Dock and Desktop Widgets — P1
 
@@ -410,9 +432,10 @@ not substitutes for presentation-time measurements.
 5. Verify with a read-only/symlinked base, simulated Nix regeneration and daemon
    restart. Then expand into milestones 3–5.
 
-All five steps are implemented and verified. Next implementation sequence:
-multi-output surface registry and ReSet-derived read-only output geometry, then
-control-center/native system adapters, then dock and desktop widget instances.
+All five steps are implemented and verified. Registry/read-only output geometry
+and control-center composition are also implemented. Next: native audio/BlueZ
+adapters and remaining control/OSD services, then dock and desktop widget instances,
+with inventory/focus refinements alongside.
 
 ## UX References
 

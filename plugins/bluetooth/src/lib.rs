@@ -263,60 +263,85 @@ pub extern "Rust" fn view(
 pub extern "Rust" fn popup_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    with_model_read::<Model, _>(&model, |model| {
-        let mut content = Column::new()
-            .spacing(OXITHEME.padding_sm)
-            .padding([OXITHEME.padding_md, OXITHEME.padding_lg])
-            .width(Length::Fill);
-        let scan = oxi_button::button(
-            text(if model.pending.is_some() {
-                "Working..."
-            } else {
-                "Scan"
-            })
-            .size(OXITHEME.font_md),
+    with_model_read::<Model, _>(&model, |model| vec![bluetooth_controls(model, false)])
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn control_center_view(
+    model: PluginModel,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| vec![bluetooth_controls(model, true)])
+}
+
+fn bluetooth_controls(model: &Model, embedded: bool) -> Element<'static, PluginMsg> {
+    let mut content = Column::new()
+        .spacing(if embedded {
+            OXITHEME.padding_lg
+        } else {
+            OXITHEME.padding_sm
+        })
+        .padding(if embedded {
+            [0.0, 0.0]
+        } else {
+            [OXITHEME.padding_md, OXITHEME.padding_lg]
+        })
+        .width(Length::Fill);
+    let label = if model.pending.is_some() {
+        "Working..."
+    } else {
+        "Scan"
+    };
+    let scan = if embedded {
+        oxi_plugin::surface_button(text(label).size(OXITHEME.font_md), false)
+    } else {
+        oxi_button::button(
+            text(label).size(OXITHEME.font_md),
             oxi_button::ButtonVariant::SecondaryBg,
         )
-        .on_press(msg(Message::Scan))
-        .padding([OXITHEME.padding_xs, OXITHEME.padding_sm]);
-        content = content.push(
-            Row::new()
-                .push(section_title("Bluetooth"))
-                .push(Space::new().width(Length::Fill))
-                .push(scan)
-                .align_y(Alignment::Center),
-        );
+        .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
+    }
+    .on_press(msg(Message::Scan));
+    content = content.push(
+        Row::new()
+            .push(section_title("Bluetooth"))
+            .push(Space::new().width(Length::Fill))
+            .push(scan)
+            .align_y(Alignment::Center),
+    );
 
-        content = content.push(section_title("Connected Devices"));
-        if model.connected.is_empty() {
-            content = content.push(empty_text("No connected devices"));
-        } else {
-            for device in &model.connected {
-                content = content.push(device_card(
-                    device,
-                    true,
-                    model.pending.is_some(),
-                    model.hovered.as_deref() == Some(device.mac.as_str()),
-                ));
-            }
+    content = content.push(section_title("Connected Devices"));
+    if model.connected.is_empty() {
+        content = content.push(empty_text("No connected devices"));
+    } else {
+        for device in &model.connected {
+            content = content.push(device_card(
+                device,
+                true,
+                model.pending.is_some(),
+                model.hovered.as_deref() == Some(device.mac.as_str()),
+            ));
         }
+    }
 
-        content = content.push(section_title("Available Devices"));
-        if model.available.is_empty() {
-            content = content.push(empty_text("No pairable devices found"));
-        } else {
-            for device in &model.available {
-                content = content.push(device_card(
-                    device,
-                    false,
-                    model.pending.is_some(),
-                    model.hovered.as_deref() == Some(device.mac.as_str()),
-                ));
-            }
+    content = content.push(section_title("Available Devices"));
+    if model.available.is_empty() {
+        content = content.push(empty_text("No pairable devices found"));
+    } else {
+        for device in &model.available {
+            content = content.push(device_card(
+                device,
+                false,
+                model.pending.is_some(),
+                model.hovered.as_deref() == Some(device.mac.as_str()),
+            ));
         }
+    }
 
-        vec![scrollable(content).height(Length::Fill).into()]
-    })
+    if embedded {
+        content.into()
+    } else {
+        scrollable(content).height(Length::Fill).into()
+    }
 }
 
 #[unsafe(no_mangle)]

@@ -35,7 +35,11 @@ pub const POPUP_CONNECTOR_HEIGHT: u32 = 0;
 pub const MODAL_SIZE: (u32, u32) = (460, 300);
 pub const DEFAULT_LAUNCHER_SIZE: (u32, u32) = (600, 600);
 pub const DEFAULT_SETTINGS_SIZE: (u32, u32) = (960, 720);
+pub const DEFAULT_CONTROL_CENTER_SIZE: (u32, u32) = (680, 760);
+pub const CONTROL_CENTER_SINGLE_COLUMN_WIDTH: u32 = 480;
 pub const SETTINGS_EDITOR_HEIGHT: f32 = 220.0;
+pub const SETTINGS_NAV_WIDTH: f32 = 192.0;
+pub const SETTINGS_NAV_BREAKPOINT: u32 = 800;
 pub const MAX_HOST_SURFACE_DIMENSION: i64 = 16_384;
 pub const PANEL_WIDTH: u32 = 420;
 pub const TOAST_MARGIN_TOP: i32 = 16;
@@ -77,6 +81,7 @@ pub(crate) fn layer_shell_settings(config: &Table) -> Settings {
             layer: Layer::Top,
             margin: WINDOW_MARGINS,
             keyboard_interactivity: WINDOW_KEYBOARD_MODE,
+            start_mode: iced_layershell::settings::StartMode::Background,
             ..Default::default()
         },
         ..Default::default()

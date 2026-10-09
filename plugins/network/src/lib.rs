@@ -300,72 +300,95 @@ pub extern "Rust" fn view(
 pub extern "Rust" fn popup_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    with_model_read::<Model, _>(&model, |model| {
-        let mut content = Column::new()
-            .spacing(OXITHEME.padding_sm)
-            .padding([OXITHEME.padding_md, OXITHEME.padding_lg])
-            .width(Length::Fill);
+    with_model_read::<Model, _>(&model, |model| vec![network_controls(model, false)])
+}
 
-        let refresh = oxi_button::button(
-            text(if model.pending.is_some() {
-                "Working..."
-            } else {
-                "Refresh"
-            })
-            .size(OXITHEME.font_md),
+#[unsafe(no_mangle)]
+pub extern "Rust" fn control_center_view(
+    model: PluginModel,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| vec![network_controls(model, true)])
+}
+
+fn network_controls(model: &Model, embedded: bool) -> Element<'static, PluginMsg> {
+    let mut content = Column::new()
+        .spacing(if embedded {
+            OXITHEME.padding_lg
+        } else {
+            OXITHEME.padding_sm
+        })
+        .padding(if embedded {
+            [0.0, 0.0]
+        } else {
+            [OXITHEME.padding_md, OXITHEME.padding_lg]
+        })
+        .width(Length::Fill);
+
+    let label = if model.pending.is_some() {
+        "Working..."
+    } else {
+        "Refresh"
+    };
+    let refresh = if embedded {
+        oxi_plugin::surface_button(text(label).size(OXITHEME.font_md), false)
+    } else {
+        oxi_button::button(
+            text(label).size(OXITHEME.font_md),
             oxi_button::ButtonVariant::SecondaryBg,
         )
-        .on_press(msg(Message::Refresh))
-        .padding([OXITHEME.padding_xs, OXITHEME.padding_sm]);
-        content = content.push(
-            Row::new()
-                .push(section_title("Connected"))
-                .push(Space::new().width(Length::Fill))
-                .push(refresh)
-                .align_y(Alignment::Center),
-        );
+        .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
+    }
+    .on_press(msg(Message::Refresh));
+    content = content.push(
+        Row::new()
+            .push(section_title("Connected"))
+            .push(Space::new().width(Length::Fill))
+            .push(refresh)
+            .align_y(Alignment::Center),
+    );
 
-        if model.connected.is_empty() {
-            content = content.push(empty_text("No active connections"));
-        } else {
-            for network in &model.connected {
-                content = content.push(active_row(
-                    network,
-                    model.pending.is_some(),
-                    model.hovered_entry.as_deref()
-                        == Some(entry_key("active", &network.uuid).as_str()),
-                ));
-            }
+    if model.connected.is_empty() {
+        content = content.push(empty_text("No active connections"));
+    } else {
+        for network in &model.connected {
+            content = content.push(active_row(
+                network,
+                model.pending.is_some(),
+                model.hovered_entry.as_deref() == Some(entry_key("active", &network.uuid).as_str()),
+            ));
         }
+    }
 
-        content = content.push(section_title("Available Wi-Fi"));
-        if model.wifi.is_empty() {
-            content = content.push(empty_text("No Wi-Fi networks found"));
-        } else {
-            for network in &model.wifi {
-                content = content.push(wifi_row(
-                    network,
-                    model.pending.is_some(),
-                    model.hovered_entry.as_deref()
-                        == Some(entry_key("wifi", &network.ssid).as_str()),
-                ));
-            }
+    content = content.push(section_title("Available Wi-Fi"));
+    if model.wifi.is_empty() {
+        content = content.push(empty_text("No Wi-Fi networks found"));
+    } else {
+        for network in &model.wifi {
+            content = content.push(wifi_row(
+                network,
+                model.pending.is_some(),
+                model.hovered_entry.as_deref() == Some(entry_key("wifi", &network.ssid).as_str()),
+            ));
         }
+    }
 
-        content = content.push(saved_connections_accordion(model));
-        if model.saved_expanded {
-            for connection in &model.saved {
-                content = content.push(saved_row(
-                    connection,
-                    model.pending.is_some(),
-                    model.hovered_entry.as_deref()
-                        == Some(entry_key("saved", &connection.uuid).as_str()),
-                ));
-            }
+    content = content.push(saved_connections_accordion(model));
+    if model.saved_expanded {
+        for connection in &model.saved {
+            content = content.push(saved_row(
+                connection,
+                model.pending.is_some(),
+                model.hovered_entry.as_deref()
+                    == Some(entry_key("saved", &connection.uuid).as_str()),
+            ));
         }
+    }
 
-        vec![scrollable(content).height(Length::Fill).into()]
-    })
+    if embedded {
+        content.into()
+    } else {
+        scrollable(content).height(Length::Fill).into()
+    }
 }
 
 #[unsafe(no_mangle)]

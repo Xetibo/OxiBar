@@ -15,6 +15,7 @@ use crate::{
         render_plugin, render_plugin_modal, render_plugin_panel, render_plugin_popup,
         render_plugin_toast,
     },
+    shell::SurfaceKind,
 };
 
 const PANEL_BODY_INSET: u32 = POPUP_CONNECTOR_PADDING / 2;
@@ -28,40 +29,50 @@ const POPUP_SURFACE_RADIUS: f32 = PANEL_RADIUS;
 
 impl OxiBar {
     pub(crate) fn view(&self, id: IcedId) -> Element<'_, Message> {
-        if self.settings.window_id == Some(id) {
-            return self.settings_view();
-        }
-        if self.launcher.window_id == Some(id) {
-            return self.launcher.view();
-        }
-        if self.modal_window_id == Some(id) {
-            return self.modal_surface_view();
-        }
-        if self.panel_window_id == Some(id) {
-            return self.panel_surface_view();
-        }
-        if self.toasts.iter().any(|toast| toast.window_id == id) {
-            return self.toast_surface_view(id);
-        }
-        self.bar_surface_view()
+        let content = match self.shell.registry.get(id).map(|record| &record.kind) {
+            Some(SurfaceKind::Settings) => self.settings_view(),
+            Some(SurfaceKind::ControlCenter) => self.control_center_view(),
+            Some(SurfaceKind::Launcher) => self.launcher.view(),
+            Some(SurfaceKind::Modal(_)) => self.modal_surface_view(),
+            Some(SurfaceKind::Panel(_)) => self.panel_surface_view(),
+            Some(SurfaceKind::Toast(_, _)) => self.toast_surface_view(id),
+            Some(SurfaceKind::Bar(_)) => self.bar_surface_view(id),
+            None => return self.empty_surface(),
+        };
+        content.map(move |message| Message::FromSurface(id, Box::new(message)))
     }
 
-    fn bar_surface_view(&self) -> Element<'_, Message> {
-        let start = Container::new(Row::from_vec(self.render_section(&self.start_widgets)))
-            .align_x(Alignment::Start)
-            .align_y(Alignment::Center)
-            .width(Length::Fill)
-            .height(Length::Fill);
-        let center = Container::new(Row::from_vec(self.render_section(&self.center_widgets)))
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
-            .width(Length::Fill)
-            .height(Length::Fill);
-        let end = Container::new(Row::from_vec(self.render_section(&self.end_widgets)))
-            .align_x(Alignment::End)
-            .align_y(Alignment::Center)
-            .width(Length::Fill)
-            .height(Length::Fill);
+    fn bar_surface_view(&self, id: IcedId) -> Element<'_, Message> {
+        let Some(instance) = self.shell.bar(id) else {
+            return self.empty_surface();
+        };
+        let start = Container::new(Row::from_vec(self.render_section(
+            id,
+            "start",
+            &instance.config.start,
+        )))
+        .align_x(Alignment::Start)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill);
+        let center = Container::new(Row::from_vec(self.render_section(
+            id,
+            "center",
+            &instance.config.center,
+        )))
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill);
+        let end = Container::new(Row::from_vec(self.render_section(
+            id,
+            "end",
+            &instance.config.end,
+        )))
+        .align_x(Alignment::End)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill);
 
         let row = Row::new()
             .push(start)
@@ -69,7 +80,7 @@ impl OxiBar {
             .push(end)
             .width(Length::Fill)
             .height(Length::Fill);
-        let transparent = self.transparent;
+        let transparent = instance.config.transparent;
 
         let bar = Container::new(row)
             .style(move |theme: &Theme| Self::box_style(theme, transparent))
@@ -77,18 +88,21 @@ impl OxiBar {
             .align_x(Alignment::Center)
             .align_y(Alignment::Center)
             .width(Length::Fill)
-            .height(self.bar_size.height as f32);
+            .height(instance.size.height as f32);
 
-        Container::new(
+        let popup = self.animated_popup_row(id);
+        let column = if instance.config.position == crate::config::bars::Position::Bottom {
             Column::new()
+                .push(Space::new().height(Length::Fill))
+                .push(popup)
                 .push(bar)
-                .push(self.animated_popup_row())
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        } else {
+            Column::new().push(bar).push(popup)
+        };
+        Container::new(column.width(Length::Fill).height(Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     fn modal_surface_view(&self) -> Element<'_, Message> {
@@ -200,8 +214,8 @@ impl OxiBar {
             .into()
     }
 
-    fn animated_popup_row(&self) -> Element<'_, Message> {
-        let target = if self.popup_open {
+    fn animated_popup_row(&self, id: IcedId) -> Element<'_, Message> {
+        let target = if self.popup_open && self.shell.popup_bar == Some(id) {
             self.popup_plugin
                 .as_deref()
                 .map(|plugin_id| self.popup_metrics(plugin_id))
@@ -222,7 +236,7 @@ impl OxiBar {
             } else {
                 height
             };
-            Container::new(self.popup_row(height, input_height))
+            Container::new(self.popup_row(id, height, input_height))
                 .width(Length::Fill)
                 .height(input_height.max(1.0))
                 .clip(!has_detached_overlay)
@@ -233,7 +247,15 @@ impl OxiBar {
         .into()
     }
 
-    fn popup_row(&self, visible_height: f32, input_height: f32) -> Element<'_, Message> {
+    fn popup_row(
+        &self,
+        id: IcedId,
+        visible_height: f32,
+        input_height: f32,
+    ) -> Element<'_, Message> {
+        if self.shell.popup_bar != Some(id) {
+            return Space::new().height(input_height.max(1.0)).into();
+        }
         let empty = || Space::new().into();
         let Some(plugin_id) = self.popup_plugin.as_deref() else {
             return Space::new().height(input_height.max(1.0)).into();
@@ -242,7 +264,7 @@ impl OxiBar {
             Element<'_, Message>,
             Element<'_, Message>,
             Element<'_, Message>,
-        ) = match self.plugin_section(plugin_id) {
+        ) = match self.plugin_section_on(id, plugin_id) {
             crate::layout::BarSection::Start => (
                 self.popup_view(plugin_id, visible_height, input_height),
                 empty(),
@@ -342,10 +364,16 @@ impl OxiBar {
             .into()
     }
 
-    fn render_section(&self, names: &[String]) -> Vec<Element<'static, Message>> {
+    fn render_section(
+        &self,
+        source: IcedId,
+        section: &str,
+        names: &[String],
+    ) -> Vec<Element<'static, Message>> {
         names
             .iter()
-            .flat_map(|name| {
+            .enumerate()
+            .flat_map(|(index, name)| {
                 if name.eq_ignore_ascii_case("settings") {
                     return vec![
                         oxiced::widgets::oxi_plugin::bar_button(
@@ -368,6 +396,21 @@ impl OxiBar {
                         Vec::new()
                     };
                 }
+                if name.eq_ignore_ascii_case("control-center") {
+                    return if self.config.snapshot.host.control_center_enabled {
+                        vec![
+                            oxiced::widgets::oxi_plugin::bar_button(
+                                iced::widget::text("Controls").size(OXITHEME.font_md),
+                            )
+                            .on_press(Message::ControlCenter(
+                                crate::control_center::Action::Toggle,
+                            ))
+                            .into(),
+                        ]
+                    } else {
+                        Vec::new()
+                    };
+                }
                 let Some((key, (model, funcs))) = self
                     .plugins
                     .iter()
@@ -381,7 +424,37 @@ impl OxiBar {
                     return Vec::new();
                 };
                 let id = key.clone();
-                render_plugin(funcs, model)
+                let elements = if let Some(view) = funcs.context_view {
+                    let output = self.output_for_bar(Some(source));
+                    let scale = self
+                        .shell
+                        .inventory
+                        .as_ref()
+                        .and_then(|inventory| {
+                            inventory
+                                .outputs
+                                .iter()
+                                .find(|item| Some(&item.name) == output.as_ref())
+                        })
+                        .map(|output| output.scale)
+                        .unwrap_or(1.0);
+                    let context = oxibar_plugin_api::PluginViewContext {
+                        instance_id: format!(
+                            "{}:{section}:{id}:{}",
+                            output.as_deref().unwrap_or("default"),
+                            names[..index]
+                                .iter()
+                                .filter(|prior| prior.eq_ignore_ascii_case(name))
+                                .count()
+                        ),
+                        output_name: output,
+                        output_scale: scale,
+                    };
+                    unsafe { view(model.clone(), context) }.unwrap_or_default()
+                } else {
+                    render_plugin(funcs, model)
+                };
+                elements
                     .into_iter()
                     .map(move |el| {
                         let id = id.clone();
