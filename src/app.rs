@@ -387,6 +387,23 @@ impl OxiBar {
             Message::Exit => std::process::exit(0),
             Message::OutputsChanged(result) => self.outputs_changed(result),
             Message::SurfaceClosed(id) => self.surface_closed(id),
+            Message::ModalEscape(id) => {
+                if self.modal_window_id == Some(id) {
+                    self.close_modal()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::ModalFocus(id, forward) => {
+                if self.modal_window_id != Some(id) {
+                    return Task::none();
+                }
+                if forward {
+                    iced::widget::operation::focus_next()
+                } else {
+                    iced::widget::operation::focus_previous()
+                }
+            }
             Message::FromSurface(id, message) => self.source_message(id, *message),
             Message::PluginTask(source, message) => {
                 if let Some(id) = source
@@ -794,7 +811,6 @@ impl OxiBar {
         }
 
         let id = IcedId::unique();
-        let close_existing = self.modal_window_id.take();
         let owner = self
             .shell
             .plugin_origins
@@ -806,29 +822,22 @@ impl OxiBar {
         } else {
             self.output_for_bar(owner).or_else(|| self.overlay_output())
         };
+        let close_existing = self.close_modal();
         self.register_overlay(
             id,
             SurfaceKind::Modal(plugin_id.clone()),
             owner,
             output.clone(),
         );
-        if let Some(existing) = close_existing {
-            self.shell.registry.remove(existing);
-        }
         self.modal_plugin = Some(plugin_id);
         self.modal_window_id = Some(id);
-
-        if let Some(existing) = close_existing {
-            Task::done(Message::CloseModalLayer(existing)).chain(Task::done(Message::OnOutput(
-                output,
-                Box::new(Message::OpenModalLayer(id)),
-            )))
-        } else {
+        Task::batch([
+            close_existing,
             Task::done(Message::OnOutput(
                 output,
                 Box::new(Message::OpenModalLayer(id)),
-            ))
-        }
+            )),
+        ])
     }
 
     fn toggle_plugin_panel(&mut self, plugin_id: String) -> Task<Message> {
@@ -905,12 +914,41 @@ impl OxiBar {
     }
 
     pub(crate) fn close_modal(&mut self) -> Task<Message> {
-        self.modal_plugin = None;
+        let plugin = self.modal_plugin.take();
         let Some(id) = self.modal_window_id.take() else {
             return Task::none();
         };
         self.shell.registry.remove(id);
-        Task::done(Message::CloseModalLayer(id))
+        Task::batch([
+            self.modal_close_callback(plugin.as_deref(), id),
+            Task::done(Message::CloseModalLayer(id)),
+        ])
+    }
+
+    pub(crate) fn modal_close_callback(
+        &self,
+        plugin: Option<&str>,
+        source: IcedId,
+    ) -> Task<Message> {
+        let Some(plugin) = plugin else {
+            return Task::none();
+        };
+        let Some((model, funcs)) = self.plugins.get(plugin) else {
+            return Task::none();
+        };
+        let Some(callback) = funcs.modal_closed else {
+            return Task::none();
+        };
+        let Some(task) = (unsafe { callback(model.clone()) }) else {
+            return Task::none();
+        };
+        let plugin = plugin.to_owned();
+        task.map(move |message| {
+            Message::PluginTask(
+                Some(source),
+                Box::new(crate::messages::map_plugin_message(plugin.clone(), message)),
+            )
+        })
     }
 
     fn show_plugin_toast(&mut self, plugin_id: String, request: HostToastRequest) -> Task<Message> {
@@ -1065,6 +1103,7 @@ impl OxiBar {
         ));
         subs.push(event::listen_with(settings::key_event));
         subs.push(event::listen_with(control_center::key_event));
+        subs.push(event::listen_with(crate::surfaces::modal_key_event));
         subs.push(Subscription::run_with(
             self.config.endpoint.clone(),
             ipc::listen_endpoint,

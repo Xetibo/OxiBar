@@ -27,6 +27,7 @@ const MAX_DRIVE_STEPS: usize = 32;
 pub struct FakePluginOptions {
     pub popup: bool,
     pub modal: bool,
+    pub modal_closed: bool,
     pub panel: bool,
     pub toast: bool,
     pub popup_size: Option<(u32, u32)>,
@@ -327,6 +328,10 @@ impl TestHost {
         self.bar.modal_window_id.is_some()
     }
 
+    pub fn modal_window(&self) -> Option<IcedId> {
+        self.bar.modal_window_id
+    }
+
     pub fn panel_plugin(&self) -> Option<&str> {
         self.bar.panel_plugin.as_deref()
     }
@@ -442,6 +447,7 @@ fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
         subscription: fake_subscription,
         popup_view: options.popup.then_some(fake_popup_view),
         modal_view: options.modal.then_some(fake_modal_view),
+        modal_closed: options.modal_closed.then_some(fake_modal_closed),
         panel_view: options.panel.then_some(fake_panel_view),
         toast_view: options.toast.then_some(fake_toast_view),
         runner_query: options.runner.then_some(fake_runner_query),
@@ -465,6 +471,19 @@ unsafe extern "Rust" fn fake_model_fn(
     _global_config: Table,
 ) -> (PluginModel, Option<Task<PluginMsg>>) {
     (fake_model(None), None)
+}
+
+unsafe extern "Rust" fn fake_modal_closed(model: PluginModel) -> Option<Task<PluginMsg>> {
+    model
+        .write()
+        .unwrap()
+        .downcast_mut::<FakePluginModel>()
+        .unwrap()
+        .seen
+        .push("modal closed".to_owned());
+    Some(Task::done(
+        Arc::new(FakePluginMessage::Record("modal cleanup".to_owned())) as PluginMsg,
+    ))
 }
 
 unsafe extern "Rust" fn fake_popup_metrics(model: PluginModel) -> PluginPopupMetrics {

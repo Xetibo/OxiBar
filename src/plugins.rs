@@ -27,10 +27,10 @@ use std::sync::Arc;
 use libloading::Library;
 use oxibar_plugin_api::{
     ABI_VERSION, AbiVersionFn, AvailabilityFn, ConfigChangedFn, ContextViewFn, ControlCenterViewFn,
-    ErrorsFn, LaunchFn, MetadataFn, ModalViewFn, ModelFn, NameFn, PanelViewFn, PluginAvailability,
-    PluginMetadata, PluginModel, PluginMsg, PluginPopupMetrics, PopupMetricsFn, PopupViewFn,
-    RunnerEntriesFn, RunnerQueryFn, SettingsSchemaFn, SubscriptionFn, ToastViewFn, UpdateFn,
-    ViewFn,
+    ErrorsFn, LaunchFn, MetadataFn, ModalClosedFn, ModalViewFn, ModelFn, NameFn, PanelViewFn,
+    PluginAvailability, PluginMetadata, PluginModel, PluginMsg, PluginPopupMetrics, PopupMetricsFn,
+    PopupViewFn, RunnerEntriesFn, RunnerQueryFn, SettingsSchemaFn, SubscriptionFn, ToastViewFn,
+    UpdateFn, ViewFn,
 };
 use toml::Table;
 use tracing::{error, info, warn};
@@ -58,6 +58,7 @@ pub struct PluginFuncs {
     pub subscription: SubscriptionFn,
     pub popup_view: Option<PopupViewFn>,
     pub modal_view: Option<ModalViewFn>,
+    pub modal_closed: Option<ModalClosedFn>,
     pub panel_view: Option<PanelViewFn>,
     pub toast_view: Option<ToastViewFn>,
     pub runner_query: Option<RunnerQueryFn>,
@@ -177,6 +178,7 @@ unsafe fn load_one(
     let subscription: SubscriptionFn = unsafe { resolve(&lib, "subscription")? };
     let popup_view: Option<PopupViewFn> = unsafe { resolve_optional(&lib, "popup_view") };
     let modal_view: Option<ModalViewFn> = unsafe { resolve_optional(&lib, "modal_view") };
+    let modal_closed = unsafe { resolve_optional(&lib, "modal_closed") };
     let panel_view: Option<PanelViewFn> = unsafe { resolve_optional(&lib, "panel_view") };
     let toast_view: Option<ToastViewFn> = unsafe { resolve_optional(&lib, "toast_view") };
     let runner_query = unsafe { resolve_optional(&lib, "runner_query") };
@@ -209,6 +211,7 @@ unsafe fn load_one(
             subscription,
             popup_view,
             modal_view,
+            modal_closed,
             panel_view,
             toast_view,
             runner_query,

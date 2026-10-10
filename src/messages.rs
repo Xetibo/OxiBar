@@ -59,6 +59,8 @@ pub enum Message {
     TogglePluginPanel(String),
     OpenPluginModal(String),
     ClosePluginModal(String),
+    ModalEscape(IcedId),
+    ModalFocus(IcedId, bool),
     SetPopupPlugin(Option<String>),
     SetPopupOpen(bool),
     LayerSurfaceResized(IcedId, u32, u32),

@@ -1,13 +1,12 @@
-//! Audio management plugin backed by PulseAudio/PipeWire `pactl` and MPRIS.
+//! Shared native PulseAudio/PipeWire device state and asynchronous MPRIS controls.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use iced::{
     Alignment, Background, Border, Color, ContentFit, Element, Length, Shadow, Task,
-    futures::Stream,
-    stream,
-    widget::{Column, Container, Row, Space, image, text},
+    futures::{Stream, StreamExt},
+    widget::{Column, Container, Row, Space, image, scrollable, text},
 };
 use iced_anim::{AnimationBuilder, Motion};
 use oxibar_plugin_api::{
@@ -18,16 +17,19 @@ use oxiced::{
     theme::theme_impl::OXITHEME,
     widgets::{
         oxi_button, oxi_picklist, oxi_plugin, oxi_plugin::text_muted, oxi_plugin::text_primary,
-        oxi_slider,
+        oxi_slider, oxi_toggler,
     },
 };
 
+#[cfg(test)]
+mod integration_tests;
+mod native;
 mod system;
+mod worker;
 
 use system::{
-    AudioDevice, AudioSnapshot, DeviceChoice, DeviceKind, PlayerAction, PlayerInfo, control_player,
-    load_snapshot, local_art_path, selected_device, set_default_device, set_device_volume,
-    set_player_volume,
+    AudioDevice, AudioSnapshot, DeviceAction, DeviceChoice, DeviceKind, DeviceSnapshot,
+    PlayerAction, PlayerInfo, control_player, local_art_path, selected_device, set_player_volume,
 };
 
 const DEFAULT_POLL_SECONDS: u64 = 4;
@@ -35,16 +37,27 @@ const DEFAULT_POLL_SECONDS: u64 = 4;
 #[unsafe(no_mangle)]
 pub extern "Rust" fn settings_schema() -> Vec<oxibar_plugin_api::SettingDescriptor> {
     use oxibar_plugin_api::{ApplyMode, SettingDescriptor, SettingKind, toml::Value};
-    vec![SettingDescriptor::new(
-        "audio.poll_seconds",
-        "Audio polling interval",
-        SettingKind::Integer {
-            min: 1,
-            max: i64::MAX,
-        },
-        Some(Value::Integer(DEFAULT_POLL_SECONDS as i64)),
-        ApplyMode::Restart,
-    )]
+    vec![
+        SettingDescriptor::new(
+            "audio.backend",
+            "Audio backend",
+            SettingKind::Choice(vec!["native".to_owned(), "pactl".to_owned()]),
+            Some(Value::String("native".to_owned())),
+            ApplyMode::Restart,
+        )
+        .description("Native PulseAudio/PipeWire events, or explicit pactl compatibility mode."),
+        SettingDescriptor::new(
+            "audio.poll_seconds",
+            "Media refresh interval",
+            SettingKind::Integer {
+                min: 1,
+                max: i64::MAX,
+            },
+            Some(Value::Integer(DEFAULT_POLL_SECONDS as i64)),
+            ApplyMode::Restart,
+        )
+        .description("MPRIS refresh interval; also refreshes devices in pactl compatibility mode."),
+    ]
 }
 const AUDIO_ICON: &str = "󰕾";
 const POPUP_SIZE: (u32, u32) = (460, 420);
@@ -52,23 +65,82 @@ const ARTWORK_PREVIEW_SIZE: u32 = 76;
 const ARTWORK_ICON_SIZE: f32 = 30.0;
 const MAX_DEVICE_VOLUME: u8 = 150;
 
-static POLL_INTERVAL: OnceLock<Duration> = OnceLock::new();
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Backend {
+    #[default]
+    Native,
+    Pactl,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActionTarget {
+    Media,
+    Devices,
+    NativeDevices,
+}
+
+#[derive(Clone, Default)]
+struct SubscriptionConfig {
+    interval: Option<Duration>,
+    client: Option<Weak<native::Client>>,
+}
+
+static SUBSCRIPTION_CONFIG: OnceLock<Mutex<SubscriptionConfig>> = OnceLock::new();
+
+fn subscription_config() -> &'static Mutex<SubscriptionConfig> {
+    SUBSCRIPTION_CONFIG.get_or_init(Mutex::default)
+}
 
 #[derive(Debug)]
 struct Model {
     snapshot: AudioSnapshot,
     pending: Option<String>,
     errors: Vec<String>,
+    backend: Backend,
+    native: Option<Arc<native::Client>>,
+    device_error: Option<String>,
+    device_refreshing: bool,
+    device_refresh_again: bool,
+    media_refreshing: Option<u64>,
+    media_refresh_again: bool,
+    media_generation: u64,
+    action_generation: u64,
+    media_action_generation: u64,
+    device_action_generation: u64,
 }
 
 impl Model {
     fn new(global_config: Table) -> Self {
         let poll_seconds = read_poll_interval(&global_config);
-        let _ = POLL_INTERVAL.set(Duration::from_secs(poll_seconds));
+        let backend = read_backend(&global_config);
+        let native = (backend == Backend::Native)
+            .then(native::Client::new)
+            .transpose();
+        let (native, errors) = match native {
+            Ok(client) => (client, Vec::new()),
+            Err(error) => (None, vec![error]),
+        };
+        *subscription_config()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = SubscriptionConfig {
+            interval: Some(Duration::from_secs(poll_seconds)),
+            client: native.as_ref().map(Arc::downgrade),
+        };
         Self {
             snapshot: AudioSnapshot::default(),
             pending: None,
-            errors: Vec::new(),
+            errors,
+            backend,
+            native,
+            device_error: None,
+            device_refreshing: false,
+            device_refresh_again: false,
+            media_refreshing: None,
+            media_refresh_again: false,
+            media_generation: 0,
+            action_generation: 0,
+            media_action_generation: 0,
+            device_action_generation: 0,
         }
     }
 }
@@ -77,16 +149,26 @@ impl Model {
 enum Message {
     TogglePopup,
     Refresh,
-    Snapshot(Result<AudioSnapshot, String>),
+    Poll,
+    RefreshDevices,
+    RefreshMedia,
+    Devices(Result<DeviceSnapshot, String>),
+    Media {
+        result: Result<Option<PlayerInfo>, String>,
+        generation: u64,
+    },
     PlayerControl(PlayerAction),
     PlayerVolumeChanged(u8),
     SetDefaultOutput(DeviceChoice),
     SetDefaultInput(DeviceChoice),
     OutputVolumeChanged(u8),
     InputVolumeChanged(u8),
+    OutputMuted(bool),
+    InputMuted(bool),
     ActionDone {
         result: Result<(), String>,
-        refresh: bool,
+        target: ActionTarget,
+        generation: u64,
     },
 }
 
@@ -127,70 +209,192 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
         Message::TogglePopup => Some(Task::done(
             Arc::new(HOST_REQUEST_TOGGLE_POPUP.to_owned()) as PluginMsg
         )),
-        Message::Refresh => Some(Task::perform(async { load_snapshot() }, |result| {
-            msg(Message::Snapshot(result))
-        })),
-        Message::Snapshot(result) => {
-            match result {
-                Ok(snapshot) => model.snapshot = snapshot,
-                Err(error) => model.errors.push(error),
+        Message::Refresh | Message::Poll | Message::RefreshDevices | Message::RefreshMedia => {
+            let mut tasks = Vec::new();
+            let devices = !matches!(m, Message::RefreshMedia);
+            let media = !matches!(m, Message::RefreshDevices);
+            let manual = !matches!(m, Message::Poll);
+            if devices
+                && manual
+                && let Some(client) = &model.native
+            {
+                client.refresh();
             }
-            None
+            if devices && model.backend == Backend::Pactl {
+                if model.device_refreshing {
+                    model.device_refresh_again |= manual;
+                } else {
+                    model.device_refreshing = true;
+                    tasks.push(Task::perform(
+                        async { worker::run(system::load_devices).await.and_then(|r| r) },
+                        |r| msg(Message::Devices(r)),
+                    ));
+                }
+            }
+            if media {
+                if model.media_refreshing.is_some() {
+                    model.media_refresh_again |= manual;
+                } else {
+                    model.media_generation = model.media_generation.wrapping_add(1);
+                    let generation = model.media_generation;
+                    model.media_refreshing = Some(generation);
+                    tasks.push(Task::perform(
+                        worker::bounded(system::current_player()),
+                        move |result| msg(Message::Media { result, generation }),
+                    ));
+                }
+            }
+            Some(Task::batch(tasks))
+        }
+        Message::Devices(result) => {
+            model.device_refreshing = false;
+            match result {
+                Ok(snapshot) => {
+                    model.snapshot.apply_devices(snapshot);
+                    model.device_error = None;
+                }
+                Err(error) => {
+                    if model.device_error.as_ref() != Some(&error) {
+                        model.errors.push(error.clone());
+                    }
+                    model.device_error = Some(error);
+                }
+            }
+            if std::mem::take(&mut model.device_refresh_again) {
+                Some(Task::done(msg(Message::RefreshDevices)))
+            } else {
+                None
+            }
+        }
+        Message::Media { result, generation } => {
+            if model.media_refreshing != Some(generation) {
+                return None;
+            }
+            model.media_refreshing = None;
+            if generation == model.media_generation
+                && let Ok(player) = result
+            {
+                model.snapshot.player = player;
+            }
+            if std::mem::take(&mut model.media_refresh_again) {
+                Some(Task::done(msg(Message::RefreshMedia)))
+            } else {
+                None
+            }
         }
         Message::PlayerControl(action) => {
             let player = model.snapshot.player.clone()?;
-            run_action(model, format!("media {action:?}"), true, move || {
-                control_player(&player.service, action)
-            })
+            model.media_generation = model.media_generation.wrapping_add(1);
+            run_action(
+                model,
+                format!("media {action:?}"),
+                ActionTarget::Media,
+                worker::bounded(async move { control_player(&player.service, action).await }),
+            )
         }
         Message::PlayerVolumeChanged(volume) => {
             let player = model.snapshot.player.as_mut()?;
             player.volume = volume;
             let service = player.service.clone();
-            run_action(model, "media volume".to_owned(), false, move || {
-                set_player_volume(&service, volume)
-            })
+            model.media_generation = model.media_generation.wrapping_add(1);
+            run_action(
+                model,
+                "media volume".to_owned(),
+                ActionTarget::Media,
+                worker::bounded(async move { set_player_volume(&service, volume).await }),
+            )
         }
         Message::SetDefaultOutput(choice) => {
             model.snapshot.default_output = Some(choice.name.clone());
-            run_action(model, "set output".to_owned(), true, move || {
-                set_default_device(DeviceKind::Output, &choice.name)
-            })
+            run_device_action(
+                model,
+                "set output",
+                DeviceAction::Default(DeviceKind::Output, choice.name),
+            )
         }
         Message::SetDefaultInput(choice) => {
             model.snapshot.default_input = Some(choice.name.clone());
-            run_action(model, "set input".to_owned(), true, move || {
-                set_default_device(DeviceKind::Input, &choice.name)
-            })
+            run_device_action(
+                model,
+                "set input",
+                DeviceAction::Default(DeviceKind::Input, choice.name),
+            )
         }
         Message::OutputVolumeChanged(volume) => {
-            let name = model.snapshot.default_output.clone()?;
+            let name = selected_device(
+                &model.snapshot.outputs,
+                model.snapshot.default_output.as_deref(),
+            )?
+            .name
+            .clone();
             if let Some(device) = model.snapshot.outputs.iter_mut().find(|d| d.name == name) {
                 device.volume = volume;
             }
-            run_action(model, "output volume".to_owned(), false, move || {
-                set_device_volume(DeviceKind::Output, &name, volume)
-            })
+            run_device_action(
+                model,
+                "output volume",
+                DeviceAction::Volume(DeviceKind::Output, name, volume),
+            )
         }
         Message::InputVolumeChanged(volume) => {
-            let name = model.snapshot.default_input.clone()?;
+            let name = selected_device(
+                &model.snapshot.inputs,
+                model.snapshot.default_input.as_deref(),
+            )?
+            .name
+            .clone();
             if let Some(device) = model.snapshot.inputs.iter_mut().find(|d| d.name == name) {
                 device.volume = volume;
             }
-            run_action(model, "input volume".to_owned(), false, move || {
-                set_device_volume(DeviceKind::Input, &name, volume)
-            })
+            run_device_action(
+                model,
+                "input volume",
+                DeviceAction::Volume(DeviceKind::Input, name, volume),
+            )
         }
-        Message::ActionDone { result, refresh } => {
-            model.pending = None;
-            match result {
-                Ok(()) if refresh => Some(Task::done(msg(Message::Refresh))),
-                Ok(()) => None,
-                Err(error) => {
-                    model.errors.push(error);
-                    None
-                }
+        Message::OutputMuted(muted) | Message::InputMuted(muted) => {
+            let kind = if matches!(m, Message::OutputMuted(_)) {
+                DeviceKind::Output
+            } else {
+                DeviceKind::Input
+            };
+            let (devices, default) = match kind {
+                DeviceKind::Output => (&mut model.snapshot.outputs, &model.snapshot.default_output),
+                DeviceKind::Input => (&mut model.snapshot.inputs, &model.snapshot.default_input),
+            };
+            let name = selected_device(devices, default.as_deref())?.name.clone();
+            if let Some(device) = devices.iter_mut().find(|d| d.name == name) {
+                device.muted = muted;
             }
+            run_device_action(model, "device mute", DeviceAction::Mute(kind, name, muted))
+        }
+        Message::ActionDone {
+            result,
+            target,
+            generation,
+        } => {
+            let latest = match target {
+                ActionTarget::Media => model.media_action_generation,
+                ActionTarget::Devices | ActionTarget::NativeDevices => {
+                    model.device_action_generation
+                }
+            };
+            if generation != latest {
+                return None;
+            }
+            if generation == model.action_generation {
+                model.pending = None;
+            }
+            let refresh = target != ActionTarget::NativeDevices || result.is_err();
+            if let Err(error) = result {
+                model.errors.push(error);
+            }
+            refresh.then(|| {
+                Task::done(msg(match target {
+                    ActionTarget::Media => Message::RefreshMedia,
+                    ActionTarget::Devices | ActionTarget::NativeDevices => Message::RefreshDevices,
+                }))
+            })
         }
     })
     .flatten()
@@ -211,22 +415,25 @@ pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
-        let volume = selected_device(
+        let device = selected_device(
             &model.snapshot.outputs,
             model.snapshot.default_output.as_deref(),
-        )
-        .map(|device| device.volume);
-        let content: Element<'static, PluginMsg> = if let Some(volume) = volume {
+        );
+        let content: Element<'static, PluginMsg> = if let Some(device) = device {
             Row::new()
                 .push(
-                    text(AUDIO_ICON)
+                    text(if device.muted { "󰝟" } else { AUDIO_ICON })
                         .size(OXITHEME.font_md)
                         .align_y(Alignment::Center),
                 )
                 .push(
-                    text(format!("{volume}%"))
-                        .size(OXITHEME.font_md)
-                        .align_y(Alignment::Center),
+                    text(if device.muted {
+                        "Muted".to_owned()
+                    } else {
+                        format!("{}%", device.volume)
+                    })
+                    .size(OXITHEME.font_md)
+                    .align_y(Alignment::Center),
                 )
                 .spacing(OXITHEME.padding_xs)
                 .height(Length::Fill)
@@ -260,8 +467,11 @@ pub extern "Rust" fn popup_view(
         ));
         content = content.push(output_section(&model.snapshot));
         content = content.push(input_section(&model.snapshot));
+        if let Some(error) = &model.device_error {
+            content = content.push(text(error.clone()).size(OXITHEME.font_md).style(text_muted));
+        }
 
-        vec![content.height(Length::Fill).into()]
+        vec![scrollable(content).height(Length::Fill).into()]
     })
 }
 
@@ -270,38 +480,45 @@ pub extern "Rust" fn control_center_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
-        vec![
-            Column::new()
-                .push(media_card(
-                    model.snapshot.player.as_ref(),
-                    model.pending.is_some(),
-                ))
-                .push(output_section(&model.snapshot))
-                .push(input_section(&model.snapshot))
-                .spacing(OXITHEME.padding_xl)
-                .width(Length::Fill)
-                .into(),
-        ]
+        let mut content = Column::new()
+            .push(media_card(
+                model.snapshot.player.as_ref(),
+                model.pending.is_some(),
+            ))
+            .push(output_section(&model.snapshot))
+            .push(input_section(&model.snapshot))
+            .spacing(OXITHEME.padding_xl)
+            .width(Length::Fill);
+        if let Some(error) = &model.device_error {
+            content = content.push(text(error.clone()).size(OXITHEME.font_md).style(text_muted));
+        }
+        vec![content.into()]
     })
 }
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn subscription() -> *mut PluginStream {
-    let interval = *POLL_INTERVAL
-        .get()
-        .unwrap_or(&Duration::from_secs(DEFAULT_POLL_SECONDS));
-    let s = stream::channel(
-        32,
-        move |mut output: iced::futures::channel::mpsc::Sender<PluginMsg>| async move {
-            std::thread::spawn(move || {
-                loop {
-                    std::thread::sleep(interval);
-                    let _ = output.try_send(msg(Message::Refresh));
-                }
-            });
-            std::future::pending::<()>().await;
-        },
-    );
+    let config = subscription_config()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let interval = config
+        .interval
+        .unwrap_or(Duration::from_secs(DEFAULT_POLL_SECONDS));
+    let timer = iced::futures::stream::unfold((), move |_| async move {
+        async_io::Timer::after(interval).await;
+        Some((msg(Message::Poll), ()))
+    })
+    .boxed();
+    let s = if let Some(client) = config.client.and_then(|weak| weak.upgrade()) {
+        iced::futures::stream::select(
+            native::events(client).map(|r| msg(Message::Devices(r))),
+            timer,
+        )
+        .boxed()
+    } else {
+        timer
+    };
 
     Box::into_raw(Box::new(s)) as *mut PluginStream
 }
@@ -309,13 +526,53 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
 fn run_action(
     model: &mut Model,
     label: String,
-    refresh: bool,
-    action: impl FnOnce() -> Result<(), String> + Send + 'static,
+    target: ActionTarget,
+    action: impl std::future::Future<Output = Result<(), String>> + Send + 'static,
 ) -> Option<Task<PluginMsg>> {
     model.pending = Some(label);
-    Some(Task::perform(async move { action() }, move |result| {
-        msg(Message::ActionDone { result, refresh })
+    model.action_generation = model.action_generation.wrapping_add(1);
+    let generation = model.action_generation;
+    match target {
+        ActionTarget::Media => model.media_action_generation = generation,
+        ActionTarget::Devices | ActionTarget::NativeDevices => {
+            model.device_action_generation = generation
+        }
+    }
+    Some(Task::perform(action, move |result| {
+        msg(Message::ActionDone {
+            result,
+            target,
+            generation,
+        })
     }))
+}
+
+fn run_device_action(
+    model: &mut Model,
+    label: &str,
+    action: DeviceAction,
+) -> Option<Task<PluginMsg>> {
+    if model.backend == Backend::Pactl {
+        run_action(model, label.to_owned(), ActionTarget::Devices, async move {
+            worker::run(move || system::device_action(action)).await?
+        })
+    } else {
+        let receiver = model.native.as_ref()?.submit(action);
+        run_action(
+            model,
+            label.to_owned(),
+            ActionTarget::NativeDevices,
+            worker::deadline(
+                async move {
+                    receiver
+                        .await
+                        .map_err(|_| "audio: native worker stopped".to_owned())?
+                },
+                Duration::from_secs(6),
+                "native command",
+            ),
+        )
+    }
 }
 
 fn media_card(player: Option<&PlayerInfo>, busy: bool) -> Element<'static, PluginMsg> {
@@ -459,6 +716,7 @@ fn output_section(snapshot: &AudioSnapshot) -> Element<'static, PluginMsg> {
         snapshot.default_output.as_deref(),
         Message::SetDefaultOutput,
         Message::OutputVolumeChanged,
+        Message::OutputMuted,
     )
 }
 
@@ -469,6 +727,7 @@ fn input_section(snapshot: &AudioSnapshot) -> Element<'static, PluginMsg> {
         snapshot.default_input.as_deref(),
         Message::SetDefaultInput,
         Message::InputVolumeChanged,
+        Message::InputMuted,
     )
 }
 
@@ -478,18 +737,28 @@ fn device_section(
     default: Option<&str>,
     select_msg: fn(DeviceChoice) -> Message,
     volume_msg: fn(u8) -> Message,
+    mute_msg: fn(bool) -> Message,
 ) -> Element<'static, PluginMsg> {
     let choices = devices.iter().map(AudioDevice::choice).collect::<Vec<_>>();
     let selected = selected_device(devices, default).map(AudioDevice::choice);
-    let volume = selected_device(devices, default)
-        .map(|device| device.volume)
-        .unwrap_or_default();
+    let device = selected_device(devices, default);
+    let volume = device.map(|device| device.volume).unwrap_or_default();
     let picker = oxi_picklist::pick_list(choices, selected, move |choice| msg(select_msg(choice)))
         .width(Length::Fill);
 
     let body = Column::new()
         .push(text(label).size(OXITHEME.font_md).style(text_primary))
         .push(picker)
+        .push(
+            Row::new()
+                .push(text("Mute").size(OXITHEME.font_md).style(text_primary))
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    oxi_toggler::toggler(device.is_some_and(|d| d.muted))
+                        .on_toggle_maybe(device.map(|_| move |muted| msg(mute_msg(muted)))),
+                )
+                .align_y(Alignment::Center),
+        )
         .push(
             Row::new()
                 .push(
@@ -543,6 +812,18 @@ fn read_poll_interval(global: &Table) -> u64 {
         .unwrap_or(DEFAULT_POLL_SECONDS)
 }
 
+fn read_backend(global: &Table) -> Backend {
+    match global
+        .get("audio")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("backend"))
+        .and_then(|v| v.as_str())
+    {
+        Some("pactl") => Backend::Pactl,
+        _ => Backend::Native,
+    }
+}
+
 const _: fn() = || {
     fn assert_stream<S: Stream<Item = PluginMsg> + Send + 'static>(_: &S) {}
     let _ = |s: &iced::futures::stream::BoxStream<'static, PluginMsg>| assert_stream(s);
@@ -581,10 +862,155 @@ mod tests {
 
         let task = update(
             plugin_model.clone(),
-            msg(Message::Snapshot(Err("audio failed".to_owned()))),
+            msg(Message::Devices(Err("audio failed".to_owned()))),
         );
         assert!(task.is_none());
         assert_eq!(errors(plugin_model.clone()), vec!["audio failed"]);
         assert!(errors(plugin_model).is_empty());
+    }
+
+    #[test]
+    fn device_events_preserve_media_and_disconnect_retains_last_valid_devices() {
+        let (model, _) = model(Table::new());
+        with_model_write::<Model, _>(&model, |model| {
+            model.snapshot.player = Some(PlayerInfo {
+                service: "player".to_owned(),
+                identity: "Player".to_owned(),
+                title: "Song".to_owned(),
+                artist: "Artist".to_owned(),
+                status: "Playing".to_owned(),
+                volume: 50,
+                art_url: None,
+            });
+        });
+        let devices = DeviceSnapshot {
+            outputs: vec![AudioDevice {
+                name: "sink".to_owned(),
+                label: "Speaker".to_owned(),
+                volume: 65,
+                muted: false,
+            }],
+            default_output: Some("sink".to_owned()),
+            ..Default::default()
+        };
+        update(model.clone(), msg(Message::Devices(Ok(devices.clone()))));
+        update(
+            model.clone(),
+            msg(Message::Devices(Err("offline".to_owned()))),
+        );
+        with_model_read::<Model, _>(&model, |model| {
+            assert_eq!(model.snapshot.player.as_ref().unwrap().title, "Song");
+            assert_eq!(model.snapshot.outputs, devices.outputs);
+            assert_eq!(model.device_error.as_deref(), Some("offline"));
+        })
+        .unwrap();
+        update(model.clone(), msg(Message::Devices(Ok(devices))));
+        with_model_read::<Model, _>(&model, |model| assert!(model.device_error.is_none())).unwrap();
+    }
+
+    #[test]
+    fn stale_acknowledgements_and_media_queries_cannot_overwrite_newer_actions() {
+        let (model, _) = model(Table::new());
+        with_model_write::<Model, _>(&model, |model| {
+            model.action_generation = 2;
+            model.device_action_generation = 2;
+            model.pending = Some("new action".to_owned());
+            model.media_generation = 3;
+            model.media_refreshing = Some(1);
+            model.snapshot.player = Some(PlayerInfo {
+                service: "player".to_owned(),
+                identity: "Player".to_owned(),
+                title: "New song".to_owned(),
+                artist: "Artist".to_owned(),
+                status: "Playing".to_owned(),
+                volume: 80,
+                art_url: None,
+            });
+        });
+        assert!(
+            update(
+                model.clone(),
+                msg(Message::ActionDone {
+                    result: Err("stale error".to_owned()),
+                    target: ActionTarget::Devices,
+                    generation: 1
+                })
+            )
+            .is_none()
+        );
+        update(
+            model.clone(),
+            msg(Message::Media {
+                result: Ok(None),
+                generation: 1,
+            }),
+        );
+        with_model_read::<Model, _>(&model, |model| {
+            assert_eq!(model.pending.as_deref(), Some("new action"));
+            assert_eq!(model.snapshot.player.as_ref().unwrap().volume, 80);
+            assert!(model.errors.is_empty());
+            assert!(model.media_refreshing.is_none());
+        })
+        .unwrap();
+        update(
+            model.clone(),
+            msg(Message::ActionDone {
+                result: Ok(()),
+                target: ActionTarget::NativeDevices,
+                generation: 2,
+            }),
+        );
+        with_model_read::<Model, _>(&model, |model| assert!(model.pending.is_none())).unwrap();
+    }
+
+    #[test]
+    fn overlapping_domains_refresh_without_clearing_the_other_pending_action() {
+        for (first, second, result) in [
+            (ActionTarget::Media, ActionTarget::Devices, Ok(())),
+            (ActionTarget::Devices, ActionTarget::Media, Ok(())),
+            (
+                ActionTarget::NativeDevices,
+                ActionTarget::Media,
+                Err("offline".to_owned()),
+            ),
+        ] {
+            let (model, _) = model(Table::new());
+            with_model_write::<Model, _>(&model, |model| {
+                drop(run_action(model, "first".to_owned(), first, async {
+                    Ok(())
+                }));
+                drop(run_action(model, "second".to_owned(), second, async {
+                    Ok(())
+                }));
+            });
+            assert!(
+                update(
+                    model.clone(),
+                    msg(Message::ActionDone {
+                        result: result.clone(),
+                        target: first,
+                        generation: 1,
+                    }),
+                )
+                .is_some()
+            );
+            with_model_read::<Model, _>(&model, |model| {
+                assert_eq!(model.pending.as_deref(), Some("second"));
+                assert_eq!(model.errors, result.err().into_iter().collect::<Vec<_>>());
+            })
+            .unwrap();
+            update(
+                model.clone(),
+                msg(Message::ActionDone {
+                    result: Ok(()),
+                    target: second,
+                    generation: 2,
+                }),
+            );
+            with_model_read::<Model, _>(&model, |model| {
+                assert!(model.pending.is_none());
+            })
+            .unwrap();
+        }
     }
 }

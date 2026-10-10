@@ -135,6 +135,13 @@ This file is the styling contract for Oxibar plugins and shell surfaces. New plu
 - Popup content should be useful at the host default popup size. Larger plugins may rely on named popup-size constants or `[bar.popup_sizes]`, but must still scroll instead of overflowing.
 - Panel content should assume the host `PANEL_WIDTH` and full height.
 - Modal content should assume the host `MODAL_SIZE` and themed host padding.
+- Scroll longer task prompts so their actions remain reachable. Distinguish typed
+  input from displayed codes and explicit Allow/Reject decisions; invalid answers
+  keep the prompt available. Enter may submit input, while Escape is window-scoped.
+- Optional `modal_closed(model)` performs nonblocking, idempotent operation cleanup
+  on host dismissal/replacement/output retirement. Keep a protocol modal alive
+  after submitting its answer until completion or the next prompt; suppress queued
+  prompts after cancellation. Cleanup tasks remain valid after the window closes.
 - Optional `control_center_view(model)` returns inner content for the existing
   model. The host owns scrolling/cards/chrome; avoid nested full-height scrolling,
   duplicated outer padding or new subscriptions for an embedded view. Popup/panel

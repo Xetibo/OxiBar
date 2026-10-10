@@ -26,10 +26,43 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ### Native System Backend Migration
 
-- Status: planned, with existing integrations retained as migration baselines.
-- Current state: audio and Bluetooth still use `pactl`/`bluetoothctl` for substantial device interaction. The control center reuses these existing models/views without adding pollers. Reviewed ReSet backends provide native PulseAudio subscriptions, BlueZ object/property events and broader monitor adapters suitable for selective adaptation.
-- Migration requirements: cancellable/reconnecting backend owners, state/action parity, complete pairing-agent responses and protocol/version-aware display capabilities. The donor's placeholders, blocking waits, unsafe thread markers and coarse refresh rounding must be addressed rather than imported.
+- Status: native audio device and BlueZ integration implemented.
+- Current state: audio defaults to one native PulseAudio/PipeWire context with
+  device/default/volume/mute events and actions, bounded commands, reconnect and
+  stream-owned cancellation. Explicit `pactl` compatibility remains available.
+  Bluetooth uses one native ObjectManager/property owner with complete typed,
+  cancellable pairing and bounded discovery. Control-center views reuse these owners.
+  Reviewed ReSet backends provide BlueZ object/property events and broader audio/
+  monitor capabilities suitable for selective adaptation.
+- Remaining requirements: richer capabilities and protocol/version-aware display
+  settings. Keep cancellable/reconnecting ownership and proven state/action parity;
+  donor placeholders, blocking waits and unsafe thread markers are not reused.
 - Target fix: the ReSet reuse workstream in `SHELL_ROADMAP.md`; keep existing plugin capabilities and themed Iced views throughout migration.
+
+### Remaining Audio Capabilities
+
+- Status: accepted initial native-backend limits.
+- Current state: sink/source/server events trigger coalesced full device snapshots,
+  not incremental per-object queries. MPRIS uses bounded asynchronous DBus calls
+  and cancellable periodic refresh. The compatibility adapter still runs `pactl`.
+- Gaps: card profiles/ports, per-application stream routing and event-driven media
+  properties are not implemented. PulseAudio protocol parity was verified against
+  a private server; a separate PipeWire server fixture remains a follow-up.
+- Target fix: extend the existing owner with typed card/stream capabilities and
+  media signals when needed; avoid adding a service/poller for each surface.
+
+### Remaining Bluetooth Capabilities and Hardware Verification
+
+- Status: user-initiated native pairing implemented and privately verified.
+- Current state: all Agent1 request/display/confirmation/authorization methods have
+  typed responses, owner/device validation, deadlines and full-flow cancellation.
+  The plugin registers its own agent without claiming the global default role.
+- Gaps: unsolicited incoming pairing/default-agent policy, discoverability settings
+  and further adapter/device capabilities remain extensions. Private mock-BlueZ
+  tests cover multiple adapters, property invalidation, hotplug and reconnect;
+  real hardware/BlueZ-version and system permission-policy checks remain manual.
+- Target fix: extend the same owner and explicit UI policy rather than introducing
+  another connection/agent per view or importing placeholder replies.
 
 ### Remaining Control-center Services and OSDs
 
@@ -112,7 +145,7 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 ### Missing Additional Flat Button Variants In `oxiced`
 
 - Status: partially resolved.
-- Affected code: popup row actions in `plugins/bluetooth/src/lib.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, `plugins/tray/src/lib.rs`, plus workspace pills in `plugins/workspaces/src/lib.rs`.
+- Affected code: popup row actions in `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, `plugins/tray/src/lib.rs`, plus workspace pills in `plugins/workspaces/src/lib.rs`.
 - Current state: `oxiced::widgets::oxi_plugin` provides shadowless bar buttons,
   normal-sized surface buttons, source/mode badges and flat background styles;
   themed switches are shared through `oxi_toggler`. Settings/control-center actions
@@ -123,12 +156,12 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 ### Duplicated Bar Button Styling
 
 - Status: resolved.
-- Current state: `plugins/audio/src/lib.rs`, `plugins/bluetooth/src/lib.rs`, `plugins/clock/src/lib.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, and `plugins/tray/src/lib.rs` use `oxiced::widgets::oxi_plugin::bar_button` or `bar_button_style`.
+- Current state: `plugins/audio/src/lib.rs`, `plugins/bluetooth/src/views.rs`, `plugins/clock/src/lib.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, and `plugins/tray/src/lib.rs` use `oxiced::widgets::oxi_plugin::bar_button` or `bar_button_style`.
 
 ### Missing Compact List Row/Card Helpers
 
 - Status: accepted temporary exception.
-- Affected code: `plugins/audio/src/lib.rs`, `plugins/bluetooth/src/lib.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, `plugins/tray/src/lib.rs`.
+- Affected code: `plugins/audio/src/lib.rs`, `plugins/bluetooth/src/views.rs`, `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, `plugins/tray/src/lib.rs`.
 - Current state: plugins build compact row/card containers with local `container::Style` or `button::Style` closures while still using `OXITHEME` colors and spacing/font/radius tokens where available. `audio` media/device cards now use `oxi_plugin::compact_card`.
 - Current state: `oxiced::widgets::oxi_plugin` includes `compact_card` and `compact_card_style`, but remaining plugin-local list-row styles have not all been migrated yet.
 - Target fix: migrate popup list-row/card wrappers to `oxi_plugin` helpers.

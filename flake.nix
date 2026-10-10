@@ -70,6 +70,7 @@
                 wayland
                 wayland-protocols
                 libdrm
+                libpulseaudio
                 xorg.libX11
                 xorg.libXrandr
                 xorg.libXi
@@ -137,6 +138,7 @@
               wayland
               wayland-protocols
               libdrm
+              libpulseaudio
               libclang.lib
               vulkan-loader
               xorg.libX11

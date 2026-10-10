@@ -7,6 +7,7 @@
   wayland,
   wayland-protocols,
   libdrm,
+  libpulseaudio,
   libclang,
   lib,
   lockFile,
@@ -22,7 +23,8 @@
   pluginDir = ../plugins + "/${plugin}";
   cargoToml = builtins.fromTOML (builtins.readFile (pluginDir + "/Cargo.toml"));
   pluginLibName = "lib${lib.replaceStrings ["-"] ["_"] cargoToml.package.name}.so";
-  runtimeLibPath = lib.makeLibraryPath [
+  audioInputs = lib.optionals (plugin == "audio") [libpulseaudio];
+  runtimeLibPath = lib.makeLibraryPath ([
     libGL
     libglvnd
     vulkan-loader
@@ -36,7 +38,7 @@
     xorg.libXcursor
     libclang.lib
     mesa
-  ];
+  ] ++ audioInputs);
 in
   craneLib.buildPackage rec {
     pname = cargoToml.package.name;
@@ -62,7 +64,7 @@ in
       xorg.libXi
       xorg.libXcursor
       mesa
-    ];
+    ] ++ audioInputs;
 
     nativeBuildInputs = [pkg-config];
     preCheck = ''

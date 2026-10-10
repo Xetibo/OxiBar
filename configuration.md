@@ -27,8 +27,9 @@ A plugin file present on disk but not listed here is ignored. Unknown names
 are skipped with a warning. Plugins whose `abi_version()` does not match the
 host's are also skipped with a warning — rebuild them against the current
 `oxibar-plugin-api`. Plugins can also export an availability check; oxibar
-skips them before model initialization and polling when required hardware or
-system services are missing.
+may skip them before model initialization/subscriptions when mandatory dependencies
+are missing. Reconnecting native plugins can stay loaded with empty/offline state;
+Bluetooth recovers when the service or adapters later appear.
 
 ## `[bar]` — bar surface
 
@@ -276,8 +277,9 @@ without discarding plugin state.
 
 Selecting Notifications closes visible toasts and suppresses new notification
 toasts while that inbox is visible. Stored notifications remain available; later
-toasts resume after switching away or closing. Native backend migration and new
-brightness/power/session/OSD features remain tracked in `docs/SHELL_ROADMAP.md`.
+toasts resume after switching away or closing. Native audio and BlueZ devices are
+supported; new brightness/power/session/OSD features remain tracked in
+`docs/SHELL_ROADMAP.md`.
 
 ## GUI settings and overrides
 
@@ -329,7 +331,8 @@ height then reveals 34. Unoverridden fields follow the regenerated base.
   application-provider terminal and result limit, clock text size/bold/calendar
   command, notification default timeout.
 - **Restart required:** font loading, plugin enable/disable/order, instance/control
-  endpoint/startup policy, existing plugin poll timers and clock format granularity.
+  endpoint/startup policy, audio backend selection, Bluetooth discovery/pairing
+  limits, existing plugin poll timers and clock format granularity.
   Pending changes are displayed; loaded plugin models and system functionality stay
   available until restart. Resetting back to the running value clears the indicator.
 - Plugin schemas/hooks are optional. Legacy plugin settings can be edited through
@@ -452,11 +455,34 @@ default keybinding for this yet — wire one up via your compositor.
 
 ### `[audio]` — Audio plugin
 
-Uses `pactl` for PulseAudio/PipeWire device state and MPRIS for media controls.
+Defaults to native PulseAudio events and actions, also compatible with PipeWire's
+PulseAudio server. One cached owner serves the bar, popup and control center.
+Output/input selection, volume and mute use the native connection; device changes
+do not wait for the media timer or invoke `pactl`. Channel balance is preserved
+when adjusting volume, and monitor sources are excluded from input choices.
+
+Media metadata, playback and player volume use asynchronous MPRIS DBus calls.
+Device updates and audio-server reconnects preserve independent media state.
+The popup scrolls to keep all controls reachable within its configured height.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `poll_seconds` | integer (`> 0`) | `4` | Background refresh interval for output/input devices and MPRIS state. |
+| `backend` | `"native"` / `"pactl"` | `"native"` | Native device events/actions, or explicit CLI compatibility. Restart required. |
+| `poll_seconds` | integer (`> 0`) | `4` | MPRIS refresh interval; also refreshes devices in `pactl` mode. Restart required. |
+
+```toml
+[audio]
+backend = "native"
+poll_seconds = 4
+```
+
+Native mode retains the last device state and shows an inline error while the
+server is unavailable, then reconnects and queries fresh state. Offline/expired
+actions are rejected rather than replayed on reconnect. It does not autostart the
+server or silently switch adapters. Select `backend = "pactl"` and restart for
+compatibility; that mode requires `pactl` on `PATH`. Nix packages include the native
+client library. Card profiles, per-stream routing and event-driven media refresh
+remain follow-ups.
 
 ### `[battery]` — Battery plugin
 
@@ -471,14 +497,42 @@ or time to 100% while charging, when sysfs exposes rate data.
 
 ### `[bluetooth]` — Bluetooth plugin
 
-Uses `bluetoothctl`. Click opens a popup with connected devices and available
-devices. Available devices with no type/icon and names that are just MAC IDs
-are hidden as noise. Clicking an available device starts pairing; if the CLI
-reports that a PIN/passkey/code is needed, Oxibar opens a modal for it.
+Uses native BlueZ system-bus events and actions. One cached adapter/device owner
+serves the bar, popup and control center without `bluetoothctl` or periodic device
+inventory. Controls include adapter selection/power, owned discovery sessions,
+connect/disconnect, trust/untrust and forgetting devices. Named devices without an
+icon remain usable; unnamed unpaired address-only entries are filtered as noise.
+
+Pairing keeps a real `KeyboardDisplay` agent request pending while the modal asks
+for PIN/passkey input, displays a code/progress, or requests numeric confirmation,
+authorization or service approval. PINs are 1–16 printable ASCII characters;
+passkeys are 1–6 digits, with displayed codes padded to six digits. Enter submits
+input; confirmation requests have explicit Allow/Reject actions. Scroll longer
+prompts to reach their buttons. Answers are validated without losing the prompt.
+
+The full Pair → Trust → Connect flow is cancellable. Cancel, modal Escape, host
+dismissal/replacement or modal output removal ends the pending request; cancellation
+during a new Connect also disconnects it. The modal stays open after an answer
+until completion or the next request. The agent serves the active user-initiated
+device and does not replace the system's global default pairing agent.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `refresh_seconds` | integer (`> 0`) | `20` | Background refresh interval. The popup `Scan` button triggers an active scan. |
+| `refresh_seconds` | integer `1..3600` | `20` | Owned scan duration, retaining the legacy key name; no longer an inventory poll interval. Restart required. |
+| `pairing_timeout_seconds` | integer `10..300` | `90` | Full pairing/trust/connect deadline. Restart required. |
+
+```toml
+[bluetooth]
+refresh_seconds = 20
+pairing_timeout_seconds = 90
+```
+
+Scan/Stop scan affects this client's discovery session only. Its timeout and owner
+cleanup release that session; another application's discovery may remain active.
+Service loss retains cached devices with an inline diagnostic, rejects offline
+actions, cancels pairing, then reconnects and resnapshots without replaying stale
+commands. Adapter/device hotplug is event-driven; explicit Refresh resnapshots.
+The configured plugin remains loaded even without a current adapter/service.
 
 ### `[network]` — Network plugin
 

@@ -19,10 +19,10 @@ per-monitor widget editing. Its implementation stack is not a dependency.
 
 **Status:** milestone 0, milestone 1 and the initial GUI/settings slice of milestone
 2 are implemented, plus the initial multi-output registry/inventory slice of
-milestone 3 and control-center composition from milestone 4. Settings/control-center
-surfaces use spacious Android-inspired grouping with the existing oxiced theme.
-Native services, OSDs, dock/widgets and live themes remain planned. Shared `oxiced`
-now lives in this workspace.
+milestone 3, control-center composition and native audio/BlueZ integration from
+milestone 4. Settings/control-center surfaces use spacious Android-inspired grouping
+with the existing oxiced theme. Additional services/OSDs, dock/widgets and
+live themes remain planned. Shared `oxiced` now lives in this workspace.
 
 ## Starting Point
 
@@ -201,6 +201,20 @@ The reviewed candidates are:
 and display-settings capabilities in milestone 4. First prove each adapter's
 state/action parity before replacing its existing integration.
 
+The initial audio adapter is implemented inside the existing plugin: one native
+context/mainloop, sink/source/server events, cached device snapshots and default/
+volume/mute actions. It uses thread-affine ownership, bounded commands and joined
+cancellation rather than the donor's threaded callback borrowing. Private-server
+and packaged GUI parity/reconnect checks pass. Profiles/streams and incremental
+per-object queries remain later extensions.
+
+The BlueZ adapter is also implemented inside the existing plugin: initial
+ObjectManager state, incremental interface/property events, unique-owner epochs,
+owned discovery, power/connect/trust/remove and complete Agent1 pairing. Typed UI
+replies, full-flow cancellation and reconnect replace the donor's placeholders and
+the old CLI pairing flow. Private injectable-bus and packaged GUI fixtures prove
+parity without claiming global default-agent ownership or touching real hardware.
+
 **Regression cases:** audio-server reconnect, removed defaults, card/profile and
 per-stream updates; multiple adapters, property invalidation, cancelled pairing
 and discovery stop; output hotplug, fractional scale/rotation, protocol event
@@ -224,6 +238,8 @@ fixtures where useful, rebuilding their tests against Oxibar's current API.
    Use host-owned surface placement/chrome for all of them.
 7. Add cancellable lifecycle support before implementing in-process plugin
    disable/reload. Until then persist the change and restart the daemon normally.
+   Optional `modal_closed` cleanup is implemented for task-modal retirement; it is
+   not a general dylib unload/reload capability.
 8. Continue building native plugins with the same pinned Rust/Iced/API graph.
    Version-gate breaking signatures; do not claim a stable cross-toolchain C ABI.
 
@@ -327,7 +343,7 @@ generic Wayland inventories, and monitor UI/IPC diagnostics. Tests and three-
 output/headless-hotplug smoke pass. Event-driven inventory and additional global-
 focus adapters remain follow-ups; current refresh is background/coalesced polling.
 
-### 4. Control Center and OSD — Composition Implemented, P1
+### 4. Control Center and OSD — Composition and Native Audio/BlueZ Implemented, P1
 
 **Depends on:** milestones 2 and 3.
 
@@ -354,8 +370,17 @@ keyboard navigation, live configuration, output ownership and retained async mod
 routing. Audio/network/Bluetooth/battery/notifications have embedded views; calendar
 uses its existing popup. Viewing the inbox suppresses toasts while retaining stored
 notifications. Tests and a private-bus packaged compositor scenario pass, including
-roomy/narrow layouts and repeated reopen. Native audio/BlueZ, brightness, power,
-session actions and OSDs remain the next part of this milestone.
+roomy/narrow layouts and repeated reopen.
+
+Native audio now provides event-driven devices, defaults, balanced volume and
+mute actions with cancellable/reconnecting ownership. MPRIS uses independent
+bounded asynchronous queries/actions; explicit `pactl` compatibility remains.
+Private PulseAudio and packaged GUI fixtures prove native actions, hotplug,
+reconnect, media preservation and no native `pactl` calls. Native BlueZ now provides
+cached adapter/device events, owned discovery and complete cancellable pairing;
+private fixtures verify typed agent replies, modal cleanup, hotplug/reconnect and
+zero `bluetoothctl` calls. Richer audio/adapter capabilities, brightness, power,
+session actions and OSDs remain this milestone's next work.
 
 ### 5. Dock and Desktop Widgets — P1
 
@@ -433,9 +458,10 @@ not substitutes for presentation-time measurements.
    restart. Then expand into milestones 3–5.
 
 All five steps are implemented and verified. Registry/read-only output geometry
-and control-center composition are also implemented. Next: native audio/BlueZ
-adapters and remaining control/OSD services, then dock and desktop widget instances,
-with inventory/focus refinements alongside.
+and control-center composition/native audio/BlueZ integration are also implemented.
+Next: brightness/power/session/OSD services and richer native capabilities, then
+dock and desktop widget instances, with
+inventory/focus refinements alongside.
 
 ## UX References
 

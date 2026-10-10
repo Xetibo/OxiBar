@@ -4,6 +4,120 @@ This file records LLM-specific continuity decisions and low-impact choices that
 are useful for future agents. Omitted from this file are high-level architecture
 topics already covered by `ARCHITECTURE.md`.
 
+## Native BlueZ and cancellable task modals (2026-10-10)
+
+- User requested the next step after native audio. Replace Bluetooth's blocking
+  polling/placeholder CLI pairing inside the existing plugin; adapt ReSet's
+  ObjectManager/domain ideas, not its daemon, GTK stack or fabricated agent replies.
+  Keep ABI 6 and one model/subscription across bars, popup and control center.
+- Use existing zbus 5.14/async-io on one subscription-owned worker, with a weak
+  client bridge. Cache object paths and partial interface/property deltas; resnapshot
+  invalidations and skip queued pre-snapshot signals by reply sequence. Address
+  actions/agent calls by BlueZ unique-owner epoch; bound/expire commands, reject
+  offline work and join cancellation/reconnect cleanup without host Tokio TLS.
+- Discovery ownership is per client/adapter; stop only owned sessions on timeout
+  or cleanup. Preserve `bluetooth.refresh_seconds` (default 20) as scan duration,
+  no longer an inventory timer. Add full-flow pairing deadline default 90 seconds.
+  Both settings are restart-only. Keep configured Bluetooth loaded for hotplug.
+- Register `KeyboardDisplay`, not the global default agent. Implement every Agent1
+  request/display/confirmation/authorization method with owner/device validation,
+  typed UI replies, deadlines and explicit rejection. PIN 1–16 printable ASCII;
+  passkey 1–6 digits and six-digit display. Pair then trust/connect, cancelling
+  pending replies/Pair and a newly in-flight Connect without disconnecting an
+  already-connected device. Final completion has a separate reliable channel.
+- Review fixed old agent requests cancelling newer sessions: capture the session
+  ID through reply/timeouts. Reject prompts after cancellation and suppress queued
+  prompts/progress in the model. Private tests include delayed Connect cancellation.
+- Add optional ABI-6 `modal_closed(model)` cleanup and window-scoped modal Escape/
+  text traversal. Host dismissal, replacement, actual closure and output retirement
+  notify once; retired-window cleanup tasks still update models. Hidden bars retain
+  modals on connected outputs. Pair event tasks retain their original source output.
+- Split Bluetooth DTO/cache, owner, agent, runtime and themed views into sibling
+  modules. Use shared oxiced buttons/switches/cards/input, icon fallbacks, inline
+  cached-state diagnostics and scrolling; keep host chrome and existing palette.
+- Verification: 179 workspace tests/doctests, strict Clippy, four host modal-lifecycle
+  tests and both opt-in private-BlueZ tests passed. Fixtures cover all agent methods,
+  stale/rejected/spoofed replies, multiple adapters, invalidation, hotplug, owned
+  scans, reconnect, cancellation and cleanup without system hardware or host Tokio.
+- Nix built host/Bluetooth/audio/applications/clock with the updated optional API.
+  Host output is `/nix/store/np5z6135knacpfr2dvz59wjpx8pzml83-oxibar-0.1.0`;
+  Bluetooth is `/nix/store/3qqbpkz1br43r1dg0fp1zn8bl78vix5z-bluetooth-0.1.0`.
+  Keep filtered source/serial builds; clean only session-owned Cargo artifacts.
+- `/tmp/opencode/oxibar-native-bluetooth-smoke.py` uses a private no-autoactivation
+  bus injected only into the fixture daemon's system-bus address. Actual GUI PIN
+  `0123-abcd`, passkey `000123`, confirmation/authorization/service approval, display
+  and Escape/replacement/Connect-stage cancellation all passed. Owned scan timeout,
+  hotplug, offline/recovery and five reopens passed with one agent, no default-agent
+  request, unchanged startup snapshot baseline (2) and zero `bluetoothctl` calls.
+  Virtual-pointer fixtures must emit motion even at unchanged coordinates after
+  remapping a surface. No application bug was inferred from early fixture clicks.
+  Test children/paths were cleaned; screenshots stayed private and hardware untouched.
+- Next: brightness/power/session/OSD services, richer native capabilities, then
+  dock/widgets. Incoming pairing/global-agent policy and real hardware permissions
+  remain separate extensions/checks. This step and preceding native audio changes
+  are uncommitted; preserve the unrelated staged `result` deletion.
+
+## Native audio device backend (2026-10-10)
+
+- User requested commit and the next roadmap step. Commit `99f32f1`
+  (`feature(shell): Add multi-output bars and themed control center`) contains
+  the completed registry/control-center/roomy UI work. Preserve the unrelated
+  pre-existing staged `result` deletion outside commits.
+- Implement the next milestone-4 adapter inside the existing Audio plugin rather
+  than adding a mandatory daemon or shared-service crate. Adapt ReSet's native
+  PulseAudio subscription/domain ideas, not its unsafe threaded callback borrowing.
+  Keep ABI 6, existing exports, models, popup/control-center content and MPRIS.
+- Add `libpulse-binding` 2.30.1 through Cargo/Nix. Shared Crane dependency builds
+  have `libpulseaudio`; only the final Audio plugin gets the extra runtime search
+  path. Use one standard mainloop/context on a dedicated thread, not host Tokio TLS.
+- Subscription-owned worker cancellation wakes Unix IO/reconnect waits, joins,
+  rejects pending requests and permits a later subscription. A weak client slot
+  bridges the existing no-model-argument subscription ABI. Thread-affine handles
+  never cross into the UI model.
+- Default `audio.backend` to `native`; retain explicit `pactl` compatibility, both
+  restart-classified. `audio.poll_seconds` remains default 4 and restart-only, but
+  now controls MPRIS refresh and devices only in compatibility mode. Native device
+  updates use sink/source/server events, coalesced full snapshots and cached indexes/
+  channel volumes. Card/profile/stream and incremental-object extensions are deferred.
+- Bound native commands/operations, coalesce queued volume/mute replacements and
+  reject expired/offline requests instead of replaying them after reconnect. Keep
+  last valid devices and inline health status until resubscribe/resnapshot succeeds.
+  Filter monitor sources using protocol metadata; scale maximum channel volume
+  while preserving balance, restoring equal channels when starting from silence.
+- Split device and media snapshots; device failures/events never replace the player.
+  Convert MPRIS calls to bounded asynchronous zbus with cancellable async-io polling.
+  Generation-gate action acknowledgements per domain and media queries. Review found
+  that one global acknowledgement gate could discard a completed media refresh when
+  a device action overlapped it; use typed action targets and independent latest
+  domain generations while retaining the latest pending action. Add both ordering
+  and offline-error regression coverage. Compatibility CLI calls run off the Iced
+  update path with bounded output/time and child reaping.
+- Add shared themed input/output mute switches and the muted bar label. Scroll the
+  compact popup so all controls fit within its existing 420px height. Keep the host's
+  control-center scrolling and existing palette; no new per-view backend owner.
+- Verification: 171 workspace tests/doctests, strict workspace Clippy, Audio unit
+  tests and the ignored private PulseAudio integration passed. That test covers
+  balanced volume, defaults/mute, typed monitor exclusion, hotplug, disconnect,
+  offline rejection, reconnect and prompt cancellation without a host Tokio runtime.
+- Nix host/audio/applications/clock builds and library resolution passed. Final
+  Audio output is `/nix/store/mg754dk73ab5n0w76w5j5c8vkwjla50z-audio-0.1.0`.
+  Keep filtered-source imports and serial package builds for limited store space;
+  cleanup only session-owned Cargo artifacts, never the user's workspace target.
+- `/tmp/opencode/oxibar-native-audio-smoke.py` uses private PulseAudio null devices,
+  isolated XDG paths and a no-autoactivation private bus/MPRIS fixture. Actual GUI
+  device/default/volume/mute and playback/next/previous/player-volume actions passed,
+  as did hotplug, offline/recovery visuals and five control-center reopen cycles.
+  The final package also passed a delayed media acknowledgement overlapping a
+  completed device mute; media refreshed before its 60-second fixture timer.
+  A failing shadow CLI recorded zero native `pactl` invocations. Switching backend
+  and restarting only the test daemon proved persisted compatibility actions.
+  Fixtures were reaped/removed and screenshots inspected privately; the user daemon,
+  real devices and media players were not test targets.
+- Next: native BlueZ inventory/events, discovery/connect/disconnect and a complete
+  cancellable pairing agent. Then remaining brightness/power/session/OSDs and richer
+  audio capabilities. Event-driven MPRIS and a separate PipeWire fixture remain
+  follow-ups. Native audio work is uncommitted after the requested prior-step commit.
+
 ## Spacious settings and control-center composition (2026-10-10)
 
 - Resume the approved shell roadmap after the multi-output slice. User requested

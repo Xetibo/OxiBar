@@ -6,6 +6,8 @@
 - Prefer pure helper functions for parsing, state transitions, and config extraction so behavior is unit-testable without DBus, Wayland, Hyprland, or shell commands.
 - Keep dynamic plugin ABI entry points thin. Delegate testable behavior to normal Rust functions where practical.
 - Plugins that require optional hardware or system services should export `availability(config)` and keep the probe cheap; put the actual probe logic in `system.rs` so it can be unit-tested.
+- Reconnecting native services may stay loaded with empty/offline state. Do not
+  gate them on currently present hardware when hotplug recovery is required.
 - Keep model-dependent popup sizing in pure helpers and expose it through optional `popup_metrics(model)` only when content height truly varies.
 - Keep plugin `lib.rs` focused on ABI, model updates, and view composition. Move command/DBus integrations, parsers, and domain data into modules such as `system.rs` before files become god files.
 - Use `Result<T, String>` for plugin-local external command/DBus errors when the error is surfaced through a plugin error queue.
@@ -38,6 +40,17 @@
 - Embedded capability views reuse the existing model and return inner content;
   host surfaces own chrome and scrolling. Factor shared popup/embedded view logic
   without creating another subscription, backend or polling owner.
+- Keep thread-affine native handles on their owning worker. Bound request queues
+  and operation waits, coalesce replacement actions, reject expired/offline
+  commands and resnapshot after reconnect rather than replaying stale actions.
+- Keep independently refreshed domains separate in the model, and generation-gate
+  action acknowledgements and queries so older work cannot overwrite newer state.
+- Scope DBus state/actions to the service's unique-owner epoch. Subscribe before
+  taking snapshots, reconcile signal ordering and resnapshot invalidated properties.
+- Interactive protocol requests need typed, validated replies and session-scoped
+  cancellation. Old request timeouts must not cancel newer sessions. Export optional
+  nonblocking `modal_closed` cleanup for operations whose lifetime includes a modal;
+  cleanup tasks must survive the retired surface without reopening stale prompts.
 - Keep schema-driven view construction separate from settings state/actions and
   persistence. Use shared oxiced surface buttons, badges and themed switches for
   spacious forms; preserve compact bar controls and the existing theme palette.
@@ -59,3 +72,5 @@
 
 - `flake.nix` exists. Prefer running commands from the flake/dev shell where practical.
 - Nix Rust packages use Crane. Keep host and plugin packages wired to the shared workspace `cargoArtifacts` in `flake.nix` instead of creating per-plugin dependency caches.
+- Wire native libraries into shared dependency compilation and the owning plugin's
+  final build/runtime search path; keep unrelated plugin runtime inputs minimal.

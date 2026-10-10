@@ -27,6 +27,24 @@ const MODAL_SHADOW_OFFSET_Y: f32 = 10.0;
 const MODAL_SHADOW_BLUR: f32 = 24.0;
 const POPUP_SURFACE_RADIUS: f32 = PANEL_RADIUS;
 
+pub(crate) fn modal_key_event(
+    event: iced::Event,
+    status: iced::event::Status,
+    id: IcedId,
+) -> Option<Message> {
+    use iced::keyboard::{Event, Key, key::Named};
+    let iced::Event::Keyboard(Event::KeyPressed { key, modifiers, .. }) = event else {
+        return None;
+    };
+    match key {
+        Key::Named(Named::Escape) => Some(Message::ModalEscape(id)),
+        Key::Named(Named::Tab) if status == iced::event::Status::Ignored => {
+            Some(Message::ModalFocus(id, !modifiers.shift()))
+        }
+        _ => None,
+    }
+}
+
 impl OxiBar {
     pub(crate) fn view(&self, id: IcedId) -> Element<'_, Message> {
         let content = match self.shell.registry.get(id).map(|record| &record.kind) {

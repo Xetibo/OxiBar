@@ -1,280 +1,270 @@
-use std::io::Write;
-use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::collections::HashMap;
 
-#[derive(Clone, Debug)]
+use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+
+pub(crate) const BLUEZ: &str = "org.bluez";
+pub(crate) const ADAPTER: &str = "org.bluez.Adapter1";
+pub(crate) const DEVICE: &str = "org.bluez.Device1";
+pub(crate) const OBJECT_MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
+pub(crate) const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
+pub(crate) type Properties = HashMap<String, OwnedValue>;
+pub(crate) type Interfaces = HashMap<String, Properties>;
+pub(crate) type Objects = HashMap<OwnedObjectPath, Interfaces>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BluetoothDevice {
+    pub(crate) path: String,
+    pub(crate) adapter: String,
     pub(crate) mac: String,
     pub(crate) name: String,
     pub(crate) icon: String,
     pub(crate) paired: bool,
+    pub(crate) trusted: bool,
+    pub(crate) connected: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Adapter {
+    pub(crate) path: String,
+    pub(crate) name: String,
+    pub(crate) powered: bool,
+    pub(crate) discovering: bool,
+    pub(crate) scanning: bool,
+}
+
+impl std::fmt::Display for Adapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Snapshot {
+    pub(crate) adapters: Vec<Adapter>,
     pub(crate) connected: Vec<BluetoothDevice>,
     pub(crate) available: Vec<BluetoothDevice>,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) enum PairOutcome {
-    Done,
-    NeedsCode,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum BluetoothAction {
-    Pair { mac: String, code: Option<String> },
-    Disconnect { mac: String },
-}
-
-pub(crate) fn scan_devices(active_scan: bool) -> Result<Snapshot, String> {
-    if active_scan {
-        let _ = run_bluetoothctl_script("scan on\n", Some(Duration::from_secs(4)));
+impl Snapshot {
+    pub(crate) fn device(&self, path: &str) -> Option<&BluetoothDevice> {
+        self.connected
+            .iter()
+            .chain(&self.available)
+            .find(|device| device.path == path)
     }
-    let all = parse_devices(&run_bluetoothctl(&["devices"])?);
-    let connected_macs = parse_devices(&run_bluetoothctl(&["devices", "Connected"])?);
-    let connected_macs = connected_macs
-        .into_iter()
-        .map(|device| device.mac)
-        .collect::<Vec<_>>();
-    let mut connected = Vec::new();
-    let mut available = Vec::new();
-    for basic in all {
-        let info = device_info(&basic.mac).unwrap_or_default();
-        let is_connected = connected_macs.contains(&basic.mac) || info.connected;
-        let device = BluetoothDevice {
-            mac: basic.mac,
-            name: basic.name,
-            icon: info.icon,
-            paired: info.paired,
-        };
-        if is_connected {
-            connected.push(device);
-        } else if !is_noise(&device) {
-            available.push(device);
+
+    pub(crate) fn adapter(&self, path: &str) -> Option<&Adapter> {
+        self.adapters.iter().find(|adapter| adapter.path == path)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum Action {
+    Power(String, bool),
+    Discovery(String, bool),
+    Disconnect(String),
+    Trust(String, bool),
+    Forget(String),
+}
+
+impl Action {
+    pub(crate) fn path(&self) -> &str {
+        match self {
+            Self::Power(path, _)
+            | Self::Discovery(path, _)
+            | Self::Disconnect(path)
+            | Self::Trust(path, _)
+            | Self::Forget(path) => path,
         }
     }
-    connected.sort_by(|a, b| a.name.cmp(&b.name));
-    available.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(Snapshot {
-        connected,
-        available,
-    })
 }
 
-pub(crate) fn has_bluetooth_controller() -> bool {
-    run_bluetoothctl(&["show"])
-        .map(|output| output_has_controller(&output))
+pub(crate) fn snapshot(objects: &Objects) -> Snapshot {
+    let mut state = Snapshot::default();
+    for (path, interfaces) in objects {
+        if let Some(properties) = interfaces.get(ADAPTER) {
+            state.adapters.push(Adapter {
+                path: path.to_string(),
+                name: label(properties, path.as_str()),
+                powered: boolean(properties, "Powered"),
+                discovering: boolean(properties, "Discovering"),
+                scanning: false,
+            });
+        }
+    }
+    for (path, interfaces) in objects {
+        let Some(properties) = interfaces.get(DEVICE) else {
+            continue;
+        };
+        let adapter = properties
+            .get("Adapter")
+            .and_then(|value| <&zbus::zvariant::ObjectPath<'_>>::try_from(value).ok())
+            .map(ToString::to_string);
+        let Some(adapter) = adapter.filter(|path| state.adapter(path).is_some()) else {
+            continue;
+        };
+        let mac = string(properties, "Address").unwrap_or_default();
+        let device = BluetoothDevice {
+            path: path.to_string(),
+            adapter,
+            name: label(properties, &mac),
+            mac,
+            icon: string(properties, "Icon").unwrap_or_default(),
+            paired: boolean(properties, "Paired"),
+            trusted: boolean(properties, "Trusted"),
+            connected: boolean(properties, "Connected"),
+        };
+        if device.connected {
+            state.connected.push(device);
+        } else if device.paired || (!device.name.is_empty() && !looks_like_address(&device.name)) {
+            state.available.push(device);
+        }
+    }
+    state.adapters.sort_by(|a, b| a.path.cmp(&b.path));
+    for devices in [&mut state.connected, &mut state.available] {
+        devices.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then(a.path.cmp(&b.path))
+        });
+    }
+    state
+}
+
+pub(crate) fn add(objects: &mut Objects, path: OwnedObjectPath, interfaces: Interfaces) {
+    objects.entry(path).or_default().extend(interfaces);
+}
+
+pub(crate) fn remove(objects: &mut Objects, path: &OwnedObjectPath, interfaces: &[String]) {
+    if let Some(current) = objects.get_mut(path) {
+        for interface in interfaces {
+            current.remove(interface);
+        }
+        if current.is_empty() {
+            objects.remove(path);
+        }
+    }
+}
+
+pub(crate) fn change(
+    objects: &mut Objects,
+    path: &OwnedObjectPath,
+    interface: String,
+    properties: Properties,
+) {
+    if let Some(current) = objects
+        .get_mut(path)
+        .and_then(|interfaces| interfaces.get_mut(&interface))
+    {
+        current.extend(properties);
+    }
+}
+
+fn boolean(properties: &Properties, key: &str) -> bool {
+    properties
+        .get(key)
+        .and_then(|value| bool::try_from(value).ok())
         .unwrap_or(false)
 }
 
-fn output_has_controller(output: &str) -> bool {
-    output
-        .lines()
-        .any(|line| line.trim_start().starts_with("Controller "))
+fn string(properties: &Properties, key: &str) -> Option<String> {
+    properties
+        .get(key)
+        .and_then(|value| <&str>::try_from(value).ok())
+        .map(str::to_owned)
 }
 
-#[derive(Default)]
-struct DeviceInfo {
-    icon: String,
-    paired: bool,
-    connected: bool,
+fn label(properties: &Properties, fallback: &str) -> String {
+    ["Alias", "Name"]
+        .into_iter()
+        .filter_map(|key| string(properties, key))
+        .find(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| fallback.to_owned())
 }
 
-fn device_info(mac: &str) -> Result<DeviceInfo, String> {
-    let output = run_bluetoothctl(&["info", mac])?;
-    let mut info = DeviceInfo::default();
-    for line in output.lines().map(str::trim) {
-        if let Some(icon) = line.strip_prefix("Icon:") {
-            info.icon = icon.trim().to_owned();
-        } else if let Some(paired) = line.strip_prefix("Paired:") {
-            info.paired = paired.trim() == "yes";
-        } else if let Some(connected) = line.strip_prefix("Connected:") {
-            info.connected = connected.trim() == "yes";
-        }
-    }
-    Ok(info)
-}
-
-fn parse_devices(output: &str) -> Vec<BluetoothDevice> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let rest = line.trim().strip_prefix("Device ")?;
-            let (mac, name) = rest.split_once(' ')?;
-            Some(BluetoothDevice {
-                mac: mac.to_owned(),
-                name: name.trim().to_owned(),
-                icon: String::new(),
-                paired: false,
-            })
-        })
-        .collect()
-}
-
-fn is_noise(device: &BluetoothDevice) -> bool {
-    device.name.is_empty()
-        || device.name.eq_ignore_ascii_case(&device.mac)
-        || looks_like_mac(&device.name)
-        || device.icon.is_empty()
-}
-
-fn looks_like_mac(value: &str) -> bool {
-    let parts = value.split(':').collect::<Vec<_>>();
+fn looks_like_address(value: &str) -> bool {
+    let parts: Vec<_> = value.split(':').collect();
     parts.len() == 6
         && parts
             .iter()
             .all(|part| part.len() == 2 && part.chars().all(|ch| ch.is_ascii_hexdigit()))
 }
 
-pub(crate) fn run_bluetooth_action(action: BluetoothAction) -> Result<PairOutcome, String> {
-    match action {
-        BluetoothAction::Pair { mac, code } => pair_device(&mac, code),
-        BluetoothAction::Disconnect { mac } => {
-            run_bluetoothctl(&["disconnect", &mac])?;
-            Ok(PairOutcome::Done)
-        }
-    }
-}
-
-fn pair_device(mac: &str, code: Option<String>) -> Result<PairOutcome, String> {
-    let has_code = code.is_some();
-    let script = if let Some(code) = code {
-        format!(
-            "agent KeyboardDisplay\ndefault-agent\npair {mac}\n{code}\nyes\ntrust {mac}\nconnect {mac}\nquit\n"
-        )
-    } else {
-        format!(
-            "agent KeyboardDisplay\ndefault-agent\npair {mac}\ntrust {mac}\nconnect {mac}\nquit\n"
-        )
-    };
-    match run_bluetoothctl_script(&script, Some(Duration::from_secs(20))) {
-        Ok(_) => Ok(PairOutcome::Done),
-        Err(error) if needs_code(&error) && !has_code => Ok(PairOutcome::NeedsCode),
-        Err(error) => Err(error),
-    }
-}
-
-fn needs_code(error: &str) -> bool {
-    let lower = error.to_ascii_lowercase();
-    lower.contains("pin")
-        || lower.contains("passkey")
-        || lower.contains("code")
-        || lower.contains("agent")
-}
-
-fn run_bluetoothctl(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("bluetoothctl")
-        .args(args)
-        .output()
-        .map_err(|e| format!("bluetooth: failed to run bluetoothctl: {e}"))?;
-    command_output(output)
-}
-
-fn run_bluetoothctl_script(script: &str, timeout: Option<Duration>) -> Result<String, String> {
-    let mut child = Command::new("bluetoothctl")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("bluetooth: failed to run bluetoothctl: {e}"))?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or_else(|| "bluetooth: could not open bluetoothctl stdin".to_owned())?
-        .write_all(script.as_bytes())
-        .map_err(|e| format!("bluetooth: failed to write bluetoothctl script: {e}"))?;
-    if let Some(timeout) = timeout {
-        let start = std::time::Instant::now();
-        loop {
-            if let Some(_status) = child
-                .try_wait()
-                .map_err(|e| format!("bluetooth: bluetoothctl wait failed: {e}"))?
-            {
-                break;
-            }
-            if start.elapsed() > timeout {
-                let _ = child.kill();
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("bluetooth: bluetoothctl output failed: {e}"))?;
-    command_output(output)
-}
-
-fn command_output(output: std::process::Output) -> Result<String, String> {
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    if output.status.success()
-        && !stdout.to_ascii_lowercase().contains("failed")
-        && !stderr.to_ascii_lowercase().contains("failed")
-    {
-        Ok(stdout)
-    } else if stderr.is_empty() {
-        Err(format!("bluetooth: bluetoothctl failed: {stdout}"))
-    } else {
-        Err(format!(
-            "bluetooth: bluetoothctl failed: {stderr}\n{stdout}"
-        ))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    pub(super) fn fixture() -> Objects {
+        HashMap::from([
+            (
+                OwnedObjectPath::try_from("/org/bluez/hci0").unwrap(),
+                HashMap::from([(
+                    ADAPTER.to_owned(),
+                    HashMap::from([
+                        (
+                            "Alias".to_owned(),
+                            OwnedValue::from(zbus::zvariant::Str::from("Radio")),
+                        ),
+                        ("Powered".to_owned(), OwnedValue::from(true)),
+                    ]),
+                )]),
+            ),
+            (
+                OwnedObjectPath::try_from("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF").unwrap(),
+                HashMap::from([(
+                    DEVICE.to_owned(),
+                    HashMap::from([
+                        (
+                            "Adapter".to_owned(),
+                            OwnedValue::from(
+                                zbus::zvariant::ObjectPath::try_from("/org/bluez/hci0").unwrap(),
+                            ),
+                        ),
+                        (
+                            "Address".to_owned(),
+                            OwnedValue::from(zbus::zvariant::Str::from("AA:BB:CC:DD:EE:FF")),
+                        ),
+                        (
+                            "Name".to_owned(),
+                            OwnedValue::from(zbus::zvariant::Str::from("Keyboard")),
+                        ),
+                    ]),
+                )]),
+            ),
+        ])
+    }
+
     #[test]
-    fn parses_bluetoothctl_devices() {
-        let devices = parse_devices(
-            "Device AA:BB:CC:DD:EE:FF Headphones\nignored\nDevice 11:22:33:44:55:66 Keyboard",
+    fn deltas_keep_partial_fields_and_handle_removal_and_missing_icons() {
+        let mut objects = fixture();
+        let path = OwnedObjectPath::try_from("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF").unwrap();
+        assert_eq!(snapshot(&objects).available[0].name, "Keyboard");
+        change(
+            &mut objects,
+            &path,
+            DEVICE.to_owned(),
+            HashMap::from([("Connected".to_owned(), true.into())]),
         );
-
-        assert_eq!(devices.len(), 2);
-        assert_eq!(devices[0].mac, "AA:BB:CC:DD:EE:FF");
-        assert_eq!(devices[0].name, "Headphones");
-        assert_eq!(devices[1].name, "Keyboard");
+        let state = snapshot(&objects);
+        assert_eq!(state.connected[0].name, "Keyboard");
+        assert!(state.available.is_empty());
+        remove(&mut objects, &path, &[DEVICE.to_owned()]);
+        assert!(snapshot(&objects).connected.is_empty());
     }
 
     #[test]
-    fn detects_controller_from_show_output() {
-        let present = "Controller 00:11:22:33:44:55 (public)\n\tName: laptop";
-        let absent = "No default controller available";
-
-        assert!(output_has_controller(present));
-        assert!(!output_has_controller(absent));
-    }
-
-    #[test]
-    fn detects_noise_and_mac_like_names() {
-        assert!(looks_like_mac("AA:BB:CC:DD:EE:FF"));
-        assert!(!looks_like_mac("Headphones"));
-
-        let noisy = BluetoothDevice {
-            mac: "AA:BB:CC:DD:EE:FF".to_owned(),
-            name: "AA:BB:CC:DD:EE:FF".to_owned(),
-            icon: String::new(),
-            paired: false,
-        };
-        assert!(is_noise(&noisy));
-
-        let usable = BluetoothDevice {
-            mac: "AA:BB:CC:DD:EE:FF".to_owned(),
-            name: "Headphones".to_owned(),
-            icon: "audio-card".to_owned(),
-            paired: false,
-        };
-        assert!(!is_noise(&usable));
-    }
-
-    #[test]
-    fn detects_pairing_code_prompts() {
-        assert!(needs_code("Request PIN code"));
-        assert!(needs_code("Passkey required"));
-        assert!(!needs_code("Connection refused"));
+    fn missing_adapter_and_wrong_property_types_are_tolerated() {
+        let mut objects = fixture();
+        let path = OwnedObjectPath::try_from("/org/bluez/hci0").unwrap();
+        change(
+            &mut objects,
+            &path,
+            ADAPTER.to_owned(),
+            HashMap::from([("Powered".to_owned(), 17_u32.into())]),
+        );
+        assert!(!snapshot(&objects).adapters[0].powered);
+        remove(&mut objects, &path, &[ADAPTER.to_owned()]);
+        assert!(snapshot(&objects).available.is_empty());
     }
 }

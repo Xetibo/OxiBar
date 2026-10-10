@@ -28,7 +28,7 @@ impl OxiBar {
                     .map(|(id, _)| *id)
                     .collect();
                 for id in missing {
-                    self.forget_surface(id);
+                    tasks.push(self.forget_surface(id));
                     tasks.push(Task::done(Message::RemoveSurface(id)));
                 }
                 self.shell.inventory = Some(inventory);
@@ -241,8 +241,10 @@ impl OxiBar {
         let tasks: Vec<_> = ids
             .into_iter()
             .map(|id| {
-                self.forget_surface(id);
-                Task::done(Message::RemoveSurface(id))
+                Task::batch([
+                    self.forget_surface(id),
+                    Task::done(Message::RemoveSurface(id)),
+                ])
             })
             .collect();
         if self.shell.popup_bar == Some(owner) {
@@ -252,7 +254,8 @@ impl OxiBar {
         Task::batch(tasks)
     }
 
-    pub(crate) fn forget_surface(&mut self, id: IcedId) {
+    pub(crate) fn forget_surface(&mut self, id: IcedId) -> Task<Message> {
+        let mut callback = Task::none();
         self.shell.registry.remove(id);
         if self.launcher.window_id == Some(id) {
             self.launcher.window_id = None;
@@ -265,13 +268,15 @@ impl OxiBar {
         }
         if self.modal_window_id == Some(id) {
             self.modal_window_id = None;
-            self.modal_plugin = None;
+            let plugin = self.modal_plugin.take();
+            callback = self.modal_close_callback(plugin.as_deref(), id);
         }
         if self.panel_window_id == Some(id) {
             self.panel_window_id = None;
             self.panel_plugin = None;
         }
         self.toasts.retain(|toast| toast.window_id != id);
+        callback
     }
 
     pub(crate) fn source_message(&mut self, source: IcedId, message: Message) -> Task<Message> {
@@ -301,12 +306,12 @@ impl OxiBar {
 
     pub(crate) fn surface_closed(&mut self, id: IcedId) -> Task<Message> {
         let is_bar = self.shell.bar(id).is_some();
-        self.forget_surface(id);
+        let callback = self.forget_surface(id);
         if is_bar {
             self.shell.bars.retain(|_, bar| bar.id != id);
             self.bar_window_id = None;
-            return self.reconcile_bars();
+            return Task::batch([callback, self.reconcile_bars()]);
         }
-        Task::none()
+        callback
     }
 }

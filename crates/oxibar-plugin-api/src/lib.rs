@@ -315,6 +315,11 @@ pub type ModalViewFn =
         model: PluginModel,
     ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
 
+/// Optional `modal_closed(model)` lifecycle notification. Cancel modal-owned
+/// work idempotently without blocking. Cleanup tasks remain valid after the
+/// surface is retired; the host calls this once per removed modal instance.
+pub type ModalClosedFn = unsafe extern "Rust" fn(model: PluginModel) -> Option<Task<PluginMsg>>;
+
 pub type PanelViewFn =
     unsafe extern "Rust" fn(
         model: PluginModel,

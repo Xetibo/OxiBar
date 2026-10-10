@@ -14,6 +14,11 @@
 - Plugins with model-dependent popup content should export `popup_metrics(model)` and cap long content at the host max height with scrolling.
 - Panel roots should use `OXITHEME.padding_md` padding, full width/height, and scrolling for long lists.
 - Modal content should rely on host-provided chrome, radius, shadow, border, and padding.
+- Interactive protocol modals distinguish input, displayed codes and explicit
+  Allow/Reject decisions. Validate without discarding the pending prompt, keep
+  actions reachable by scrolling, and show progress until the operation finishes.
+  Escape/host dismissal cancels through the optional `modal_closed` capability;
+  submitting an answer must not prematurely close its ongoing protocol operation.
 - Notification cards are interactive: card click invokes the notification's primary action or dismisses when no action exists; toast layers must not take keyboard focus when they appear; new toast layers should open on the focused Hyprland monitor when available; inline reply inputs become focusable after hover/click intent and remain focusable in toast and panel layers; hover/focus prevents toast expiry.
 - Tray rows use left-click activation and right-click context menus. Do not add separate per-row action buttons for secondary/context actions.
 - Detached popup overlays may request a larger transparent input region than their visible popup body through `popup_metrics(model)` or metadata; keep visible chrome compact and use the extra region only for overlay hit-testing.
@@ -42,6 +47,9 @@
   all bars keep one shared model for each plugin.
 - Monitor settings expose read-only inventory and logical/pixel geometry. Physical
   output changes remain compositor operations.
+- Live service errors retain useful cached content and show themed inline status;
+  recovery clears that status. Device mute/volume state and media playback remain
+  distinct controls. Compact popups scroll when the available height is exceeded.
 
 ## Current Surfaces
 

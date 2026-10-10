@@ -10,9 +10,16 @@
 ## Current Unit Coverage
 
 - Host/config: plugin allow-list parsing, plugin unavailable error formatting, anchor parsing, host-request message mapping, dynamic bar width/height fallback parsing, popup geometry/config/dynamic metrics, toast keyboard interactivity actions, toast output-option fallback mapping, panel output anchoring, bar section lookup, layer resize state updates, popup state setters, `[instance]` policy parsing (defaults, configured values, wrong value types), and single-instance lock acquisition (second acquire reports already-running; lock released when the guard drops).
-- `audio`: percent parsing, file URL decoding, selected-device fallback, config poll interval, view/popup construction, and error draining.
+- `audio`: percent parsing, file URL decoding, selected-device fallback, config
+  interval, view/popup construction, error draining, balanced/silent channel-volume
+  conversion, bounded/coalesced action queues, offline rejection, worker cancellation,
+  independent device/media state, overlapping-domain acknowledgements, and stale
+  action/query rejection.
 - `battery`: sysfs battery availability/parsing, percentage and duration estimates, config poll interval, view construction, and error draining.
-- `bluetooth`: `bluetoothctl` controller availability parsing, device parsing, noise filtering, pairing prompt detection, view/popup/modal construction, and error draining.
+- `bluetooth`: typed object-cache reduction/noise filtering, config and view
+  construction, PIN/passkey validation, stale replies and old-session cancellation,
+  queued-prompt suppression, cached offline state, owner cancellation/resubscription
+  and error draining without a system bus or hardware.
 - `clock`: config parsing, invalid config defaults, format second-specifier detection, display-interval granularity, simulated-now arithmetic, month arithmetic, Thunderbird launcher mapping, CalDAV HTTPS guard, iCalendar/CalDAV parsing, recurrence/RDATE expansion, event tooltip details, ABI metadata, and error draining.
 - `network`: `nmcli` field splitting, scan interval parsing, label/icon helpers, view/popup/modal construction, and error draining.
 - `notifications`: markup stripping, notification action selection, notification timeout config, notification add/replace/remove/clear state transitions, DND toast suppression, toast-only expiry, hover/focus/draft expiry preservation, toast keyboard opt-in requests, panel rendering, and error draining.
@@ -33,13 +40,17 @@
   deduplication, retained provider state, source-scoped async modals, overlay
   dismissal, live resize/disable/reset, visible-inbox toast suppression, hidden-bar
   retention, output-removal cleanup and late model updates.
+- Modal lifecycle: optional cleanup once on Escape/replacement/compositor closure/
+  overlay dismissal/output removal, hidden-bar retention, source placement and
+  cleanup/background results after window retirement.
 
 ## Expected Commands
 
-- `cargo fmt --all`
+- `nix develop -c cargo fmt --all -- --check`
 - `nix develop -c cargo test --workspace`
 - `nix develop -c cargo clippy --workspace --all-targets -- -D warnings`
-- `nix build .#oxibar .#oxibar-audio` after Nix packaging changes, with more plugin package targets as needed.
+- `nix build .#oxibar .#oxibar-audio .#oxibar-bluetooth` after native backend/API
+  changes, with more plugin package targets as needed.
 
 For this runner integration, build `oxibar`, `oxibar-applications`, and a retained
 bar plugin such as `oxibar-clock`. While new files are still untracked, use the
@@ -171,6 +182,108 @@ toast checks. Both width variants and the settings regression passed. Screenshot
 are private because compositor translucency may reveal desktop content. Workspace
 tests and strict Clippy passed; host and all seven library packages built with Nix.
 
+## Native Audio Integration and Runtime Verification
+
+The ignored test in `plugins/audio/src/integration_tests.rs` starts a private
+PulseAudio server with null sinks/source, private socket/state/cookie directories
+and no hardware modules. It tests native snapshots/actions and stream cancellation
+without a host Tokio runtime or changes to the session's audio server. Use the
+flake's pinned PulseAudio package to provide `pulseaudio` and `pactl`:
+
+```sh
+nix shell --impure --expr '
+  let source = builtins.path {
+    path = ./.;
+    name = "oxibar-verification";
+    filter = path: type:
+      !(builtins.elem (builtins.baseNameOf path) [".git" ".direnv" "target" "tmp"]);
+  };
+  flake = builtins.getFlake (builtins.unsafeDiscardStringContext (toString source));
+  pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
+  in pkgs.pulseaudio
+' -c nix develop -c cargo test -p audio \
+  private_server_events_actions_hotplug_reconnect_and_cancellation -- --ignored
+```
+
+The fixture verifies typed monitor-source exclusion, balanced stereo volume,
+output/input defaults, volume/mute, added/removed sinks, disconnect/offline action
+rejection, reconnect without stale-action replay and prompt worker shutdown.
+Normal unit tests use pure state helpers or a missing private socket.
+
+For GUI verification, build host/audio/applications/clock with the same pinned
+toolchain. Use isolated XDG config/locks/socket, a private PulseAudio server, and a
+private session bus without autoactivation. A fixture MPRIS player should expose
+metadata, playback and volume controls. Set a long media interval and verify
+external device changes still arrive immediately. Place a failing marker `pactl`
+on only the native daemon's `PATH` to prove it never invokes the CLI; use an absolute
+real `pactl` path with the private server address for fixture assertions.
+
+Exercise actual GUI default-device selection, balanced volume, both mute switches,
+media playback/next/previous/volume, device hotplug, offline cached content and
+recovery. Delay the fixture media acknowledgement and complete a device action
+while it is pending; verify media refresh still runs without waiting for its timer.
+Close/reopen the center repeatedly and inspect the compact scrollable
+popup. Select `audio.backend = "pactl"`, verify restart classification, restart only
+the fixture daemon with the real CLI, and repeat device actions in compatibility mode.
+
+These checks passed against the Nix packages: 171 workspace tests/doctests, strict
+workspace Clippy, the opt-in private-server test, host/audio/applications/clock
+builds, and the private packaged GUI scenario. Native mode made zero `pactl` calls;
+all device/media GUI actions, reconnect and five reopen cycles passed. Audio's
+`libpulse.so.0` runtime dependency resolved through its Nix search path. Private
+screenshots retain the existing oxiced theme. A separate PipeWire fixture and
+profile/stream capabilities remain follow-ups.
+
+## Native BlueZ Integration and Runtime Verification
+
+Two ignored tests in `plugins/bluetooth/src/integration_tests.rs` launch their own
+private DBus daemon without service autoactivation and export mock BlueZ interfaces.
+They inject the address into the native client, without a host Tokio runtime,
+system-bus changes or hardware. Supply `dbus-daemon` from pinned Nixpkgs:
+
+```sh
+nix shell --impure --expr '
+  let source = builtins.path {
+    path = ./.;
+    name = "oxibar-verification";
+    filter = path: type:
+      !(builtins.elem (builtins.baseNameOf path) [".git" ".direnv" "target" "tmp"]);
+  };
+  flake = builtins.getFlake (builtins.unsafeDiscardStringContext (toString source));
+  pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
+  in pkgs.dbus
+' -c nix develop -c cargo test -p bluetooth private_bus -- --ignored
+```
+
+Coverage includes multiple adapters, partial/invalidated properties, object hotplug,
+owned discovery timeout/cleanup while another client scans, power/connect/disconnect/
+trust/remove, no normal inventory polling, owner restart/offline rejection and joined
+worker shutdown. Agent tests cover every PIN/passkey/display/confirmation/authorization/
+service request, invalid/stale responses, rejection, sender validation, local/BlueZ/
+Release/timeout cancellation, stream drop and cancellation during Connect.
+
+For packaged GUI checks, build host/Bluetooth/applications/clock with one pinned
+toolchain. Use private XDG config/locks/socket and a no-autoactivation private bus;
+set only the fixture daemon's `DBUS_SYSTEM_BUS_ADDRESS` to that bus. Export mock
+BlueZ with controllable modes/state and a delayed Connect. Place a failing marker
+`bluetoothctl` on only its `PATH` to prove native inventory/actions never use it.
+
+Exercise actual GUI PIN/passkey input, numeric confirmation, authorization/service
+approval, displayed codes, scoped Escape and settings replacement. Accept a PIN
+then cancel during Connect and verify Disconnect. Check owned scan timeout without
+stopping another client's discovery, hotplug, cached offline content/recovery and
+repeated center reopening. Record agent registrations/default-agent requests and
+GetManagedObjects reads: normal events/reopens must not add owners or inventory polls.
+
+The private Rust tests and packaged Hyprland scenario passed. Workspace verification
+passed 179 tests/doctests and strict Clippy; Nix built host/Bluetooth/audio/applications/
+clock. Five reopen cycles kept one agent, with no default-agent request or
+`bluetoothctl` invocation. Two startup snapshots remained the GUI fixture's constant
+baseline through normal events; explicit refresh/invalidation/reconnect can resnapshot.
+Typed replies, full-flow cancellation, hotplug/reconnect and themed visuals passed.
+Fixtures were reaped/removed and screenshots stayed private. Actual hardware and
+system permission-policy verification remain manual.
+
 ## Coverage Goals
 
 - Host: config-derived bar placement, plugin message mapping, popup geometry, and modal/panel state transitions where they can run without a GUI runtime.
@@ -180,7 +293,9 @@ tests and strict Clippy passed; host and all seven library packages built with N
 
 - Dynamic library loading from `$XDG_CONFIG_HOME/oxibar/plugins/` is not covered by an integration test yet.
 - The opt-in runner dylib test exercises real library exports/tasks, but general availability-gate/load-order coverage through `load_plugins()` is still missing.
-- System-service subscriptions are not exercised automatically because they start background threads and depend on live services. The runner timer stream is exercised by its opt-in dylib test.
+- Normal tests avoid live system services. Opt-in tests exercise the real runner
+  timer, native audio events/actions and private BlueZ state/pairing/cancellation;
+  other service subscriptions and general dylib lifecycle coverage remain incomplete.
 - UI rendering tests only validate that view functions return elements for valid models; they do not assert pixel output.
 - Keyboard search, text-field traversal/application, category shortcuts and Escape
   are verified; generic checkbox/button keyboard focus and screen-reader support
