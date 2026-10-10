@@ -19,9 +19,9 @@ per-monitor widget editing. Its implementation stack is not a dependency.
 
 **Status:** milestone 0, milestone 1 and the initial GUI/settings slice of milestone
 2 are implemented, plus the initial multi-output registry/inventory slice of
-milestone 3, control-center composition and native audio/BlueZ integration from
-milestone 4. Settings/control-center surfaces use spacious Android-inspired grouping
-with the existing oxiced theme. Additional services/OSDs, dock/widgets and
+milestone 3 and milestone 4's control-center/native services/OSDs. Settings/control-center
+surfaces use spacious Android-inspired grouping
+with the existing oxiced theme. Dock/widgets and
 live themes remain planned. Shared `oxiced` now lives in this workspace.
 
 ## Starting Point
@@ -343,7 +343,7 @@ generic Wayland inventories, and monitor UI/IPC diagnostics. Tests and three-
 output/headless-hotplug smoke pass. Event-driven inventory and additional global-
 focus adapters remain follow-ups; current refresh is background/coalesced polling.
 
-### 4. Control Center and OSD — Composition and Native Audio/BlueZ Implemented, P1
+### 4. Control Center and OSD — Implemented
 
 **Depends on:** milestones 2 and 3.
 
@@ -379,8 +379,13 @@ Private PulseAudio and packaged GUI fixtures prove native actions, hotplug,
 reconnect, media preservation and no native `pactl` calls. Native BlueZ now provides
 cached adapter/device events, owned discovery and complete cancellable pairing;
 private fixtures verify typed agent replies, modal cleanup, hotplug/reconnect and
-zero `bluetoothctl` calls. Richer audio/adapter capabilities, brightness, power,
-session actions and OSDs remain this milestone's next work.
+zero `bluetoothctl` calls. System now adds cached backlights, modern/legacy power
+profiles and verified login1 session capabilities, confirmation actions and a
+dedicated-locker launch. Read-only OSDs coalesce per output, preserve action source
+and release input/focus. Resident commands report actual outcomes without blocking
+fast IPC. Private System/Audio/GUI fixtures pass, including keyboard input through
+OSDs, domain failures, foreign-session rejection and source routing. Richer native
+capabilities and optional display settings remain extensions.
 
 ### 5. Dock and Desktop Widgets — P1
 
@@ -457,11 +462,11 @@ not substitutes for presentation-time measurements.
 5. Verify with a read-only/symlinked base, simulated Nix regeneration and daemon
    restart. Then expand into milestones 3–5.
 
-All five steps are implemented and verified. Registry/read-only output geometry
-and control-center composition/native audio/BlueZ integration are also implemented.
-Next: brightness/power/session/OSD services and richer native capabilities, then
-dock and desktop widget instances, with
-inventory/focus refinements alongside.
+All five steps are implemented and verified. Registry/read-only output geometry,
+control-center composition, native Audio/BlueZ/System services and OSDs are also
+implemented. User authorized completing every remaining roadmap step, committing
+after each. Next: dock/desktop widget instances, then live themes/providers and the
+SDK/packaging/performance gate, with inventory/focus refinements alongside.
 
 ## UX References
 

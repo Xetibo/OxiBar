@@ -282,6 +282,109 @@ pub type RunnerQueryFn =
     unsafe extern "Rust" fn(query: String, model: PluginModel) -> Option<Task<PluginMsg>>;
 pub type RunnerEntriesFn = unsafe extern "Rust" fn(model: PluginModel) -> Vec<RunnerEntry>;
 
+/// Optional resident commands. Validate before starting work; the outcome reports
+/// completion and carries the ordinary model message back through host routing.
+#[derive(Debug, Clone)]
+pub struct CommandOutcome {
+    pub message: PluginMsg,
+    pub result: Result<(), String>,
+}
+
+pub type CommandFn = unsafe extern "Rust" fn(
+    model: PluginModel,
+    command: String,
+    arguments: Vec<String>,
+) -> Result<Task<CommandOutcome>, String>;
+
+/// A transient, non-interactive OSD. Backend events follow current focus;
+/// action acknowledgements retain their originating surface's output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostOsdRequest {
+    pub topic: String,
+    pub follow_focus: bool,
+}
+
+pub const HOST_REQUEST_SHOW_OSD_PREFIX: &str = "oxibar.host.osd.show:";
+
+impl HostOsdRequest {
+    pub fn new(topic: impl Into<String>) -> Self {
+        Self {
+            topic: topic.into(),
+            follow_focus: false,
+        }
+    }
+
+    pub fn follow_focus(mut self) -> Self {
+        self.follow_focus = true;
+        self
+    }
+
+    /// Use the string transport across dylibs, where an SDK-defined type's
+    /// `Any` identity can differ between separately compiled dependency graphs.
+    pub fn into_message(self) -> PluginMsg {
+        std::sync::Arc::new(self.to_host_request_string())
+    }
+
+    pub fn to_host_request_string(&self) -> String {
+        format!(
+            "{HOST_REQUEST_SHOW_OSD_PREFIX}{}:{}",
+            u8::from(self.follow_focus),
+            self.topic
+        )
+    }
+
+    pub fn parse_host_request(value: &str) -> Option<Self> {
+        let (focus, topic) = value
+            .strip_prefix(HOST_REQUEST_SHOW_OSD_PREFIX)?
+            .split_once(':')?;
+        let follow_focus = match focus {
+            "0" => false,
+            "1" => true,
+            _ => return None,
+        };
+        if topic.is_empty() || topic.len() > 128 || topic.contains('\0') {
+            return None;
+        }
+        Some(Self {
+            topic: topic.to_owned(),
+            follow_focus,
+        })
+    }
+}
+
+#[cfg(test)]
+mod osd_protocol_tests {
+    use super::*;
+
+    #[test]
+    fn serialized_requests_preserve_focus_and_delimited_topics_and_reject_invalid_envelopes() {
+        for request in [
+            HostOsdRequest::new("volume"),
+            HostOsdRequest::new("media:volume").follow_focus(),
+        ] {
+            let message = request.clone().into_message();
+            assert_eq!(
+                HostOsdRequest::parse_host_request(message.downcast_ref::<String>().unwrap()),
+                Some(request)
+            );
+        }
+        for value in [
+            "oxibar.host.osd.show:2:volume",
+            "oxibar.host.osd.show:0:",
+            "oxibar.host.osd.show:1:a\0b",
+        ] {
+            assert!(HostOsdRequest::parse_host_request(value).is_none());
+        }
+        assert!(
+            HostOsdRequest::parse_host_request(&format!(
+                "{HOST_REQUEST_SHOW_OSD_PREFIX}0:{}",
+                "x".repeat(129)
+            ))
+            .is_none()
+        );
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PluginViewContext {
     pub instance_id: String,
@@ -330,6 +433,10 @@ pub type ToastViewFn =
         model: PluginModel,
         toast_id: &str,
     ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
+
+/// Optional `osd_view(model, topic)` inner content. Host owns lifetime, theme
+/// chrome and output placement; reuse the provider's existing cached model.
+pub type OsdViewFn = ToastViewFn;
 
 pub type ErrorsFn = unsafe extern "Rust" fn(model: PluginModel) -> Vec<String>;
 

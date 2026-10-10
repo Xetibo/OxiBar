@@ -45,6 +45,15 @@
   commands and resnapshot after reconnect rather than replaying stale actions.
 - Keep independently refreshed domains separate in the model, and generation-gate
   action acknowledgements and queries so older work cannot overwrite newer state.
+- Resident command replies report completion, not queue acceptance. Apply the
+  ordinary model outcome first; capture output context before starting work.
+  Bound concurrent IPC handlers so slow actions do not block fast commands.
+- Use the SDK's serialized host-request helpers across dylibs, rather than relying
+  on SDK struct `Any` identity across independently compiled dependency graphs.
+- Non-interactive surfaces must not alter keyboard ownership. Route keyboard events
+  by compositor Enter/Leave, independently of pointer focus or surface creation.
+- Coalesce transient OSDs per output and abort replaced timers; expiry carries a
+  generation. Initial service snapshots are quiet, failed actions do not show success.
 - Scope DBus state/actions to the service's unique-owner epoch. Subscribe before
   taking snapshots, reconcile signal ordering and resnapshot invalidated properties.
 - Interactive protocol requests need typed, validated replies and session-scoped

@@ -343,6 +343,7 @@ dependencies = [
  "async-io",
  "iced",
  "iced_anim",
+ "iced_runtime",
  "libpulse-binding",
  "oxibar-plugin-api",
  "oxiced",
@@ -2257,8 +2258,6 @@ dependencies = [
 [[package]]
 name = "layershellev"
 version = "0.17.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faa42859f072bea324343a6495368ec7a78d4aed5705b33b6d3d0096d618b3ae"
 dependencies = [
  "calloop 0.14.4",
  "calloop-wayland-source 0.4.1",
@@ -4331,6 +4330,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "system"
+version = "0.1.0"
+dependencies = [
+ "async-io",
+ "iced",
+ "iced_runtime",
+ "notify",
+ "oxibar-plugin-api",
+ "oxiced",
+ "rustix 1.1.4",
+ "shell-words",
+ "zbus",
 ]
 
 [[package]]

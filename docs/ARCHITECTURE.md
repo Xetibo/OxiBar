@@ -24,11 +24,16 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   `view.rs`, and host-side command/application logic in `runtime.rs`.
 - `src/control_center.rs`: host-owned control-center state, capability selection,
   themed composition and window-scoped keyboard routing.
+- `src/osd.rs`: output-scoped, non-interactive OSD instances and abortable lifetimes.
+- `src/commands.rs`: optional resident provider commands, authoritative completion
+  replies and captured-output routing through asynchronous results.
 - `src/background.rs`: runtime-independent bridge for serialized filesystem jobs
   into Iced tasks; rendering uses immutable snapshots without locking the store.
 - `src/launcher.rs`: resident search-overlay state, cached global result ranking, keyboard routing, and themed view.
 - `src/ipc.rs`: bounded, versioned Unix-socket commands for launcher, settings,
-  control center, output inventory, configuration queries/mutations and status.
+  control center, output inventory, configuration queries/mutations, provider
+  actions, OSDs and status. A bounded, owned set of connection handlers prevents
+  slow actions from blocking fast launcher/status requests.
   CLI invocations exit before daemon/font/renderer initialization; an active-endpoint record keeps clients
   connected while socket-setting changes await restart.
 - `src/plugins.rs`: dynamic library discovery, ABI symbol resolution, optional plugin availability checks, plugin model initialization, and safe wrappers for plugin view/update/error calls.
@@ -42,6 +47,12 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - Bluetooth separates cached DTO reduction in `system.rs`, native DBus ownership
   in `native.rs`, the pairing agent in `agent.rs`, model transitions in `runtime.rs`
   and themed content in `views.rs`.
+- `plugins/system/`: one native system-bus owner with independent backlight,
+  power-profile and session domains; DTO/file helpers, model transitions and themed
+  views remain separate modules.
+- `crates/layershellev`: the published 0.17.1 backend with a local keyboard-focus
+  correction. Compositor keyboard Enter/Leave owns keyboard routing independently
+  of newly created or pointer-active surfaces.
 - `plugins/clock/src/caldav.rs`: HTTPS-only CalDAV sync, current-month calendar queries, minimal iCalendar parsing, common recurrence expansion, and Nextcloud-compatible calendar query support.
 - `flake.nix` and `nix/*.nix`: Nix packaging for the host and dynamic plugin libraries. Crane builds one workspace dependency artifact derivation and reuses it for every host/plugin package so shared Rust dependencies are not rebuilt per plugin.
 
@@ -168,7 +179,7 @@ capabilities remain follow-ups.
 - Optional symbols: `availability`, `metadata`, `popup_metrics`, `popup_view`,
   `modal_view`, `panel_view`, `toast_view`, `runner_query`, `runner_entries`,
   `settings_schema`, `config_changed`, `view_with_context`, and
-  `control_center_view`, and `modal_closed`.
+  `control_center_view`, `modal_closed`, `command` and `osd_view`.
 - `availability(config)` lets a plugin skip loading before model initialization, init tasks, and subscriptions when required hardware or system services are unavailable.
 - `ABI_VERSION` in `oxibar-plugin-api` gates host/plugin compatibility.
 - Plugin models are `Arc<RwLock<Box<dyn OxiAny>>>`; plugin messages are `Arc<dyn OxiAny>`.
@@ -179,6 +190,37 @@ capabilities remain follow-ups.
 - `modal_closed(model)` optionally returns a cleanup task. It is idempotent and
   nonblocking; returned work must remain valid after surface retirement. Required
   exports/signatures and ABI 6 remain unchanged.
+- `command(model, verb, arguments)` validates a bounded resident action and returns
+  a task whose outcome contains both the ordinary provider message and the actual
+  result. The host applies that message before replying to IPC.
+- `osd_view(model, topic)` renders cached, read-only inner content. Cross-library
+  OSD requests use `HostOsdRequest::into_message()` string transport, matching the
+  existing toast convention; SDK struct `Any` identity can differ between separately
+  compiled dependency graphs.
+
+## System Services and OSD Ownership
+
+System owns one cancellable asynchronous zbus connection and bounded command queue.
+Power profiles prefer the modern UPower interface, with the older hadess interface
+as fallback. Unique-owner epochs, independent bounded profile/login queries and
+sequence-gated snapshots prevent one unavailable domain from erasing another.
+Backlight files have one owned watcher and a bounded fallback poll, because sysfs
+notifications are not reliable across drivers. No remote service inventory polls.
+
+Brightness prefers the current user's verified login1 session helper, falling back
+to ordinary file permissions only when that helper is unavailable/unsupported.
+Fresh session UID/ID checks protect brightness/logout from stale session identity.
+Capabilities distinguish allowed, authentication-required and unsupported actions.
+Power/logout commands open a confirmation modal; only confirmation delegates to
+login1 and the system policy agent. Locking launches a configured argument vector
+for a dedicated locker. This shell does not implement a lock protocol.
+
+One OSD per output reuses its ID and replaces its previous abort-on-drop timer.
+Generation-gated expiry cannot close a newer update. Initial snapshots are quiet;
+successful actions retain their captured output, while external changes follow
+current focus. OSDs use no keyboard interactivity, an empty input region and zero
+exclusive zone. Hiding bars retains them; output retirement cancels their timers.
+Geometry, enablement and duration apply live without another provider model.
 
 ## Current Plugins
 
@@ -189,6 +231,9 @@ capabilities remain follow-ups.
 - `bluetooth`: native BlueZ adapter/device events, owned discovery, power,
   connect/disconnect, trust/remove and complete cancellable Agent1 pairing; shared
   bar, popup, control-center and task-modal content.
+- `system`: cached backlights, native power profiles, verified login1 session
+  capabilities/actions and dedicated-locker launch; shared controls and brightness/
+  profile OSD content.
 - `clock`: time display, local calendar popup with event-day tooltips, optional HTTPS CalDAV event sync, and configurable external calendar launcher. `tick_seconds` is the real-clock poll interval; when the format shows seconds the plugin still emits a `Tick` every second, simulating intermediate ticks from a monotonic anchor and only re-reading `Local::now()` every `tick_seconds`.
 - `network`: NetworkManager `nmcli` connection management and password modal; popup and modal surfaces.
 - `notifications`: Freedesktop notification server, toast layers, inline replies, DND state, and side panel. Toast layers start with keyboard interactivity disabled and are switched to `OnDemand` only after user hover intent so incoming notifications do not steal keyboard focus. New toast layers target Hyprland's focused monitor output when available, while the notification panel remains attached to the bar output. Toast timeout closes only the host toast surface; stored notifications remain in the panel until dismissed, cleared, replied to, or actioned.
@@ -209,7 +254,7 @@ Plugin `lib.rs` files should keep ABI symbols, model update, and view compositio
 - Active-monitor toast placement uses a modular compositor-backend registry. The current backend uses Hyprland monitor data because Wayland/layer-shell and the available `wayland-protocols` output protocols describe/configure outputs but do not expose a compositor-generic focused-output query; non-Hyprland sessions fall back to the previous `LastOutput` behavior.
 - The stream raw-pointer ABI is documented as practical but not fully C-ABI-safe.
 - Dynamic plugins cannot assume the host's Tokio runtime is visible through their
-  own copy of Tokio TLS. Runner workers and native audio/BlueZ owners are cancelled
+  own copy of Tokio TLS. Runner workers and native audio/BlueZ/System owners are cancelled
   and joined by their owning streams; asynchronous DBus/media uses async-io/zbus.
 
 ## Shell Expansion
@@ -218,9 +263,9 @@ Plugin `lib.rs` files should keep ABI symbols, model update, and view compositio
 capability extensions, and source-aware GUI overrides over immutable Nix defaults.
 Source-aware overrides, structured control commands and the initial settings UI
 are implemented, together with the first multi-output registry/inventory slice
-and control-center composition. Native audio and BlueZ integration are implemented;
+and control-center composition. Native audio, BlueZ and system services/OSDs are implemented;
 settings/control-center layouts share spacious oxiced controls while retaining
-the existing palette. Additional audio/adapter capabilities, OSDs, dock/desktop
+the existing palette. Additional audio/adapter capabilities, dock/desktop
 widgets and live theme snapshots remain subsequent milestones.
 
 The roadmap identifies selective ReSet audio/BlueZ and monitor backend patterns.
@@ -233,6 +278,9 @@ No donor daemon/GTK architecture is required by the Rust/Iced host or plugin API
 - `flake.nix` creates one cleaned Cargo source, one vendored dependency set, and one `buildDepsOnly` workspace artifact derivation with `--workspace` package selection.
 - `nix/default.nix` builds only the host package from those shared Cargo artifacts.
 - `nix/plugin.nix` builds only the requested plugin package from the same shared Cargo artifacts and installs the resulting `lib*.so` under `$out/lib/`.
+- The local layershellev patch is shared by every host/plugin graph. Crane's dummy
+  dependency build preserves that backend's real public source for external
+  iced_layershell consumers; the final package source remains normal workspace code.
 - Native dependencies must be available to shared dependency compilation and the
   owning final plugin. `libpulseaudio` is in the Audio library's runtime search
   path; other plugins do not gain that plugin-specific runtime dependency.

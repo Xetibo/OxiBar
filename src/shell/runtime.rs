@@ -177,6 +177,9 @@ impl OxiBar {
     }
 
     pub(crate) fn overlay_output(&self) -> Option<String> {
+        if let Some(output) = &self.shell.command_output {
+            return output.clone();
+        }
         self.shell
             .request_source
             .and_then(|id| self.shell.registry.get(id))
@@ -276,6 +279,7 @@ impl OxiBar {
             self.panel_plugin = None;
         }
         self.toasts.retain(|toast| toast.window_id != id);
+        self.osds.instances.retain(|_, instance| instance.id != id);
         callback
     }
 

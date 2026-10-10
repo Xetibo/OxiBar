@@ -25,6 +25,8 @@ const MAX_DRIVE_STEPS: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FakePluginOptions {
+    pub command: bool,
+    pub osd: bool,
     pub popup: bool,
     pub modal: bool,
     pub modal_closed: bool,
@@ -127,11 +129,21 @@ enum FakePluginMessage {
     Record(String),
     EmitHostRequest(String),
     EmitToastRequest(HostToastRequest),
+    EmitOsd(oxibar_plugin_api::HostOsdRequest),
     Error(String),
 }
 
 pub struct TestHost {
     bar: OxiBar,
+}
+
+#[derive(Debug, Clone)]
+pub struct TestOsd {
+    pub id: IcedId,
+    pub output: Option<String>,
+    pub plugin: String,
+    pub topic: String,
+    pub generation: u64,
 }
 
 impl TestHost {
@@ -174,6 +186,7 @@ impl TestHost {
         let settings = crate::settings::SettingsUi::new(&config.snapshot);
         let mut host = Self {
             bar: OxiBar {
+                osds: crate::osd::Osds::untimed(),
                 shell: crate::shell::Shell::new(Err("Test inventory".to_owned())),
                 config,
                 settings,
@@ -211,6 +224,47 @@ impl TestHost {
 
     pub fn drive_plugin_record(&mut self, plugin_id: &str, value: &str) -> Vec<Message> {
         self.drive(Message::PluginSubMsg(plugin_id.to_owned(), record(value)))
+    }
+
+    pub fn osds(&self) -> Vec<TestOsd> {
+        self.bar
+            .osds
+            .instances
+            .iter()
+            .map(|(output, item)| TestOsd {
+                id: item.id,
+                output: output.clone(),
+                plugin: item.plugin.clone(),
+                topic: item.topic.clone(),
+                generation: item.generation,
+            })
+            .collect()
+    }
+
+    pub fn action(
+        &mut self,
+        source: Option<IcedId>,
+        plugin: &str,
+        action: &str,
+        arguments: &[&str],
+    ) -> (Vec<Message>, serde_json::Value) {
+        let (reply, receiver) = crate::ipc::Reply::channel();
+        let request = Message::ControlRequest(crate::ipc::ControlRequest {
+            command: crate::ipc::Command::Action {
+                plugin: plugin.to_owned(),
+                action: action.to_owned(),
+                arguments: arguments.iter().map(|value| (*value).to_owned()).collect(),
+            },
+            reply,
+        });
+        let request = source
+            .map(|source| Message::FromSurface(source, Box::new(request.clone())))
+            .unwrap_or(request);
+        let messages = self.drive(request);
+        (
+            messages,
+            iced::futures::executor::block_on(receiver).expect("command reply"),
+        )
     }
 
     pub fn drive_plugin_toast_show(
@@ -394,6 +448,10 @@ pub fn emit_toast_request(request: HostToastRequest) -> PluginMsg {
     Arc::new(FakePluginMessage::EmitToastRequest(request))
 }
 
+pub fn emit_osd(request: oxibar_plugin_api::HostOsdRequest) -> PluginMsg {
+    Arc::new(FakePluginMessage::EmitOsd(request))
+}
+
 pub fn error(value: &str) -> PluginMsg {
     Arc::new(FakePluginMessage::Error(value.to_owned()))
 }
@@ -424,6 +482,8 @@ fn fake_model(dynamic_popup_metrics: Option<PluginPopupMetrics>) -> PluginModel 
 
 fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
     PluginFuncs {
+        command: options.command.then_some(fake_command),
+        osd_view: options.osd.then_some(fake_osd_view),
         context_view: None,
         control_center_view: options.control_center.then_some(fake_view),
         filename: "libfake.so".to_owned(),
@@ -517,6 +577,7 @@ unsafe extern "Rust" fn fake_update(
             model.seen.push(request.toast_id.clone());
             Some(Task::done(Arc::new(request.to_host_request_string())))
         }
+        FakePluginMessage::EmitOsd(request) => Some(Task::done(Arc::new(request) as PluginMsg)),
         FakePluginMessage::Error(error) => {
             model.errors.push(error);
             None
@@ -624,6 +685,48 @@ unsafe extern "Rust" fn fake_toast_view(
     toast_id: &str,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     Ok(vec![text(format!("fake toast {toast_id}")).into()])
+}
+
+unsafe extern "Rust" fn fake_osd_view(
+    _: PluginModel,
+    topic: &str,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    if topic == "bad" {
+        return Err(std::io::Error::other("Bad OSD topic"));
+    }
+    Ok(vec![text(format!("fake OSD {topic}")).into()])
+}
+
+unsafe extern "Rust" fn fake_command(
+    _: PluginModel,
+    action: String,
+    arguments: Vec<String>,
+) -> Result<Task<oxibar_plugin_api::CommandOutcome>, String> {
+    match action.as_str() {
+        "record" => Ok(Task::done(oxibar_plugin_api::CommandOutcome {
+            message: record(&arguments.join(" ")),
+            result: Ok(()),
+        })),
+        "fail" => Ok(Task::done(oxibar_plugin_api::CommandOutcome {
+            message: record("failed action updated"),
+            result: Err("Fixture action failed".to_owned()),
+        })),
+        "volume" => Ok(Task::perform(
+            async {
+                let (sender, receiver) = iced::futures::channel::oneshot::channel();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    let _ = sender.send(());
+                });
+                let _ = receiver.await;
+            },
+            |_| oxibar_plugin_api::CommandOutcome {
+                message: emit_osd(oxibar_plugin_api::HostOsdRequest::new("volume")),
+                result: Ok(()),
+            },
+        )),
+        _ => Err("Unknown fixture command".to_owned()),
+    }
 }
 
 unsafe extern "Rust" fn fake_subscription() -> *mut PluginStream {

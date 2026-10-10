@@ -50,12 +50,17 @@
 - Live service errors retain useful cached content and show themed inline status;
   recovery clears that status. Device mute/volume state and media playback remain
   distinct controls. Compact popups scroll when the available height is exceeded.
+- OSDs are read-only mantle surfaces: shared `oxi_plugin::osd_content` and
+  `level_meter`, normal theme roles/padding/radius, no buttons or focus. They are
+  pointer-transparent, have zero exclusive zone and never redirect keyboard input.
+- Session actions open a task confirmation; dismissal clears unsubmitted intent.
+  Locking invokes the configured dedicated locker, not a visual shell overlay.
 
 ## Current Surfaces
 
 - Each bar uses `OXITHEME.mantle` unless its effective transparency is enabled,
   and spans its selected output width unless common/profile width overrides it.
-- Popup, modal, panel, settings and control-center host surfaces use `OXITHEME.mantle`.
+- Popup, modal, panel, settings, control-center and OSD host surfaces use `OXITHEME.mantle`.
 - Notification panel host surface remains on the bar output; toast host surfaces target the active monitor independently.
 - Popup open/close animation uses quick `Easing::EASE_OUT` timing to align with notification-center layer opening.
 - Plugins request host surfaces through `HOST_REQUEST_TOGGLE_POPUP`, `HOST_REQUEST_OPEN_MODAL`, `HOST_REQUEST_CLOSE_MODAL`, and `HOST_REQUEST_TOGGLE_PANEL`.

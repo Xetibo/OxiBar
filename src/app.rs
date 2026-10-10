@@ -236,6 +236,7 @@ fn run_bar(connection: Option<Connection>) -> Result<(), iced_layershell::Error>
 }
 
 pub(crate) struct OxiBar {
+    pub(crate) osds: crate::osd::Osds,
     pub(crate) shell: Shell,
     pub(crate) config: ConfigRuntime,
     pub(crate) settings: SettingsUi,
@@ -349,6 +350,7 @@ impl OxiBar {
         };
         let launcher = Launcher::new(config);
         let mut bar = Self {
+            osds: crate::osd::Osds::default(),
             shell: Shell::new(inventory),
             config: runtime,
             settings: settings_ui,
@@ -384,6 +386,25 @@ impl OxiBar {
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::ShowOsd(plugin, request) => {
+                self.request_osd(plugin, request).unwrap_or_else(|error| {
+                    tracing::debug!(%error, "OSD request rejected");
+                    Task::none()
+                })
+            }
+            Message::ExpireOsd(id, generation) => self.expire_osd(id, generation),
+            Message::CommandFinished {
+                plugin,
+                outcome,
+                reply,
+                output,
+            } => self.finish_command(plugin, outcome, reply, output),
+            Message::OnCommandOutput(output, message) => {
+                let previous = self.shell.command_output.replace(output.clone());
+                let task = self.update(*message);
+                self.shell.command_output = previous;
+                task.map(move |message| Message::OnCommandOutput(output.clone(), Box::new(message)))
+            }
             Message::Exit => std::process::exit(0),
             Message::OutputsChanged(result) => self.outputs_changed(result),
             Message::SurfaceClosed(id) => self.surface_closed(id),
@@ -482,6 +503,10 @@ impl OxiBar {
                 }
             }
             Message::SetPopupInputRegion { .. }
+            | Message::Ignore
+            | Message::OpenOsdLayer(_, _)
+            | Message::ConfigureOsdLayer(_, _)
+            | Message::SetLayerMargin(_, _)
             | Message::OnOutput(_, _)
             | Message::OpenBarLayer(_, _, _)
             | Message::ConfigureBar(_, _)
@@ -1193,6 +1218,7 @@ mod tests {
 
     fn empty_bar() -> OxiBar {
         let mut bar = OxiBar {
+            osds: crate::osd::Osds::untimed(),
             shell: Shell::new(Err("Test".to_owned())),
             config: ConfigRuntime::new(ConfigStore::memory(Table::new(), Table::new())),
             settings: SettingsUi::new(&ConfigStore::memory(Table::new(), Table::new()).snapshot()),

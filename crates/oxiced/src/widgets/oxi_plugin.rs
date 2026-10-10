@@ -26,6 +26,51 @@ pub fn text_accent(_: &Theme) -> text::Style {
     }
 }
 
+pub fn level_meter<'a, M: 'a>(value: f32, maximum: f32) -> Element<'a, M> {
+    let maximum = maximum.max(1.0);
+    iced::widget::progress_bar(0.0..=maximum, value.clamp(0.0, maximum))
+        .girth(OXITHEME.padding_sm)
+        .style(|_| iced::widget::progress_bar::Style {
+            background: OXITHEME.secondary_bg.into(),
+            bar: OXITHEME.primary.into(),
+            border: iced::Border {
+                radius: OXITHEME.border_radius.into(),
+                ..Default::default()
+            },
+        })
+        .into()
+}
+
+pub fn osd_content<'a, M: 'a>(
+    icon: &'static str,
+    title: impl Into<String>,
+    value: impl Into<String>,
+    level: Option<(f32, f32)>,
+) -> Element<'a, M> {
+    let labels = iced::widget::Column::new()
+        .push(text(title.into()).size(OXITHEME.font_md).style(text_muted))
+        .push(
+            text(value.into())
+                .size(OXITHEME.font_lg)
+                .style(text_primary),
+        )
+        .spacing(OXITHEME.padding_xs)
+        .width(Length::Fill);
+    let mut body = iced::widget::Column::new()
+        .spacing(OXITHEME.padding_md)
+        .push(
+            iced::widget::Row::new()
+                .push(text(icon).size(OXITHEME.font_xl).style(text_accent))
+                .push(labels)
+                .spacing(OXITHEME.padding_lg)
+                .align_y(iced::Alignment::Center),
+        );
+    if let Some((value, maximum)) = level {
+        body = body.push(level_meter(value, maximum));
+    }
+    body.into()
+}
+
 pub fn bar_button_style(_: &Theme, status: button::Status) -> button::Style {
     let base = button::Style {
         background: None,

@@ -245,7 +245,7 @@ oxibar control-center close
 ```
 
 The center combines existing audio/media, network, Bluetooth, battery,
-notification and calendar controls in the resident host. Alt+number selects a
+notification, calendar and System controls in the resident host. Alt+number selects a
 provider tile; Escape closes this surface. The same plugin models/subscriptions
 serve bar, popup/panel and center, including password/pairing modals and
 notification actions/replies. Settings, launcher and center dismiss each other.
@@ -255,14 +255,14 @@ notification actions/replies. Settings, launcher and center dismiss each other.
 enabled = true
 width = 680
 height = 760
-widgets = ["Audio", "Network", "Bluetooth", "Battery", "Notifications", "Clock"]
+widgets = ["Audio", "Network", "Bluetooth", "Battery", "Notifications", "Clock", "System"]
 ```
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | Enable the overlay, bar control and open/toggle commands. |
 | `width` / `height` | integer `1..16384` | `680` / `760` | Overlay dimensions in logical units; live resize. |
-| `widgets` | string array | Six providers shown above | Ordered plugin names, matched case-insensitively and deduplicated. Empty means no controls. |
+| `widgets` | string array | Seven providers shown above | Ordered plugin names, matched case-insensitively and deduplicated. Empty means no controls. |
 
 Only running, available plugins with dedicated control-center or popup/panel
 content appear. Listing a provider here does not load/install its library;
@@ -278,8 +278,57 @@ without discarding plugin state.
 Selecting Notifications closes visible toasts and suppresses new notification
 toasts while that inbox is visible. Stored notifications remain available; later
 toasts resume after switching away or closing. Native audio and BlueZ devices are
-supported; new brightness/power/session/OSD features remain tracked in
-`docs/SHELL_ROADMAP.md`.
+supported. System adds brightness, power profiles and session actions. More shell
+features remain tracked in `docs/SHELL_ROADMAP.md`.
+
+## OSDs and resident actions
+
+Provider actions use the running model and report actual success/failure:
+
+```sh
+oxibar action Audio volume +5
+oxibar action Audio mute toggle
+oxibar action Audio input-volume -5
+oxibar action Audio media-volume 50
+oxibar action Audio play-pause
+oxibar action System brightness +5
+oxibar action System profile balanced
+oxibar action System suspend       # opens confirmation; does not suspend yet
+oxibar action System lock
+oxibar osd Audio volume
+oxibar osd System brightness
+oxibar osd close
+```
+
+Audio also supports `input-mute`, `next` and `previous`. Device percentages are
+`0..150`; player volume and brightness are `0..100`. Signed steps clamp to bounds.
+System session verbs are `suspend`, `hibernate`, `reboot`, `power-off` and `logout`;
+they open the same confirmation modal as the GUI. Lock requires a configured
+dedicated locker. Unknown/unavailable actions return errors. Slow actions do not
+block launcher/status IPC.
+
+```toml
+[osd]
+enabled = true
+width = 360
+height = 128
+position = "bottom"
+margin = 64
+timeout_ms = 1800
+```
+
+All OSD fields apply live from Appearance settings. Width/height use `1..16384`
+logical units, margin `0..16384`, position `top`/`bottom`, duration `100..10000` ms.
+OSDs are pointer-transparent and take no keyboard focus or exclusive zone. One
+instance per output coalesces updates and renews expiry. Initial snapshots are
+quiet; successful actions stay on their original output, while external changes
+follow focus. Disabling OSDs does not disable provider actions.
+
+The version-1 action request uses `provider`, `action` and `args`:
+
+```json
+{"version":1,"command":"action","provider":"System","action":"brightness","args":["+5"]}
+```
 
 ## GUI settings and overrides
 
@@ -327,12 +376,13 @@ height then reveals 34. Unoverridden fields follow the regenerated base.
 
 - **Live / surface update:** bar transparency/order/geometry, launcher enablement,
   dimensions and result limit, settings/control-center dimensions, control-center
-  enablement/order, output selection/profiles, inventory interval,
+  enablement/order, OSD preferences, output selection/profiles, inventory interval,
   application-provider terminal and result limit, clock text size/bold/calendar
-  command, notification default timeout.
+  command, notification default timeout, preferred backlight and locker preferences.
 - **Restart required:** font loading, plugin enable/disable/order, instance/control
   endpoint/startup policy, audio backend selection, Bluetooth discovery/pairing
-  limits, existing plugin poll timers and clock format granularity.
+  limits, System backlight root/fallback interval/session selection, existing plugin
+  poll timers and clock format granularity.
   Pending changes are displayed; loaded plugin models and system functionality stay
   available until restart. Resetting back to the running value clears the indicator.
 - Plugin schemas/hooks are optional. Legacy plugin settings can be edited through
@@ -452,6 +502,35 @@ variable is missing it logs an error to its `errors()` channel on startup.
 The host-level `launch(focused_index)` ABI hook is implemented: index `N`
 into the id-sorted workspace list activates that workspace. There is no
 default keybinding for this yet — wire one up via your compositor.
+
+### `[system]` — brightness, power profiles and session controls
+
+Install/select `libsystem.so` (included in Home Manager's default plugin set).
+One owner serves bar, popup, control center and OSDs. Backlights use sysfs plus the
+current user's verified login1 `SetBrightness` helper when available; ordinary
+file permissions are the fallback, without privilege escalation. Profiles prefer
+modern UPower PowerProfiles and support the older hadess service. Session controls
+display allowed/authentication-required capabilities and delegate confirmed actions
+to login1 and the system policy agent. Logout/brightness recheck session ownership.
+
+| Key | Type | Default | Mode / description |
+| --- | --- | --- | --- |
+| `preferred_backlight` | string | `""` | Live; empty selects first device, otherwise prefer this name. |
+| `backlight_root` | string | `"/sys/class/backlight"` | Restart; advanced namespace/fixture directory. |
+| `backlight_poll_seconds` | integer `1..60` | `2` | Restart; sysfs fallback only, not remote service polling. |
+| `session_id` | string | `""` | Restart; empty resolves environment/process session; foreign UIDs are rejected. |
+| `lock_enabled` | bool | `true` | Live; enable dedicated-locker action. |
+| `lock_command` | argument string | unset | Live; executable/arguments, quoting supported, no shell evaluation. |
+
+```toml
+[system]
+lock_command = "swaylock"
+```
+
+Unavailable domains show independent inline health while useful cached state stays
+visible. A missing profile/login service does not disable ordinary file brightness.
+Owners reconnect and reject expired/offline work rather than replaying it. Locking
+launches the configured locker; Oxibar does not turn its overlay into a session lock.
 
 ### `[audio]` — Audio plugin
 

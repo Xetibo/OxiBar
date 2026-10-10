@@ -43,13 +43,19 @@
 - Modal lifecycle: optional cleanup once on Escape/replacement/compositor closure/
   overlay dismissal/output removal, hidden-bar retention, source placement and
   cleanup/background results after window retirement.
+- System: backlight bounds/rounding/path validation, quiet baselines, independent
+  domain acknowledgements, repeated relative intents, confirmation-only session
+  commands, locker argument parsing and live config preservation.
+- OSD/commands: per-output ID reuse, stale expiry, input-transparent layer settings,
+  live geometry/disable, output retirement, authoritative model-before-reply,
+  captured async output, serialized SDK transport and concurrent slow/fast IPC.
 
 ## Expected Commands
 
 - `nix develop -c cargo fmt --all -- --check`
 - `nix develop -c cargo test --workspace`
 - `nix develop -c cargo clippy --workspace --all-targets -- -D warnings`
-- `nix build .#oxibar .#oxibar-audio .#oxibar-bluetooth` after native backend/API
+- `nix build .#oxibar .#oxibar-audio .#oxibar-bluetooth .#oxibar-system` after native backend/API
   changes, with more plugin package targets as needed.
 
 For this runner integration, build `oxibar`, `oxibar-applications`, and a retained
@@ -284,6 +290,39 @@ Typed replies, full-flow cancellation, hotplug/reconnect and themed visuals pass
 Fixtures were reaped/removed and screenshots stayed private. Actual hardware and
 system permission-policy verification remain manual.
 
+## System Services and OSD Runtime Verification
+
+Run `cargo test -p system private_bus -- --ignored` with pinned `dbus-daemon` on
+PATH, using the same filtered-source Nix shell pattern as the BlueZ tests above.
+The fixtures create private ordinary backlight files and login1/power-profile
+services. They verify independent domains, verified/fresh session UID, ordinary
+file fallback, native helper/profile/session requests, owner restart, a slow query
+concurrent with file actions and prompt joined shutdown. They never call the real
+system bus or change hardware/session state.
+
+For compositor checks use isolated config/socket/lock, private system/session bus,
+private backlight files, null PulseAudio sink and MPRIS fixture. Check quiet startup,
+relative actions, external events, volume/mute/media OSDs, ID coalescing/expiry,
+live edge/size/duration, disabled OSDs and repeated reopen. Delay a brightness reply,
+change monitor focus and verify its captured output while a fast status query replies.
+Session CLI verbs must open confirmation only; Escape has no effect, and Confirm
+calls only the mock interactive method. Reject a freshly foreign session UID.
+Test configured locker arguments with a marker-only executable.
+
+Prove input pass-through by typing before and after OSD creation, traversing to a
+field and applying it. A screenshot alone is insufficient. The local layershellev
+keyboard patch passed this check: duration changed to 900 ms while width stayed 360.
+Wait for compositor animations before inspecting settled OSD screenshots.
+
+Current step passed 195 workspace tests/doctests, strict Clippy, both private System
+tests and Nix host/System/Audio/applications/clock builds. The full private Hyprland
+scenario passed actual actions, keyboard pass-through, source routing, concurrent
+status, confirmation, UID rejection, locker launch and five reopen cycles.
+Screenshots remain private. With limited storage, use `CARGO_PROFILE_DEV_DEBUG=0`,
+`CARGO_PROFILE_TEST_DEBUG=0` and `CARGO_INCREMENTAL=0` consistently in a session-owned
+target directory. The patched backend is outside workspace membership; formatting
+its changed Rust file uses `rustfmt` explicitly alongside workspace `cargo fmt`.
+
 ## Coverage Goals
 
 - Host: config-derived bar placement, plugin message mapping, popup geometry, and modal/panel state transitions where they can run without a GUI runtime.
@@ -294,7 +333,8 @@ system permission-policy verification remain manual.
 - Dynamic library loading from `$XDG_CONFIG_HOME/oxibar/plugins/` is not covered by an integration test yet.
 - The opt-in runner dylib test exercises real library exports/tasks, but general availability-gate/load-order coverage through `load_plugins()` is still missing.
 - Normal tests avoid live system services. Opt-in tests exercise the real runner
-  timer, native audio events/actions and private BlueZ state/pairing/cancellation;
+  timer, native audio events/actions, private BlueZ state/pairing/cancellation and
+  private System domains/actions;
   other service subscriptions and general dylib lifecycle coverage remain incomplete.
 - UI rendering tests only validate that view functions return elements for valid models; they do not assert pixel output.
 - Keyboard search, text-field traversal/application, category shortcuts and Escape

@@ -35,6 +35,12 @@ This file is the styling contract for Oxibar plugins and shell surfaces. New plu
 - Multiple output bars retain independent geometry and input regions. Attached
   popups appear below top bars or above bottom bars, on the originating output.
   Removing an output dismisses its surfaces without discarding plugin state.
+- OSDs reuse `oxi_plugin::osd_content` and `level_meter` inside mantle chrome with
+  `padding_lg` and theme radius. They are read-only, pointer-transparent and have
+  no keyboard interactivity or exclusive zone. Coalesce updates per output and
+  keep existing text input usable while they appear.
+- Power/logout actions use a confirmation task modal; dismissal clears pending
+  intent. Lock UI launches a dedicated locker rather than imitating a lock surface.
 
 ## Bar Controls
 

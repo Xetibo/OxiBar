@@ -164,6 +164,7 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
                     "Battery",
                     "Notifications",
                     "Clock",
+                    "System",
                 ]
                 .into_iter()
                 .map(|name| Value::String(name.to_owned()))
@@ -173,6 +174,54 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
         )
         .description(
             "Ordered plugin names. Available control views share the running plugin models.",
+        ),
+        SettingDescriptor::new(
+            "osd.enabled",
+            "Enable OSDs",
+            Boolean,
+            Some(Value::Boolean(true)),
+            Live,
+        ),
+        SettingDescriptor::new(
+            "osd.width",
+            "OSD width",
+            dimension.clone(),
+            Some(Value::Integer(layout::DEFAULT_OSD_SIZE.0 as i64)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "osd.height",
+            "OSD height",
+            dimension.clone(),
+            Some(Value::Integer(layout::DEFAULT_OSD_SIZE.1 as i64)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "osd.position",
+            "OSD edge",
+            SettingKind::Choice(vec!["top".to_owned(), "bottom".to_owned()]),
+            Some(Value::String("bottom".to_owned())),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "osd.margin",
+            "OSD edge margin",
+            Integer {
+                min: 0,
+                max: layout::MAX_HOST_SURFACE_DIMENSION,
+            },
+            Some(Value::Integer(64)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "osd.timeout_ms",
+            "OSD duration (ms)",
+            Integer {
+                min: 100,
+                max: 10_000,
+            },
+            Some(Value::Integer(1800)),
+            Live,
         ),
         SettingDescriptor::new(
             "settings.height",
@@ -268,6 +317,7 @@ pub fn validate(config: &Table, schema: &[SettingDescriptor]) -> Result<(), Stri
         "launcher",
         "settings",
         "control_center",
+        "osd",
         "startup",
         "instance",
         "ipc",
@@ -351,6 +401,7 @@ pub fn validate_value(field: &SettingDescriptor, value: &Value) -> Result<(), St
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostConfig {
+    pub osd: crate::osd::OsdConfig,
     pub bar_width: Option<u32>,
     pub bar_height: u32,
     pub transparent: bool,
@@ -397,6 +448,13 @@ impl HostConfig {
                 .collect()
         };
         Self {
+            osd: crate::osd::OsdConfig {
+                enabled: boolean("osd.enabled"),
+                size: (integer("osd.width"), integer("osd.height")),
+                bottom: get_path(table, "osd.position").and_then(Value::as_str) == Some("bottom"),
+                margin: integer("osd.margin"),
+                timeout_ms: integer("osd.timeout_ms"),
+            },
             bar_width: get_path(table, "bar.width")
                 .and_then(Value::as_integer)
                 .map(|value| value as u32),

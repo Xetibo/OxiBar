@@ -26,11 +26,11 @@ use std::sync::Arc;
 
 use libloading::Library;
 use oxibar_plugin_api::{
-    ABI_VERSION, AbiVersionFn, AvailabilityFn, ConfigChangedFn, ContextViewFn, ControlCenterViewFn,
-    ErrorsFn, LaunchFn, MetadataFn, ModalClosedFn, ModalViewFn, ModelFn, NameFn, PanelViewFn,
-    PluginAvailability, PluginMetadata, PluginModel, PluginMsg, PluginPopupMetrics, PopupMetricsFn,
-    PopupViewFn, RunnerEntriesFn, RunnerQueryFn, SettingsSchemaFn, SubscriptionFn, ToastViewFn,
-    UpdateFn, ViewFn,
+    ABI_VERSION, AbiVersionFn, AvailabilityFn, CommandFn, ConfigChangedFn, ContextViewFn,
+    ControlCenterViewFn, ErrorsFn, LaunchFn, MetadataFn, ModalClosedFn, ModalViewFn, ModelFn,
+    NameFn, OsdViewFn, PanelViewFn, PluginAvailability, PluginMetadata, PluginModel, PluginMsg,
+    PluginPopupMetrics, PopupMetricsFn, PopupViewFn, RunnerEntriesFn, RunnerQueryFn,
+    SettingsSchemaFn, SubscriptionFn, ToastViewFn, UpdateFn, ViewFn,
 };
 use toml::Table;
 use tracing::{error, info, warn};
@@ -41,6 +41,8 @@ use crate::config::{get_allowed_plugins, get_oxirun_dir};
 /// alive via the `Arc` so that the raw fn pointers remain valid for the
 /// lifetime of this struct.
 pub struct PluginFuncs {
+    pub command: Option<CommandFn>,
+    pub osd_view: Option<OsdViewFn>,
     pub context_view: Option<ContextViewFn>,
     pub control_center_view: Option<ControlCenterViewFn>,
     pub filename: String,
@@ -191,6 +193,8 @@ unsafe fn load_one(
     Ok((
         plugin_name,
         PluginFuncs {
+            command: unsafe { resolve_optional(&lib, "command") },
+            osd_view: unsafe { resolve_optional(&lib, "osd_view") },
             context_view,
             control_center_view,
             filename: path

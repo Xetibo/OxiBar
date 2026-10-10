@@ -49,6 +49,7 @@ impl OxiBar {
     pub(crate) fn view(&self, id: IcedId) -> Element<'_, Message> {
         let content = match self.shell.registry.get(id).map(|record| &record.kind) {
             Some(SurfaceKind::Settings) => self.settings_view(),
+            Some(SurfaceKind::Osd) => self.osd_view(id),
             Some(SurfaceKind::ControlCenter) => self.control_center_view(),
             Some(SurfaceKind::Launcher) => self.launcher.view(),
             Some(SurfaceKind::Modal(_)) => self.modal_surface_view(),

@@ -19,3 +19,6 @@ tracing = "0.1"
 zbus = "5.14.0"
 libpulse-binding = "2.30.1"
 async-io = "2"
+
+[dev-dependencies]
+iced_runtime = "0.14"

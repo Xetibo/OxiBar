@@ -16,6 +16,7 @@ pub enum SurfaceKind {
     Launcher,
     Settings,
     ControlCenter,
+    Osd,
     Modal(String),
     Panel(String),
     Toast(String, String),
@@ -79,6 +80,7 @@ pub struct BarInstance {
 }
 
 pub(crate) struct Shell {
+    pub command_output: Option<Option<String>>,
     pub registry: SurfaceRegistry,
     pub bars: BTreeMap<String, BarInstance>,
     pub inventory: Option<OutputSnapshot>,
@@ -98,6 +100,7 @@ impl Shell {
             .and_then(OutputSnapshot::focused)
             .map(|output| output.name.clone());
         Self {
+            command_output: None,
             registry: SurfaceRegistry::default(),
             bars: BTreeMap::new(),
             inventory: inventory.as_ref().ok().cloned(),

@@ -62,7 +62,11 @@ impl Category {
 
     fn accepts(self, path: &str) -> bool {
         match self {
-            Self::Appearance => path.starts_with("bar.font") || path == "bar.transparent",
+            Self::Appearance => {
+                path.starts_with("bar.font")
+                    || path == "bar.transparent"
+                    || path.starts_with("osd.")
+            }
             Self::Bar => path.starts_with("bar.") && !Self::Appearance.accepts(path),
             Self::Launcher => path.starts_with("launcher.") || path.starts_with("applications."),
             Self::Plugins => {
@@ -76,6 +80,7 @@ impl Category {
                     "startup.",
                     "monitor.",
                     "control_center.",
+                    "osd.",
                 ]
                 .iter()
                 .any(|prefix| path.starts_with(prefix))

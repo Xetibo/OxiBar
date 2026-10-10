@@ -152,6 +152,11 @@
           };
           cargoArtifacts = craneLib.buildDepsOnly (commonCraneArgs
             // {
+              # Registry iced_layershell consumes this local patched dependency.
+              # Keep its API source in Crane's otherwise stubbed dependency build.
+              postPatch = ''
+                cp -R ${src}/crates/layershellev/src crates/layershellev/
+              '';
               cargoBuildExtraArgs = "--workspace";
               cargoCheckExtraArgs = "--workspace --all-targets";
               cargoTestExtraArgs = "--workspace --no-run";
@@ -171,6 +176,7 @@
           oxibar-clock = pluginPackage "clock";
           oxibar-network = pluginPackage "network";
           oxibar-notifications = pluginPackage "notifications";
+          oxibar-system = pluginPackage "system";
           oxibar-tray = pluginPackage "tray";
           oxibar-workspaces = pluginPackage "workspaces";
           default = oxibar;

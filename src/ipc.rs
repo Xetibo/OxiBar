@@ -20,6 +20,7 @@ use crate::{config, messages::Message};
 const MAX_COMMAND_BYTES: u64 = 1024 * 1024;
 const MAX_RESPONSE_BYTES: u64 = 8 * MAX_COMMAND_BYTES;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
+const ACTION_TIMEOUT: Duration = Duration::from_secs(8);
 pub const PROTOCOL_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, Copy)]
@@ -40,6 +41,16 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Action {
+        plugin: String,
+        action: String,
+        arguments: Vec<String>,
+    },
+    Osd {
+        plugin: String,
+        topic: String,
+    },
+    CloseOsds,
     Outputs,
     Launcher(WindowCommand),
     Settings(WindowCommand),
@@ -58,6 +69,13 @@ impl std::fmt::Debug for Reply {
 }
 
 impl Reply {
+    pub(crate) fn channel() -> (
+        Self,
+        iced::futures::channel::oneshot::Receiver<serde_json::Value>,
+    ) {
+        let (sender, receiver) = iced::futures::channel::oneshot::channel();
+        (Self(Arc::new(Mutex::new(Some(sender)))), receiver)
+    }
     pub fn send(&self, response: serde_json::Value) {
         if let Ok(mut sender) = self.0.lock()
             && let Some(sender) = sender.take()
@@ -101,6 +119,43 @@ fn parse_request(text: &str) -> Result<Command, String> {
         Some(value) => Some(value.as_u64().ok_or("Invalid revision")?),
     };
     Ok(match string("command")? {
+        "action" => {
+            let arguments = request
+                .get("args")
+                .and_then(serde_json::Value::as_array)
+                .ok_or("Missing args")?;
+            if arguments.len() > 16 {
+                return Err("Too many action arguments".to_owned());
+            }
+            let arguments: Vec<String> = arguments
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .filter(|value| value.len() <= 1024)
+                        .map(str::to_owned)
+                        .ok_or("Invalid action argument".to_owned())
+                })
+                .collect::<Result<_, _>>()?;
+            let plugin = string("provider")?;
+            let action = string("action")?;
+            if plugin.is_empty() || plugin.len() > 128 || action.is_empty() || action.len() > 64 {
+                return Err("Invalid action name".to_owned());
+            }
+            Command::Action {
+                plugin: plugin.to_owned(),
+                action: action.to_owned(),
+                arguments,
+            }
+        }
+        "osd" => match string("action")? {
+            "close" => Command::CloseOsds,
+            "show" => Command::Osd {
+                plugin: string("provider")?.to_owned(),
+                topic: string("topic")?.to_owned(),
+            },
+            _ => return Err("Unknown OSD action".to_owned()),
+        },
         "launcher" | "settings" | "control-center" => {
             let action = match string("action")? {
                 "toggle" => WindowCommand::Toggle,
@@ -237,6 +292,8 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
                  oxibar config export [effective|overrides]\n\
                  oxibar status\n\n\
                  oxibar outputs\n\n\
+                 oxibar action <provider> <verb> [args...]\n\
+                 oxibar osd <provider> <topic> | osd close\n\n\
                  No arguments: start the bar and resident launcher.\n\
                  launcher: send a command to the running bar."
             );
@@ -277,6 +334,22 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
                         request["action"] = (*action).into();
                     }
                     ["status"] => request["command"] = "status".into(),
+                    ["action", provider, action, arguments @ ..] => {
+                        request["command"] = "action".into();
+                        request["provider"] = (*provider).into();
+                        request["action"] = (*action).into();
+                        request["args"] = serde_json::json!(arguments);
+                    }
+                    ["osd", "close"] => {
+                        request["command"] = "osd".into();
+                        request["action"] = "close".into();
+                    }
+                    ["osd", provider, topic] => {
+                        request["command"] = "osd".into();
+                        request["action"] = "show".into();
+                        request["provider"] = (*provider).into();
+                        request["topic"] = (*topic).into();
+                    }
                     ["outputs"] => request["command"] = "outputs".into(),
                     ["config", "get"] => {
                         request["command"] = "config".into();
@@ -335,7 +408,11 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
 
 pub fn send_request(path: &Path, request: &serde_json::Value) -> io::Result<serde_json::Value> {
     let mut socket = UnixStream::connect(path)?;
-    socket.set_read_timeout(Some(COMMAND_TIMEOUT))?;
+    socket.set_read_timeout(Some(if request["command"] == "action" {
+        ACTION_TIMEOUT + COMMAND_TIMEOUT
+    } else {
+        COMMAND_TIMEOUT
+    }))?;
     socket.set_write_timeout(Some(COMMAND_TIMEOUT))?;
     let bytes = serde_json::to_vec(request)?;
     if bytes.len() as u64 > MAX_COMMAND_BYTES {
@@ -434,7 +511,7 @@ pub(crate) fn listen_endpoint(
 }
 
 fn serve(path: PathBuf, record: Option<PathBuf>) -> impl iced::futures::Stream<Item = Message> {
-    stream::channel(8, async move |mut output| {
+    stream::channel(8, async move |output| {
         let (listener, mut guard) = match bind(&path) {
             Ok(bound) => bound,
             Err(error) => {
@@ -462,60 +539,74 @@ fn serve(path: PathBuf, record: Option<PathBuf>) -> impl iced::futures::Stream<I
                 tracing::warn!(error = ?result.err(), "could not record active control endpoint");
             }
         }
+        let mut handlers = tokio::task::JoinSet::new();
         loop {
-            let Ok((mut socket, _)) = listener.accept().await else {
-                break;
-            };
-            let mut request = String::new();
-            let read = tokio::time::timeout(
-                COMMAND_TIMEOUT,
-                (&mut socket)
-                    .take(MAX_COMMAND_BYTES + 1)
-                    .read_to_string(&mut request),
-            )
-            .await;
-            let response = if !matches!(read, Ok(Ok(bytes)) if bytes <= MAX_COMMAND_BYTES as usize)
-            {
-                response(
-                    0,
-                    serde_json::Value::Null,
-                    Some("Invalid or oversized request"),
-                )
-                .to_string()
-            } else if let Some(command) = LauncherCommand::parse(&request) {
+            tokio::select! {
+                accepted = listener.accept(), if handlers.len() < 32 => {
+                    let Ok((socket, _)) = accepted else { break; };
+                    handlers.spawn(handle_connection(socket, output.clone()));
+                }
+                _ = handlers.join_next(), if !handlers.is_empty() => {}
+            }
+        }
+    })
+}
+
+async fn handle_connection(
+    mut socket: tokio::net::UnixStream,
+    mut output: iced::futures::channel::mpsc::Sender<Message>,
+) {
+    let mut request = String::new();
+    let read = tokio::time::timeout(
+        COMMAND_TIMEOUT,
+        (&mut socket)
+            .take(MAX_COMMAND_BYTES + 1)
+            .read_to_string(&mut request),
+    )
+    .await;
+    let response = if !matches!(read, Ok(Ok(bytes)) if bytes <= MAX_COMMAND_BYTES as usize) {
+        response(
+            0,
+            serde_json::Value::Null,
+            Some("Invalid or oversized request"),
+        )
+        .to_string()
+    } else if let Some(command) = LauncherCommand::parse(&request) {
+        if output
+            .send(Message::ControlLauncher(command))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        "ok\n".to_owned()
+    } else {
+        match parse_request(&request) {
+            Err(error) => response(0, serde_json::Value::Null, Some(&error)).to_string(),
+            Ok(command) => {
+                let timeout = if matches!(command, Command::Action { .. }) {
+                    ACTION_TIMEOUT
+                } else {
+                    COMMAND_TIMEOUT
+                };
+                let (reply, receiver) = Reply::channel();
                 if output
-                    .send(Message::ControlLauncher(command))
+                    .send(Message::ControlRequest(ControlRequest { command, reply }))
                     .await
                     .is_err()
                 {
-                    break;
+                    return;
                 }
-                "ok\n".to_owned()
-            } else {
-                match parse_request(&request) {
-                    Err(error) => response(0, serde_json::Value::Null, Some(&error)).to_string(),
-                    Ok(command) => {
-                        let (sender, receiver) = iced::futures::channel::oneshot::channel();
-                        let reply = Reply(Arc::new(Mutex::new(Some(sender))));
-                        if output
-                            .send(Message::ControlRequest(ControlRequest { command, reply }))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                        match tokio::time::timeout(COMMAND_TIMEOUT, receiver).await {
-                            Ok(Ok(response)) => response.to_string(),
-                            _ => response(0, serde_json::Value::Null, Some("Command timed out"))
-                                .to_string(),
-                        }
+                match tokio::time::timeout(timeout, receiver).await {
+                    Ok(Ok(response)) => response.to_string(),
+                    _ => {
+                        response(0, serde_json::Value::Null, Some("Command timed out")).to_string()
                     }
                 }
-            };
-            let _ =
-                tokio::time::timeout(COMMAND_TIMEOUT, socket.write_all(response.as_bytes())).await;
+            }
         }
-    })
+    };
+    let _ = tokio::time::timeout(COMMAND_TIMEOUT, socket.write_all(response.as_bytes())).await;
 }
 
 #[cfg(test)]
@@ -531,6 +622,42 @@ mod tests {
         assert!(
             parse_request(r#"{"version":1,"command":"control-center","action":"select"}"#).is_err()
         );
+    }
+
+    #[test]
+    fn resident_actions_validate_arguments_and_do_not_block_fast_requests() {
+        assert!(matches!(parse_request(r#"{"version":1,"command":"action","provider":"Audio","action":"volume","args":["+5"]}"#).unwrap(), Command::Action { .. }));
+        assert!(parse_request(r#"{"version":1,"command":"action","provider":"Audio","action":"volume","args":[1]}"#).is_err());
+        assert!(matches!(
+            parse_request(r#"{"version":1,"command":"osd","action":"close"}"#).unwrap(),
+            Command::CloseOsds
+        ));
+        let path =
+            std::env::temp_dir().join(format!("oxibar-ipc-concurrent-{}.sock", std::process::id()));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            use iced::futures::StreamExt;
+            let mut commands = Box::pin(listen(&path));
+            let client_path = path.clone();
+            let action = tokio::task::spawn_blocking(move || {
+                for _ in 0..100 { if UnixStream::connect(&client_path).is_ok() { break; } std::thread::sleep(Duration::from_millis(5)); }
+                send_request(&client_path, &serde_json::json!({"version":1,"command":"action","provider":"Audio","action":"volume","args":["+5"]}))
+            });
+            let Message::ControlRequest(pending) = commands.next().await.unwrap() else { panic!("action request"); };
+            assert!(matches!(pending.command, Command::Action { .. }));
+            let client_path = path.clone();
+            let status = tokio::task::spawn_blocking(move || send_request(&client_path, &serde_json::json!({"version":1,"command":"status"})).unwrap());
+            let Message::ControlRequest(fast) = tokio::time::timeout(Duration::from_millis(500), commands.next()).await.unwrap().unwrap() else { panic!("fast status request"); };
+            assert!(matches!(fast.command, Command::Status));
+            fast.reply.send(response(3, serde_json::json!({"ready":true}), None));
+            assert_eq!(status.await.unwrap()["ok"], true);
+            drop(commands);
+            assert!(!path.exists());
+            assert!(tokio::time::timeout(Duration::from_secs(1), action).await.unwrap().unwrap().is_err());
+        });
     }
 
     #[test]

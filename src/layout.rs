@@ -36,6 +36,7 @@ pub const MODAL_SIZE: (u32, u32) = (460, 300);
 pub const DEFAULT_LAUNCHER_SIZE: (u32, u32) = (600, 600);
 pub const DEFAULT_SETTINGS_SIZE: (u32, u32) = (960, 720);
 pub const DEFAULT_CONTROL_CENTER_SIZE: (u32, u32) = (680, 760);
+pub const DEFAULT_OSD_SIZE: (u32, u32) = (360, 128);
 pub const CONTROL_CENTER_SINGLE_COLUMN_WIDTH: u32 = 480;
 pub const SETTINGS_EDITOR_HEIGHT: f32 = 220.0;
 pub const SETTINGS_NAV_WIDTH: f32 = 192.0;

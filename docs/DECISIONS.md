@@ -4,6 +4,54 @@ This file records LLM-specific continuity decisions and low-impact choices that
 are useful for future agents. Omitted from this file are high-level architecture
 topics already covered by `ARCHITECTURE.md`.
 
+## System services, resident commands and input-transparent OSDs (2026-10-10)
+
+- User requested commit/next step: committed `28f59da feature(services): Add native
+  audio and cancellable BlueZ pairing`, preserving unrelated staged `result`
+  deletion. New steering: finish this step, then **all remaining roadmap steps**,
+  committing after each. Continue directly into milestones 5, 6 and 7.
+- One `System` provider combines backlights, modern/legacy power profiles and
+  verified login1 capabilities/actions on one cancellable async zbus owner. Keep
+  independent health, owner epochs, bounded/coalesced commands and snapshot sequence.
+  Backlights alone use a watcher plus driver-compatible fallback poll. Relative
+  brightness commands accumulate pending intent. Fresh UID/ID checks gate helper/
+  logout calls; confirmations delegate policy, and locker arguments never use a shell.
+- Add optional ABI-6 `command`/`osd_view`; required signatures remain unchanged.
+  Commands apply ordinary model outcomes before structured completion replies.
+  Bounded owned IPC handlers allow fast requests during slow actions. System power
+  CLI commands open confirmation only. Audio provides volume/mute/media commands.
+- Output-scoped read-only OSDs reuse IDs, abort replaced timers and generation-gate
+  expiry. Initial snapshots are quiet; source actions and focused external changes
+  route separately. OSD preferences apply live from Appearance. System joins the
+  default control-center list after its original six entries and the HM plugin set.
+- Packaged tests found SDK `Any` OSD requests lost across dependency graphs: use
+  serialized SDK strings, as toasts already do. Also preserve captured command
+  context when layer-action conversion returns an ordinary message.
+- Actual typing exposed published layershellev 0.17.1 routing keys to the newest
+  surface. Import the exact MIT dependency at `crates/layershellev`, outside app
+  workspace membership, and separate compositor keyboard Enter/Leave from pointer/
+  creation state. Share the path patch across graphs; Crane dummy artifacts retain
+  its real API source for iced_layershell. Original registry files remain untouched.
+- Verification: 195 workspace tests/doctests, strict Clippy, two private System
+  tests, five Nix packages and full private System/Audio/GUI scenario passed. Typing
+  through OSD changed duration to 900 while width remained 360; delayed brightness
+  stayed on original output after focus moved, with concurrent status under 500 ms.
+  Coalescing/expiry, live geometry, confirmation/cancel, foreign UID rejection,
+  argument-vector locker, mute/media OSDs, disable and five reopen cycles passed.
+- Final packages: host `gfp8ygbv905v2bjbnac79l8k7k03pllk`, System
+  `39l189fq6swa0amy6ii8q5gi2rdb6iq6`, Audio `gxrc9p11zngy886ganyq7qknlz1zjg5z`.
+  Temporary helper `/tmp/opencode/oxibar-system-osd-smoke.py` uses private bus,
+  ordinary files, null PulseAudio/MPRIS and marker-only locker; no actual power,
+  brightness/session/audio/daemon changes. Fixtures are cleaned, focus/cursor
+  restored and translucent screenshots kept private.
+- Hyprland 0.56.2 requires Lua dispatch: fixture monitor focus uses
+  `hl.dsp.focus({monitor="DP-3"})`; old `focusmonitor DP-3` is invalid. Carry this
+  version-aware capability into dock/workspace adapters. Settled screenshots wait
+  for compositor animation; immediate clipping was capture timing, not UI layout.
+- Use filtered Nix source and serial package builds. A session-owned Cargo cache
+  was cleaned after debug links exhausted storage; subsequent checks consistently
+  use dev/test debug=0 and incremental=0. User workspace target/store are untouched.
+
 ## Native BlueZ and cancellable task modals (2026-10-10)
 
 - User requested the next step after native audio. Replace Bluetooth's blocking

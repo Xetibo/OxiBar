@@ -15,6 +15,19 @@ use crate::layout::{
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    ShowOsd(String, oxibar_plugin_api::HostOsdRequest),
+    ExpireOsd(IcedId, u64),
+    OpenOsdLayer(IcedId, crate::osd::OsdConfig),
+    ConfigureOsdLayer(IcedId, crate::osd::OsdConfig),
+    Ignore,
+    SetLayerMargin(IcedId, (i32, i32, i32, i32)),
+    OnCommandOutput(Option<String>, Box<Message>),
+    CommandFinished {
+        plugin: String,
+        outcome: oxibar_plugin_api::CommandOutcome,
+        reply: crate::ipc::Reply,
+        output: Option<String>,
+    },
     Exit,
     OutputsChanged(Result<crate::monitor::OutputSnapshot, String>),
     SurfaceClosed(IcedId),
@@ -91,6 +104,46 @@ impl TryInto<LayershellCustomActionWithId> for Message {
 
     fn try_into(self) -> Result<LayershellCustomActionWithId, Self::Error> {
         match self {
+            Message::OnCommandOutput(output, message) => match (*message).try_into() {
+                Ok(action) => Ok(action),
+                Err(message) => Err(Message::OnCommandOutput(output, Box::new(message))),
+            },
+            Message::SetLayerMargin(id, margin) => Ok(LayershellCustomActionWithId::new(
+                Some(id),
+                LayershellCustomAction::MarginChange(margin),
+            )),
+            Message::OpenOsdLayer(id, config) => Ok(LayershellCustomActionWithId::new(
+                None,
+                LayershellCustomAction::NewLayerShell {
+                    settings: NewLayerShellSettings {
+                        size: Some(config.size),
+                        layer: Layer::Overlay,
+                        anchor: if config.bottom {
+                            Anchor::Bottom
+                        } else {
+                            Anchor::Top
+                        },
+                        exclusive_zone: Some(0),
+                        margin: Some(osd_margin(&config)),
+                        keyboard_interactivity: KeyboardInteractivity::None,
+                        output_option: OutputOption::LastOutput,
+                        events_transparent: true,
+                        namespace: Some("OxiBar OSD".to_owned()),
+                    },
+                    id,
+                },
+            )),
+            Message::ConfigureOsdLayer(id, config) => Ok(LayershellCustomActionWithId::new(
+                Some(id),
+                LayershellCustomAction::AnchorSizeChange(
+                    if config.bottom {
+                        Anchor::Bottom
+                    } else {
+                        Anchor::Top
+                    },
+                    config.size,
+                ),
+            )),
             Message::OnOutput(output, message) => {
                 let mut action: LayershellCustomActionWithId = (*message)
                     .try_into()
@@ -361,11 +414,22 @@ fn bar_anchor(position: crate::config::bars::Position) -> Anchor {
     edge | Anchor::Left | Anchor::Right
 }
 
+pub(crate) fn osd_margin(config: &crate::osd::OsdConfig) -> (i32, i32, i32, i32) {
+    if config.bottom {
+        (0, 0, config.margin as i32, 0)
+    } else {
+        (config.margin as i32, 0, 0, 0)
+    }
+}
+
 fn region_dimension(value: u32) -> i32 {
     i32::try_from(value).unwrap_or(i32::MAX)
 }
 
 pub(crate) fn map_plugin_message(plugin_id: String, msg: PluginMsg) -> Message {
+    if let Some(request) = msg.downcast_ref::<oxibar_plugin_api::HostOsdRequest>() {
+        return Message::ShowOsd(plugin_id, request.clone());
+    }
     if let Some(request) = msg.downcast_ref::<HostToastRequest>() {
         return match request.action {
             HostToastAction::Show => Message::ShowPluginToast(plugin_id, request.clone()),
@@ -376,6 +440,9 @@ pub(crate) fn map_plugin_message(plugin_id: String, msg: PluginMsg) -> Message {
     }
 
     if let Some(request) = msg.downcast_ref::<String>() {
+        if let Some(request) = oxibar_plugin_api::HostOsdRequest::parse_host_request(request) {
+            return Message::ShowOsd(plugin_id, request);
+        }
         if let Some(toast_request) = HostToastRequest::parse_host_request(request) {
             return match toast_request.action {
                 HostToastAction::Show => Message::ShowPluginToast(plugin_id, toast_request),
@@ -486,6 +553,26 @@ mod tests {
             Message::ShowPluginToast(id, request)
                 if id == "Notifications" && request.toast_id == "n2"
         ));
+    }
+
+    #[test]
+    fn serialized_osds_map_and_command_context_survives_layer_action_conversion() {
+        let request = oxibar_plugin_api::HostOsdRequest::new("volume").follow_focus();
+        assert!(
+            matches!(map_plugin_message("Audio".to_owned(), request.into_message()),
+            Message::ShowOsd(id, request) if id == "Audio" && request.follow_focus)
+        );
+        let wrapped = Message::OnCommandOutput(
+            Some("DP-2".to_owned()),
+            Box::new(Message::PluginSubMsg(
+                "Audio".to_owned(),
+                plugin_msg("finished"),
+            )),
+        );
+        let result: Result<LayershellCustomActionWithId, _> = wrapped.try_into();
+        assert!(
+            matches!(result, Err(Message::OnCommandOutput(Some(output), _)) if output == "DP-2")
+        );
     }
 
     #[test]

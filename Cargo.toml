@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["crates/layershellev"]
 members = [
 	".",
 	"crates/oxibar-plugin-api",
@@ -11,12 +12,16 @@ members = [
 	"plugins/clock",
 	"plugins/network",
 	"plugins/notifications",
+	"plugins/system",
 	"plugins/tray",
 	"plugins/workspaces",
 ]
 
 [workspace.dependencies]
 oxiced = { path = "crates/oxiced" }
+
+[patch.crates-io]
+layershellev = { path = "crates/layershellev" }
 
 [package]
 name = "oxibar"

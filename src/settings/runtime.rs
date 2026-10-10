@@ -477,6 +477,9 @@ impl OxiBar {
             )));
         }
         tasks.push(self.reconcile_bars());
+        if old.host.osd != host.osd {
+            tasks.push(self.apply_osd_config());
+        }
         tasks.push(self.current_input_region_task());
         Task::batch(tasks)
     }
@@ -561,8 +564,9 @@ impl OxiBar {
             .collect();
     }
 
-    fn status_data(&self) -> serde_json::Value {
+    pub(crate) fn status_data(&self) -> serde_json::Value {
         json!({"launcher_open": self.launcher.window_id.is_some(), "settings_open": self.settings.window_id.is_some(),
+            "osds": self.osds.instances.iter().map(|(output, item)| json!({"instance": format!("{:?}", item.id), "output": output, "provider": item.plugin, "topic": item.topic, "generation": item.generation})).collect::<Vec<_>>(),
             "control_center_open": self.control_center.window_id.is_some(), "control_center_selected": self.control_center.selected, "control_center_widgets": self.control_center_plugins(),
             "restart_required": self.restart_fields(), "loaded_plugins": self.plugins.keys().collect::<Vec<_>>(), "config_error": self.settings.error,
             "monitor_backend": self.shell.inventory.as_ref().map(|inventory| &inventory.backend), "monitor_error": self.shell.inventory_error,
@@ -573,6 +577,33 @@ impl OxiBar {
     pub(crate) fn control_request(&mut self, request: ControlRequest) -> Task<Message> {
         let snapshot = &self.config.snapshot;
         match request.command {
+            Command::Action {
+                plugin,
+                action,
+                arguments,
+            } => self.run_command(plugin, action, arguments, request.reply),
+            Command::Osd { plugin, topic } => {
+                let result = self.request_osd(
+                    plugin,
+                    oxibar_plugin_api::HostOsdRequest::new(topic).follow_focus(),
+                );
+                let error = result.as_ref().err().map(String::as_str);
+                request.reply.send(ipc::response(
+                    self.config.snapshot.revision,
+                    self.status_data(),
+                    error,
+                ));
+                result.unwrap_or_else(|_| Task::none())
+            }
+            Command::CloseOsds => {
+                let task = self.close_osds();
+                request.reply.send(ipc::response(
+                    self.config.snapshot.revision,
+                    self.status_data(),
+                    None,
+                ));
+                task
+            }
             Command::Outputs => {
                 let data = json!({"backend": self.shell.inventory.as_ref().map(|inventory| &inventory.backend), "error": self.shell.inventory_error,
                     "outputs": self.shell.inventory.as_ref().map(|inventory| inventory.outputs.iter().map(|output| output.json()).collect::<Vec<_>>()).unwrap_or_default()});

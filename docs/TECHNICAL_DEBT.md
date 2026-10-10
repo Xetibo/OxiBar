@@ -66,15 +66,27 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ### Remaining Control-center Services and OSDs
 
-- Status: composition implemented; additional service capabilities remain planned.
+- Status: initial milestone implemented.
 - Current state: host-owned control-center selection, live preferences, source
   routing and existing audio/network/Bluetooth/battery/notification/calendar views
-  work with one shared model/subscription per provider.
-- Gaps: brightness, power profiles, session actions and volume/brightness/media
-  OSDs remain future plugins/services. Native backend migration is a separate
-  parity/reconnect/cancellation workstream.
-- Target fix: complete milestone 4 incrementally, preserving existing actions and
-  avoiding one backend/poller per surface.
+  work with one shared model/subscription per provider. System adds backlight,
+  power-profile and verified session controls; host OSDs reuse cached provider state.
+- Remaining extensions: additional driver-specific brightness devices, profile
+  holds and richer native Audio/BlueZ capabilities. Actual hardware/system policy
+  checks remain manual; private fixtures exercise ordinary files and mock services.
+- Backlight refresh uses one watcher plus a bounded fallback poll because sysfs
+  notification support varies. Remote profiles/session state remains event-driven.
+- Keep domain health independent and avoid one backend/poller per surface.
+
+### Layer-shell Keyboard Ownership
+
+- Status: keyboard-stealing bug resolved locally.
+- Published layershellev 0.17.1 routed keyboard events through its newest/pointer
+  surface. Creating a non-interactive OSD redirected typing from existing settings.
+- The local patch separates compositor keyboard Enter/Leave from pointer/creation
+  state. Packaged checks prove typing and applying settings through an OSD.
+- Follow-up: upstream the correction and evaluate a released replacement before
+  removing the local dependency; startup connection error propagation remains separate.
 
 ### Output Inventory Refresh and Remaining Shell Capabilities
 
