@@ -20,6 +20,9 @@ static REFRESH_INTERVAL: OnceLock<Duration> = OnceLock::new();
 
 #[derive(Debug)]
 struct Model {
+    identities: std::collections::BTreeMap<String, usize>,
+    next_identity: usize,
+    dock: Arc<Vec<oxibar_plugin_api::DockEntry>>,
     config: Config,
     applications: Arc<Vec<Entry>>,
     matches: Vec<Match>,
@@ -80,6 +83,9 @@ pub extern "Rust" fn model(global: Table) -> (PluginModel, Option<Task<PluginMsg
     let task = index_task(config.clone());
     (
         plugin_model(Model {
+            identities: std::collections::BTreeMap::new(),
+            next_identity: 0,
+            dock: Arc::new(Vec::new()),
             config,
             applications: Arc::new(Vec::new()),
             matches: Vec::new(),
@@ -113,7 +119,7 @@ pub extern "Rust" fn runner_entries(model: PluginModel) -> Vec<RunnerEntry> {
             .filter_map(|matched| {
                 let entry = model.applications.get(matched.index)?;
                 Some(RunnerEntry {
-                    index: matched.index,
+                    index: entry.id,
                     score: matched.score,
                     title: entry.name.clone(),
                     description: entry.description.clone(),
@@ -142,7 +148,31 @@ pub extern "Rust" fn update(model: PluginModel, message: PluginMsg) -> Option<Ta
             model.refreshing = false;
             match entries {
                 Ok(entries) => {
-                    model.applications = entries.clone();
+                    let mut entries = (**entries).clone();
+                    for entry in &mut entries {
+                        entry.id = *model
+                            .identities
+                            .entry(entry.desktop_id.clone())
+                            .or_insert_with(|| {
+                                let id = model.next_identity;
+                                model.next_identity += 1;
+                                id
+                            });
+                    }
+                    model.dock = Arc::new(
+                        entries
+                            .iter()
+                            .map(|entry| oxibar_plugin_api::DockEntry {
+                                index: entry.id,
+                                desktop_id: entry.desktop_id.clone(),
+                                title: entry.name.clone(),
+                                icon: entry.icon.clone(),
+                                window_class: entry.window_class.clone(),
+                                executable: entry.executable.clone(),
+                            })
+                            .collect(),
+                    );
+                    model.applications = Arc::new(entries);
                     Some(query_task(model))
                 }
                 Err(error) => {
@@ -172,8 +202,14 @@ pub extern "Rust" fn update(model: PluginModel, message: PluginMsg) -> Option<Ta
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn launch(index: usize, model: PluginModel) -> Option<Task<PluginMsg>> {
-    let entry = with_model_read::<Model, _>(&model, |model| model.applications.get(index).cloned())
-        .ok()??;
+    let entry = with_model_read::<Model, _>(&model, |model| {
+        model
+            .applications
+            .iter()
+            .find(|entry| entry.id == index)
+            .cloned()
+    })
+    .ok()??;
     Some(Task::perform(
         async move {
             worker::run(move || system::launch(&entry))
@@ -189,6 +225,11 @@ pub extern "Rust" fn view(
     _model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     Ok(Vec::new())
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn dock_entries(model: PluginModel) -> Arc<Vec<oxibar_plugin_api::DockEntry>> {
+    with_model_read::<Model, _>(&model, |model| model.dock.clone()).unwrap_or_default()
 }
 
 #[unsafe(no_mangle)]
@@ -256,6 +297,7 @@ pub extern "Rust" fn config_changed(model: PluginModel, global: Table) -> Option
         model.config.max_entries = next.max_entries;
         model.config.terminal = next.terminal;
         if terminal_changed {
+            model.dock = Arc::new(Vec::new());
             model.applications = Arc::new(Vec::new());
             model.matches.clear();
             model.generation = model.generation.wrapping_add(1);
@@ -350,5 +392,52 @@ mod tests {
         );
         assert_eq!(errors(model.clone()), ["missing executable"]);
         assert!(errors(model).is_empty());
+    }
+
+    #[test]
+    fn catalog_and_runner_share_stable_launch_ids_across_reindex_and_removal() {
+        let (model, _) = model(Table::new());
+        let index = |entries| {
+            let _ = update(
+                model.clone(),
+                Arc::new(Message::Indexed(Ok(Arc::new(entries)))),
+            );
+        };
+        index(vec![
+            system::test_entry("a.desktop", "Alpha"),
+            system::test_entry("b.desktop", "Beta"),
+        ]);
+        let catalog = dock_entries(model.clone());
+        let beta = catalog
+            .iter()
+            .find(|entry| entry.desktop_id == "b.desktop")
+            .unwrap()
+            .index;
+        assert!(Arc::ptr_eq(&catalog, &dock_entries(model.clone())));
+        index(vec![
+            system::test_entry("b.desktop", "Beta"),
+            system::test_entry("new.desktop", "New"),
+            system::test_entry("a.desktop", "Alpha"),
+        ]);
+        assert_eq!(
+            dock_entries(model.clone())
+                .iter()
+                .find(|entry| entry.desktop_id == "b.desktop")
+                .unwrap()
+                .index,
+            beta
+        );
+        with_model_write::<Model, _>(&model, |model| {
+            model.matches = vec![Match {
+                index: 0,
+                score: 100,
+            }]
+        });
+        assert_eq!(runner_entries(model.clone())[0].index, beta);
+        index(vec![
+            system::test_entry("new.desktop", "New"),
+            system::test_entry("a.desktop", "Alpha"),
+        ]);
+        assert!(launch(beta, model).is_none());
     }
 }

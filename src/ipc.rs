@@ -41,6 +41,8 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Desktop(crate::desktop::Action),
+    Windows,
     Action {
         plugin: String,
         action: String,
@@ -172,6 +174,13 @@ fn parse_request(text: &str) -> Result<Command, String> {
             }
         }
         "status" => Command::Status,
+        "windows" => Command::Windows,
+        "desktop" => Command::Desktop(match string("action")? {
+            "edit" => crate::desktop::Action::Edit,
+            "save" => crate::desktop::Action::Save,
+            "cancel" => crate::desktop::Action::Cancel,
+            _ => return Err("Unknown desktop action".into()),
+        }),
         "outputs" => Command::Outputs,
         "config" => Command::Config(match string("action")? {
             "get" => ConfigCommand::Get(
@@ -334,6 +343,15 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
                         request["action"] = (*action).into();
                     }
                     ["status"] => request["command"] = "status".into(),
+                    ["windows"] => request["command"] = "windows".into(),
+                    ["desktop"] | ["desktop", "edit"] => {
+                        request["command"] = "desktop".into();
+                        request["action"] = "edit".into();
+                    }
+                    ["desktop", action @ ("save" | "cancel")] => {
+                        request["command"] = "desktop".into();
+                        request["action"] = (*action).into();
+                    }
                     ["action", provider, action, arguments @ ..] => {
                         request["command"] = "action".into();
                         request["provider"] = (*provider).into();

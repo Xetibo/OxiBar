@@ -27,6 +27,24 @@ const MODAL_SHADOW_OFFSET_Y: f32 = 10.0;
 const MODAL_SHADOW_BLUR: f32 = 24.0;
 const POPUP_SURFACE_RADIUS: f32 = PANEL_RADIUS;
 
+pub(crate) fn overlay_mouse_event(
+    event: iced::Event,
+    _: iced::event::Status,
+    id: IcedId,
+) -> Option<Message> {
+    use iced::mouse::{Button, Event};
+    match event {
+        iced::Event::Mouse(Event::CursorMoved { position }) => {
+            Some(Message::OverlayPointer(id, Some(position)))
+        }
+        iced::Event::Mouse(Event::CursorEntered | Event::CursorLeft) => {
+            Some(Message::OverlayPointer(id, None))
+        }
+        iced::Event::Mouse(Event::ButtonPressed(Button::Left)) => Some(Message::OverlayPress(id)),
+        _ => None,
+    }
+}
+
 pub(crate) fn modal_key_event(
     event: iced::Event,
     status: iced::event::Status,
@@ -46,10 +64,44 @@ pub(crate) fn modal_key_event(
 }
 
 impl OxiBar {
+    pub(crate) fn overlay_press(&mut self, id: IcedId) -> iced::Task<Message> {
+        let Some(record) = self.shell.registry.get(id) else {
+            return iced::Task::none();
+        };
+        let Some(pointer) = record.pointer else {
+            return iced::Task::none();
+        };
+        let fallback = match &record.kind {
+            SurfaceKind::Settings => self.config.snapshot.host.settings_size,
+            SurfaceKind::Launcher => self.launcher.size,
+            SurfaceKind::ControlCenter => self.config.snapshot.host.control_center_size,
+            SurfaceKind::Modal(_) => MODAL_SIZE,
+            _ => return iced::Task::none(),
+        };
+        let (width, height) = record.size.unwrap_or(fallback);
+        if pointer.x >= 0.0
+            && pointer.y >= 0.0
+            && pointer.x < width as f32
+            && pointer.y < height as f32
+        {
+            return iced::Task::none();
+        }
+        match &record.kind {
+            SurfaceKind::Settings => self.close_settings(),
+            SurfaceKind::Launcher => self.close_launcher(),
+            SurfaceKind::ControlCenter => self.close_control_center(),
+            SurfaceKind::Modal(_) => self.close_modal(),
+            _ => iced::Task::none(),
+        }
+    }
+
     pub(crate) fn view(&self, id: IcedId) -> Element<'_, Message> {
         let content = match self.shell.registry.get(id).map(|record| &record.kind) {
             Some(SurfaceKind::Settings) => self.settings_view(),
             Some(SurfaceKind::Osd) => self.osd_view(id),
+            Some(SurfaceKind::Dock) => self.dock_view(id),
+            Some(SurfaceKind::DesktopWidget(_)) => self.desktop_view(id),
+            Some(SurfaceKind::DesktopEditor) => self.desktop_editor_view(id),
             Some(SurfaceKind::ControlCenter) => self.control_center_view(),
             Some(SurfaceKind::Launcher) => self.launcher.view(),
             Some(SurfaceKind::Modal(_)) => self.modal_surface_view(),

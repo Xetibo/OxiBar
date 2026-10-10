@@ -236,6 +236,11 @@ fn run_bar(connection: Option<Connection>) -> Result<(), iced_layershell::Error>
 }
 
 pub(crate) struct OxiBar {
+    pub(crate) docks: crate::dock::Docks,
+    pub(crate) desktop: crate::desktop::Desktop,
+    pub(crate) compositor: Option<oxibar_plugin_api::CompositorSnapshot>,
+    pub(crate) compositor_error: Option<String>,
+    pub(crate) compositor_action_error: Option<String>,
     pub(crate) osds: crate::osd::Osds,
     pub(crate) shell: Shell,
     pub(crate) config: ConfigRuntime,
@@ -350,6 +355,11 @@ impl OxiBar {
         };
         let launcher = Launcher::new(config);
         let mut bar = Self {
+            docks: crate::dock::Docks::default(),
+            desktop: crate::desktop::Desktop::default(),
+            compositor: None,
+            compositor_error: None,
+            compositor_action_error: None,
             osds: crate::osd::Osds::default(),
             shell: Shell::new(inventory),
             config: runtime,
@@ -377,6 +387,8 @@ impl OxiBar {
         bar.refresh_plugin_catalog();
         let mut tasks = loaded.tasks;
         tasks.push(bar.reconcile_bars());
+        tasks.push(bar.reconcile_docks());
+        tasks.push(bar.reconcile_desktop());
         (bar, Task::batch(tasks))
     }
 
@@ -386,6 +398,48 @@ impl OxiBar {
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::OverlayPointer(id, position) => {
+                if let Some(record) = self.shell.registry.get_mut(id) {
+                    record.pointer =
+                        position.filter(|point| point.x.is_finite() && point.y.is_finite());
+                }
+                Task::none()
+            }
+            Message::OverlayPress(id) => self.overlay_press(id),
+            Message::CompositorChanged(result) => self.compositor_changed(result),
+            Message::CompositorActionDone(result) => {
+                if let Err(error) = &result {
+                    tracing::warn!(%error,"compositor action failed");
+                }
+                self.compositor_action_error = result.err();
+                Task::none()
+            }
+            Message::Workspace(id) => self.compositor_action(None, Some(id)),
+            Message::Dock(action) => self.dock_action(action),
+            Message::Desktop(action) => self.update_desktop(action),
+            Message::ConfigureDockLayer(id, size, bottom, margin, reserve) => Task::batch([
+                Task::done(Message::ResizeLayer(id, size.0, size.1)),
+                Task::done(Message::SetLayerAnchor(id, bottom)),
+                Task::done(Message::SetLayerMargin(
+                    id,
+                    if bottom {
+                        (0, 0, margin as i32, 0)
+                    } else {
+                        (margin as i32, 0, 0, 0)
+                    },
+                )),
+                Task::done(Message::SetExclusiveZone(
+                    id,
+                    if reserve { (size.1 + margin) as i32 } else { 0 },
+                )),
+            ]),
+            Message::ConfigureDesktopLayer(id, rect) => Task::batch([
+                Task::done(Message::ResizeLayer(id, rect.width, rect.height)),
+                Task::done(Message::SetLayerMargin(
+                    id,
+                    (rect.y as i32, 0, 0, rect.x as i32),
+                )),
+            ]),
             Message::ShowOsd(plugin, request) => {
                 self.request_osd(plugin, request).unwrap_or_else(|error| {
                     tracing::debug!(%error, "OSD request rejected");
@@ -488,7 +542,10 @@ impl OxiBar {
             }
             Message::ControlRequest(request) => self.control_request(request),
             Message::ReloadConfig => self.reload_config(None),
-            Message::ConfigUpdated(outcome) => self.config_updated(&outcome),
+            Message::ConfigUpdated(outcome) => {
+                self.desktop_config_outcome(&outcome);
+                self.config_updated(&outcome)
+            }
             Message::ControlLauncher(command) => self.update_launcher(match command {
                 LauncherCommand::Toggle => launcher::Action::Toggle,
                 LauncherCommand::Open => launcher::Action::Open,
@@ -505,6 +562,9 @@ impl OxiBar {
             Message::SetPopupInputRegion { .. }
             | Message::Ignore
             | Message::OpenOsdLayer(_, _)
+            | Message::OpenDockLayer(_, _, _, _, _)
+            | Message::OpenDesktopLayer(_, _, _, _)
+            | Message::SetLayerAnchor(_, _)
             | Message::ConfigureOsdLayer(_, _)
             | Message::SetLayerMargin(_, _)
             | Message::OnOutput(_, _)
@@ -561,6 +621,8 @@ impl OxiBar {
                     return Task::none();
                 };
                 let task = dispatch_update(funcs, model.clone(), msg);
+                let refresh_dock = funcs.dock_entries.is_some();
+                let refresh_desktop = funcs.desktop_interactive.is_some();
                 drain_errors(funcs, model);
                 if funcs.runner_entries.is_some() {
                     self.launcher.refresh(&self.plugins);
@@ -571,6 +633,16 @@ impl OxiBar {
                     Task::done(Message::RefreshPopupInputRegion(plugin_id.clone()))
                 } else {
                     Task::none()
+                };
+                let refresh = if refresh_dock {
+                    Task::batch([refresh, self.reconcile_docks()])
+                } else {
+                    refresh
+                };
+                let refresh = if refresh_desktop {
+                    Task::batch([refresh, self.reconcile_desktop()])
+                } else {
+                    refresh
                 };
                 match task {
                     Some(task) => {
@@ -619,6 +691,11 @@ impl OxiBar {
                 let close_panel = self.close_panel();
                 let close_settings = self.close_settings();
                 let close_control_center = self.close_control_center();
+                let close_editor = if self.desktop.draft.is_some() {
+                    self.cancel_desktop_edit()
+                } else {
+                    Task::none()
+                };
                 let input_region = self.current_input_region_task();
                 let query = self.query_runner_plugins();
                 Task::batch([
@@ -626,6 +703,7 @@ impl OxiBar {
                     close_panel,
                     close_settings,
                     close_control_center,
+                    close_editor,
                     input_region,
                     query,
                     Task::done(Message::OnOutput(
@@ -736,6 +814,9 @@ impl OxiBar {
         layer_width: u32,
         layer_height: u32,
     ) -> Task<Message> {
+        if let Some(record) = self.shell.registry.get_mut(id) {
+            record.size = Some((layer_width, layer_height));
+        }
         if self.settings.window_id == Some(id) {
             if self.settings.awaiting_focus {
                 self.settings.awaiting_focus = false;
@@ -1127,6 +1208,17 @@ impl OxiBar {
             crate::monitor::watch_inventory,
         ));
         subs.push(event::listen_with(settings::key_event));
+        if self.settings.window_id.is_some()
+            || self.launcher.window_id.is_some()
+            || self.control_center.window_id.is_some()
+            || self.modal_window_id.is_some()
+        {
+            subs.push(event::listen_with(crate::surfaces::overlay_mouse_event));
+        }
+        subs.push(Subscription::run(crate::compositor::watch));
+        if self.desktop.draft.is_some() {
+            subs.push(event::listen_with(crate::desktop::event));
+        }
         subs.push(event::listen_with(control_center::key_event));
         subs.push(event::listen_with(crate::surfaces::modal_key_event));
         subs.push(Subscription::run_with(
@@ -1142,12 +1234,17 @@ impl OxiBar {
         if self.launcher.enabled {
             subs.push(event::listen_with(launcher::key_event));
         }
-        subs.extend(self.plugins.iter().map(|(plugin_id, (_model, funcs))| {
-            let sub_fn_addr = funcs.subscription as usize;
-            Subscription::run_with((plugin_id.clone(), sub_fn_addr), build_plugin_stream)
-                .with(plugin_id.clone())
-                .map(|(id, msg): (String, PluginMsg)| map_plugin_message(id, msg))
-        }));
+        subs.extend(
+            self.plugins
+                .iter()
+                .filter(|(name, (_, funcs))| self.subscription_enabled(name, funcs))
+                .map(|(plugin_id, (_model, funcs))| {
+                    let sub_fn_addr = funcs.subscription as usize;
+                    Subscription::run_with((plugin_id.clone(), sub_fn_addr), build_plugin_stream)
+                        .with(plugin_id.clone())
+                        .map(|(id, msg): (String, PluginMsg)| map_plugin_message(id, msg))
+                }),
+        );
         Subscription::batch(subs)
     }
 
@@ -1186,6 +1283,52 @@ fn build_plugin_stream(data: &(String, usize)) -> Pin<Box<PluginStream>> {
     unsafe { Pin::new_unchecked(Box::from_raw(raw)) }
 }
 
+impl OxiBar {
+    pub(crate) fn subscription_enabled(
+        &self,
+        name: &str,
+        funcs: &crate::plugins::PluginFuncs,
+    ) -> bool {
+        if funcs.subscription_policy.is_none_or(
+            |policy| unsafe { policy() } == oxibar_plugin_api::SubscriptionPolicy::Always,
+        ) {
+            return true;
+        }
+        let matches = |provider: &str| provider.eq_ignore_ascii_case(name);
+        self.shell.bars.values().any(|bar| {
+            bar.config
+                .start
+                .iter()
+                .chain(&bar.config.center)
+                .chain(&bar.config.end)
+                .any(|provider| matches(provider))
+        }) || self
+            .osds
+            .instances
+            .values()
+            .any(|instance| instance.plugin == name)
+            || self.toasts.iter().any(|toast| toast.plugin_id == name)
+            || (funcs.dock_entries.is_some() && !self.docks.instances.is_empty())
+            || self
+                .desktop
+                .instances
+                .values()
+                .any(|widget| matches(&widget.spec.plugin))
+            || (!self.desktop.editors.is_empty()
+                && self.desktop.draft.as_ref().is_some_and(|draft| {
+                    draft
+                        .widgets
+                        .iter()
+                        .any(|widget| widget.enabled && matches(&widget.plugin))
+                }))
+            || (self.popup_open && self.popup_plugin.as_deref().is_some_and(matches))
+            || self.modal_plugin.as_deref().is_some_and(matches)
+            || self.panel_plugin.as_deref().is_some_and(matches)
+            || (self.control_center.window_id.is_some()
+                && self.control_center.selected.as_deref().is_some_and(matches))
+    }
+}
+
 fn layer_surface_size_event(
     event: iced::Event,
     _status: event::Status,
@@ -1218,6 +1361,11 @@ mod tests {
 
     fn empty_bar() -> OxiBar {
         let mut bar = OxiBar {
+            docks: crate::dock::Docks::default(),
+            desktop: crate::desktop::Desktop::default(),
+            compositor: None,
+            compositor_error: None,
+            compositor_action_error: None,
             osds: crate::osd::Osds::untimed(),
             shell: Shell::new(Err("Test".to_owned())),
             config: ConfigRuntime::new(ConfigStore::memory(Table::new(), Table::new())),

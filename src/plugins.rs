@@ -41,6 +41,11 @@ use crate::config::{get_allowed_plugins, get_oxirun_dir};
 /// alive via the `Arc` so that the raw fn pointers remain valid for the
 /// lifetime of this struct.
 pub struct PluginFuncs {
+    pub subscription_policy: Option<oxibar_plugin_api::SubscriptionPolicyFn>,
+    pub dock_entries: Option<oxibar_plugin_api::DockEntriesFn>,
+    pub desktop_view: Option<oxibar_plugin_api::DesktopViewFn>,
+    pub desktop_interactive: Option<oxibar_plugin_api::DesktopInteractiveFn>,
+    pub compositor_changed: Option<oxibar_plugin_api::CompositorChangedFn>,
     pub command: Option<CommandFn>,
     pub osd_view: Option<OsdViewFn>,
     pub context_view: Option<ContextViewFn>,
@@ -193,6 +198,11 @@ unsafe fn load_one(
     Ok((
         plugin_name,
         PluginFuncs {
+            subscription_policy: unsafe { resolve_optional(&lib, "subscription_policy") },
+            dock_entries: unsafe { resolve_optional(&lib, "dock_entries") },
+            desktop_view: unsafe { resolve_optional(&lib, "desktop_view") },
+            desktop_interactive: unsafe { resolve_optional(&lib, "desktop_interactive") },
+            compositor_changed: unsafe { resolve_optional(&lib, "compositor_changed") },
             command: unsafe { resolve_optional(&lib, "command") },
             osd_view: unsafe { resolve_optional(&lib, "osd_view") },
             context_view,

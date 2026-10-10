@@ -17,7 +17,7 @@
 //! Clicking the time toggles a host-owned calendar popup.
 
 use std::process::Command;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, Local, NaiveDate};
@@ -26,7 +26,6 @@ use iced::{
     border::Radius,
     font::Weight,
     futures::Stream,
-    stream,
     widget::{Column, Row, button, container, text, tooltip},
 };
 use oxibar_plugin_api::{
@@ -544,6 +543,14 @@ pub extern "Rust" fn popup_view(
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "Rust" fn desktop_view(
+    model: PluginModel,
+    _: oxibar_plugin_api::PluginViewContext,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    popup_view(model)
+}
+
 fn calendar_nav_button(label: &'static str, message: Message) -> Element<'static, PluginMsg> {
     button(
         text(label)
@@ -817,11 +824,8 @@ fn simulated_now(anchor: &DateTime<Local>, elapsed: Duration) -> DateTime<Local>
     *anchor + offset
 }
 
-/// Tick the model on a fixed interval. Iced's subscription executor isn't
-/// guaranteed to run inside a tokio reactor (the `tokio` iced feature only
-/// covers `Task::perform`), so we drive the timer from a plain OS thread and
-/// bridge into the async stream via `try_send` — same pattern as the
-/// workspaces plugin's hyprland listener.
+/// Timers belong to the visible subscription and cancel when its stream drops.
+/// async-io does not depend on the host's Tokio reactor across a dylib boundary.
 #[unsafe(no_mangle)]
 pub extern "Rust" fn subscription() -> *mut PluginStream {
     let poll_interval = TICK
@@ -833,59 +837,54 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
         .copied()
         .unwrap_or(Duration::from_secs(MINUTE_DISPLAY_SECONDS));
 
-    let s = stream::channel(
-        8,
-        move |output: iced::futures::channel::mpsc::Sender<PluginMsg>| async move {
-            let output = Arc::new(Mutex::new(output));
-            let tick_output = output.clone();
-            std::thread::spawn(move || {
-                // We poll the real clock every `poll_interval` and *simulate*
-                // the ticks in between, re-anchoring to `Local::now()` past that
-                // point so monotonic drift and clock/NTP changes are corrected.
-                let mut anchor = Local::now();
-                let mut anchor_at = Instant::now();
-                loop {
-                    std::thread::sleep(display_interval.min(poll_interval));
-                    let elapsed = anchor_at.elapsed();
-                    let now = if elapsed >= poll_interval {
-                        let now = Local::now();
-                        anchor = now;
-                        anchor_at = Instant::now();
-                        now
-                    } else {
-                        simulated_now(&anchor, elapsed)
-                    };
-                    if tick_output
-                        .lock()
-                        .unwrap()
-                        .try_send(msg(Message::Tick(now)))
-                        .is_err()
-                    {
-                        // Channel full or closed; on `closed` we'd want to bail,
-                        // but `try_send` on a full mpsc returns `Full` not
-                        // `Closed`, so swallow and try again next tick.
-                    }
-                }
-            });
-            if let Some(interval) = CALDAV_REFRESH.get().copied() {
-                let caldav_output = output.clone();
-                std::thread::spawn(move || {
-                    loop {
-                        std::thread::sleep(interval);
-                        let _ = caldav_output
-                            .lock()
-                            .unwrap()
-                            .try_send(msg(Message::RefreshCalendar));
-                    }
-                });
-            }
-            // Keep the async task alive forever so iced doesn't drop the stream
-            // (and with it the receiving end of the mpsc).
-            std::future::pending::<()>().await;
-        },
+    let s = clock_stream(
+        poll_interval,
+        display_interval,
+        CALDAV_REFRESH.get().copied(),
     );
-
     Box::into_raw(Box::new(s)) as *mut PluginStream
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn subscription_policy() -> oxibar_plugin_api::SubscriptionPolicy {
+    oxibar_plugin_api::SubscriptionPolicy::WhenVisible
+}
+
+fn clock_stream(
+    poll_interval: Duration,
+    display_interval: Duration,
+    calendar_interval: Option<Duration>,
+) -> iced::futures::stream::BoxStream<'static, PluginMsg> {
+    use iced::futures::{StreamExt, stream};
+    let ticks = stream::unfold(
+        (Local::now(), Instant::now(), true),
+        move |(mut anchor, mut anchor_at, first)| async move {
+            if !first {
+                async_io::Timer::after(display_interval.min(poll_interval)).await;
+            }
+            let elapsed = anchor_at.elapsed();
+            let now = if first || elapsed >= poll_interval {
+                anchor = Local::now();
+                anchor_at = Instant::now();
+                anchor
+            } else {
+                simulated_now(&anchor, elapsed)
+            };
+            Some((msg(Message::Tick(now)), (anchor, anchor_at, false)))
+        },
+    )
+    .boxed();
+    let calendar = match calendar_interval {
+        Some(interval) => stream::unfold(true, move |first| async move {
+            if !first {
+                async_io::Timer::after(interval).await;
+            }
+            Some((msg(Message::RefreshCalendar), false))
+        })
+        .boxed(),
+        None => stream::pending().boxed(),
+    };
+    stream::select(ticks, calendar).boxed()
 }
 
 // Compile-time sanity check: the stream we're about to box really is a
@@ -899,6 +898,21 @@ const _: fn() = || {
 mod tests {
     use super::*;
     use oxibar_plugin_api::toml;
+
+    #[test]
+    fn visible_subscription_resumes_immediately_without_a_host_reactor() {
+        use iced::futures::{FutureExt, StreamExt, executor::block_on};
+        let mut stream = clock_stream(Duration::from_secs(60), Duration::from_secs(60), None);
+        let message = block_on(stream.next()).unwrap();
+        assert!(matches!(
+            message.downcast_ref::<Message>(),
+            Some(Message::Tick(_))
+        ));
+        assert!(stream.next().now_or_never().is_none());
+        drop(stream);
+        let mut resumed = clock_stream(Duration::from_secs(60), Duration::from_secs(60), None);
+        assert!(block_on(resumed.next()).is_some());
+    }
 
     #[test]
     fn live_config_keeps_restart_only_clock_format_and_retains_calendar_state() {

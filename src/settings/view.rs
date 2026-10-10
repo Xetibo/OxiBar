@@ -73,6 +73,7 @@ impl OxiBar {
                 Category::Monitors => body = body.push(self.monitor_settings_view()),
                 Category::Bar => body = body.push(self.widget_layout_view(busy)),
                 Category::Plugins => body = body.push(self.plugin_settings_view(busy)),
+                Category::Desktop => body = body.push(self.desktop_settings_view()),
                 _ => {}
             }
         }
@@ -85,7 +86,10 @@ impl OxiBar {
             } else {
                 searchable.contains(&query)
             };
-            if show && !["bar.start", "bar.center", "bar.end"].contains(&field.path.as_str()) {
+            if show
+                && !["bar.start", "bar.center", "bar.end", "desktop.widgets"]
+                    .contains(&field.path.as_str())
+            {
                 matches += 1;
                 body = body.push(self.setting_field_view(field, busy));
             }
@@ -138,7 +142,11 @@ impl OxiBar {
                 );
             }
             Row::new()
-                .push(navigation)
+                .push(
+                    scrollable(navigation)
+                        .width(layout::SETTINGS_NAV_WIDTH)
+                        .height(Length::Fill),
+                )
                 .push(content)
                 .spacing(OXITHEME.padding_xl)
                 .height(Length::Fill)
@@ -223,6 +231,42 @@ impl OxiBar {
                     .align_y(Alignment::Center),
             )
             .into()
+    }
+
+    fn desktop_settings_view(&self) -> Element<'_, Message> {
+        let mut body=Column::new().spacing(OXITHEME.padding_lg)
+            .push(text("Persistent widget instances").size(OXITHEME.font_lg).style(oxi_plugin::text_primary))
+            .push(text("Add, move and resize widgets in explicit desktop edit mode. Placements use logical pixels; disconnected-output fallback preserves your saved layout.").size(OXITHEME.font_md).style(oxi_plugin::text_muted))
+            .push(oxi_plugin::surface_button(text("Edit desktop widgets").size(OXITHEME.font_md),true).on_press(Message::Desktop(crate::desktop::Action::Edit)));
+        for widget in &self.config.snapshot.host.desktop.widgets {
+            body = body.push(
+                text(format!(
+                    "{} · {} · {} · {}, {} · {} × {}{}",
+                    widget.id,
+                    widget.plugin,
+                    if widget.output.is_empty() {
+                        "Selected output"
+                    } else {
+                        &widget.output
+                    },
+                    widget.x,
+                    widget.y,
+                    widget.width,
+                    widget.height,
+                    if widget.enabled { "" } else { " · hidden" }
+                ))
+                .size(OXITHEME.font_md)
+                .style(oxi_plugin::text_muted),
+            );
+        }
+        body = body.push(
+            oxi_plugin::surface_button(
+                text("Reset widget layout to base / Nix").size(OXITHEME.font_md),
+                false,
+            )
+            .on_press(Message::Settings(Action::Reset("desktop.widgets".into()))),
+        );
+        oxi_plugin::settings_card(body).into()
     }
 
     fn setting_field_view<'a>(

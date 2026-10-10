@@ -1,8 +1,11 @@
 pub mod app;
 mod background;
 mod commands;
+pub mod compositor;
 pub mod config;
 pub mod control_center;
+pub mod desktop;
+pub mod dock;
 pub mod font;
 pub mod ipc;
 pub mod launcher;

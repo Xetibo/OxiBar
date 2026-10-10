@@ -21,8 +21,9 @@ per-monitor widget editing. Its implementation stack is not a dependency.
 2 are implemented, plus the initial multi-output registry/inventory slice of
 milestone 3 and milestone 4's control-center/native services/OSDs. Settings/control-center
 surfaces use spacious Android-inspired grouping
-with the existing oxiced theme. Dock/widgets and
-live themes remain planned. Shared `oxiced` now lives in this workspace.
+with the existing oxiced theme. Milestone 5's dock and persistent desktop widgets
+are implemented. Live themes/providers and the release gate remain next.
+Shared `oxiced` now lives in this workspace.
 
 ## Starting Point
 
@@ -387,7 +388,7 @@ fast IPC. Private System/Audio/GUI fixtures pass, including keyboard input throu
 OSDs, domain failures, foreign-session rejection and source routing. Richer native
 capabilities and optional display settings remain extensions.
 
-### 5. Dock and Desktop Widgets — P1
+### 5. Dock and Desktop Widgets — Implemented
 
 **Depends on:** milestones 2–4.
 
@@ -405,6 +406,14 @@ capabilities and optional display settings remain extensions.
 **Acceptance:** add two instances of one widget; move/resize and restart; hotplug
 does not lose layout; desktop input remains usable; hidden widgets do not render
 continuously or start duplicate system pollers.
+
+The dock shares Applications' stable catalog and one host compositor broker.
+Clock/calendar, media, battery and Stats expose reusable desktop content. Logical
+layout drafts support add/remove/hide/output assignment, captured-coordinate
+drag/resize, grid snap, reset and revision-safe persistence. Passive views can pass
+input through; Clock/Stats pause their one owned stream when no consumer remains.
+Private compositor checks passed exact launch/window activation, two-instance
+editing, restart/hotplug, unknown fields, stale edits and hidden-view ownership.
 
 ### 6. Unified Theme and Launcher Providers — P2
 
@@ -465,8 +474,9 @@ not substitutes for presentation-time measurements.
 All five steps are implemented and verified. Registry/read-only output geometry,
 control-center composition, native Audio/BlueZ/System services and OSDs are also
 implemented. User authorized completing every remaining roadmap step, committing
-after each. Next: dock/desktop widget instances, then live themes/providers and the
-SDK/packaging/performance gate, with inventory/focus refinements alongside.
+after each. Dock/desktop instances are now implemented and verified. Next: live
+themes/providers, then the SDK/packaging/performance gate, with inventory/focus
+refinements alongside.
 
 ## UX References
 

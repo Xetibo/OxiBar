@@ -2,6 +2,7 @@ pub mod common;
 pub mod oxi_button;
 pub mod oxi_card;
 pub mod oxi_checkbox;
+pub mod oxi_drag_handle;
 pub mod oxi_icon;
 pub mod oxi_layer;
 pub mod oxi_picklist;

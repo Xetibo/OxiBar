@@ -17,6 +17,9 @@ pub enum SurfaceKind {
     Settings,
     ControlCenter,
     Osd,
+    Dock,
+    DesktopWidget(String),
+    DesktopEditor,
     Modal(String),
     Panel(String),
     Toast(String, String),
@@ -27,6 +30,8 @@ pub struct SurfaceRecord {
     pub kind: SurfaceKind,
     pub output: Option<String>,
     pub owner_bar: Option<IcedId>,
+    pub size: Option<(u32, u32)>,
+    pub pointer: Option<iced::Point>,
 }
 
 #[derive(Default)]
@@ -48,11 +53,16 @@ impl SurfaceRegistry {
                 kind,
                 output,
                 owner_bar,
+                size: None,
+                pointer: None,
             },
         );
     }
     pub fn get(&self, id: IcedId) -> Option<&SurfaceRecord> {
         self.records.get(&id)
+    }
+    pub fn get_mut(&mut self, id: IcedId) -> Option<&mut SurfaceRecord> {
+        self.records.get_mut(&id)
     }
     pub fn remove(&mut self, id: IcedId) -> Option<SurfaceRecord> {
         self.records.remove(&id)

@@ -15,6 +15,18 @@ use crate::layout::{
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    OverlayPointer(IcedId, Option<iced::Point>),
+    OverlayPress(IcedId),
+    Dock(crate::dock::Action),
+    Desktop(crate::desktop::Action),
+    CompositorChanged(Result<oxibar_plugin_api::CompositorSnapshot, String>),
+    CompositorActionDone(Result<(), String>),
+    Workspace(i64),
+    OpenDockLayer(IcedId, (u32, u32), bool, u32, bool),
+    ConfigureDockLayer(IcedId, (u32, u32), bool, u32, bool),
+    OpenDesktopLayer(IcedId, crate::desktop::Rect, bool, bool),
+    ConfigureDesktopLayer(IcedId, crate::desktop::Rect),
+    SetLayerAnchor(IcedId, bool),
     ShowOsd(String, oxibar_plugin_api::HostOsdRequest),
     ExpireOsd(IcedId, u64),
     OpenOsdLayer(IcedId, crate::osd::OsdConfig),
@@ -104,6 +116,82 @@ impl TryInto<LayershellCustomActionWithId> for Message {
 
     fn try_into(self) -> Result<LayershellCustomActionWithId, Self::Error> {
         match self {
+            Message::OpenDockLayer(id, size, bottom, margin, reserve) => {
+                Ok(LayershellCustomActionWithId::new(
+                    None,
+                    LayershellCustomAction::NewLayerShell {
+                        settings: NewLayerShellSettings {
+                            size: Some(size),
+                            layer: Layer::Top,
+                            anchor: if bottom { Anchor::Bottom } else { Anchor::Top },
+                            exclusive_zone: Some(if reserve {
+                                (size.1 + margin) as i32
+                            } else {
+                                0
+                            }),
+                            margin: Some(if bottom {
+                                (0, 0, margin as i32, 0)
+                            } else {
+                                (margin as i32, 0, 0, 0)
+                            }),
+                            keyboard_interactivity: KeyboardInteractivity::None,
+                            output_option: OutputOption::LastOutput,
+                            events_transparent: false,
+                            namespace: Some("OxiBar dock".into()),
+                        },
+                        id,
+                    },
+                ))
+            }
+            Message::ConfigureDockLayer(id, size, bottom, margin, reserve) => Err(
+                Message::ConfigureDockLayer(id, size, bottom, margin, reserve),
+            ),
+            Message::OpenDesktopLayer(id, rect, edit, interactive) => {
+                Ok(LayershellCustomActionWithId::new(
+                    None,
+                    LayershellCustomAction::NewLayerShell {
+                        settings: NewLayerShellSettings {
+                            size: Some((rect.width, rect.height)),
+                            layer: if edit {
+                                Layer::Overlay
+                            } else {
+                                Layer::Background
+                            },
+                            anchor: Anchor::Top | Anchor::Left,
+                            // Desktop placement uses the full output, not its bar-reserved area.
+                            exclusive_zone: Some(-1),
+                            margin: Some((rect.y as i32, 0, 0, rect.x as i32)),
+                            keyboard_interactivity: if edit {
+                                KeyboardInteractivity::Exclusive
+                            } else {
+                                KeyboardInteractivity::None
+                            },
+                            output_option: OutputOption::LastOutput,
+                            events_transparent: !edit && !interactive,
+                            namespace: Some(
+                                if edit {
+                                    "OxiBar widget editor"
+                                } else {
+                                    "OxiBar desktop widget"
+                                }
+                                .into(),
+                            ),
+                        },
+                        id,
+                    },
+                ))
+            }
+            Message::ConfigureDesktopLayer(id, rect) => {
+                Err(Message::ConfigureDesktopLayer(id, rect))
+            }
+            Message::SetLayerAnchor(id, bottom) => Ok(LayershellCustomActionWithId::new(
+                Some(id),
+                LayershellCustomAction::AnchorChange(if bottom {
+                    Anchor::Bottom
+                } else {
+                    Anchor::Top
+                }),
+            )),
             Message::OnCommandOutput(output, message) => match (*message).try_into() {
                 Ok(action) => Ok(action),
                 Err(message) => Err(Message::OnCommandOutput(output, Box::new(message))),
@@ -427,6 +515,16 @@ fn region_dimension(value: u32) -> i32 {
 }
 
 pub(crate) fn map_plugin_message(plugin_id: String, msg: PluginMsg) -> Message {
+    if let Some(value) = msg
+        .downcast_ref::<String>()
+        .and_then(|value| value.strip_prefix(oxibar_plugin_api::HOST_REQUEST_WORKSPACE_PREFIX))
+    {
+        return value
+            .parse::<i64>()
+            .ok()
+            .filter(|id| *id > 0 && *id <= u32::MAX as i64)
+            .map_or(Message::Ignore, Message::Workspace);
+    }
     if let Some(request) = msg.downcast_ref::<oxibar_plugin_api::HostOsdRequest>() {
         return Message::ShowOsd(plugin_id, request.clone());
     }

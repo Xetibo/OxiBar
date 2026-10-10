@@ -26,6 +26,51 @@ fn closures(host: &TestHost, plugin: &str) -> usize {
 }
 
 #[test]
+fn outside_press_is_scoped_to_actual_overlay_bounds_and_cancels_once() {
+    let mut host = TestHost::with_plugins([("Bluetooth", options())]);
+    host.drive(Message::OpenPluginModal("Bluetooth".to_owned()));
+    let id = host.modal_window().unwrap();
+    host.drive(Message::LayerSurfaceResized(id, 100, 100));
+    host.drive(Message::OverlayPointer(
+        id,
+        Some(iced::Point::new(90.0, 90.0)),
+    ));
+    host.drive(Message::OverlayPress(id));
+    assert_eq!(host.modal_window(), Some(id));
+    host.drive(Message::OverlayPointer(
+        IcedId::unique(),
+        Some(iced::Point::new(-1.0, -1.0)),
+    ));
+    host.drive(Message::OverlayPress(IcedId::unique()));
+    assert_eq!(host.modal_window(), Some(id));
+    host.drive(Message::OverlayPointer(
+        id,
+        Some(iced::Point::new(150.0, 10.0)),
+    ));
+    host.drive(Message::OverlayPress(id));
+    assert!(host.modal_window().is_none());
+    assert_eq!(closures(&host, "Bluetooth"), 1);
+    host.drive(Message::OverlayPress(id));
+    host.drive(Message::SurfaceClosed(id));
+    assert_eq!(closures(&host, "Bluetooth"), 1);
+
+    host.drive(Message::Settings(Action::Open));
+    let settings = host.settings_window().unwrap();
+    host.drive(Message::OverlayPointer(
+        settings,
+        Some(iced::Point::new(f32::NAN, -1.0)),
+    ));
+    host.drive(Message::OverlayPress(settings));
+    assert_eq!(host.settings_window(), Some(settings));
+    host.drive(Message::OverlayPointer(
+        settings,
+        Some(iced::Point::new(-1.0, 0.0)),
+    ));
+    host.drive(Message::OverlayPress(settings));
+    assert!(host.settings_window().is_none());
+}
+
+#[test]
 fn scoped_escape_and_late_window_close_notify_once_and_cleanup_still_updates_model() {
     let mut host = TestHost::with_plugins([("Bluetooth", options())]);
     host.drive(Message::OpenPluginModal("Bluetooth".to_owned()));

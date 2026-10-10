@@ -177,6 +177,7 @@
           oxibar-network = pluginPackage "network";
           oxibar-notifications = pluginPackage "notifications";
           oxibar-system = pluginPackage "system";
+          oxibar-stats = pluginPackage "stats";
           oxibar-tray = pluginPackage "tray";
           oxibar-workspaces = pluginPackage "workspaces";
           default = oxibar;

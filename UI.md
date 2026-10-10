@@ -154,6 +154,19 @@ This file is the styling contract for Oxibar plugins and shell surfaces. New plu
   content is the compatibility fallback. All content messages retain source output
   routing, including asynchronous password/pairing requests.
 
+## Dock and Desktop Surfaces
+
+- Dock buttons use existing oxiced controls with themed running/focus indicators.
+  Window management stays with the compositor.
+- Normal widgets use mantle/radius tokens and only their own bounds. Read-only
+  widgets are pointer-transparent; explicit input overrides remain available.
+- Full-output edit mode uses the same palette and spacious controls, suppresses
+  provider actions in previews and offers Save/Cancel, grid move/resize and reset.
+- Use `oxi_drag_handle` for event-local press coordinates. Keep configured logical
+  positions intact when rendering a clamped fallback on another output.
+- Dismiss exclusive overlays on scoped outside clicks; do not reroute/replay those
+  clicks as another provider action.
+
 ## Checklist
 
 - Every visible component adheres to the `oxiced` theme.

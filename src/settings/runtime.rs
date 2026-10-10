@@ -98,11 +98,17 @@ impl OxiBar {
                 let close_modal = self.close_modal();
                 let close_panel = self.close_panel();
                 let close_control_center = self.close_control_center();
+                let close_editor = if self.desktop.draft.is_some() {
+                    self.cancel_desktop_edit()
+                } else {
+                    Task::none()
+                };
                 Task::batch([
                     close_launcher,
                     close_modal,
                     close_panel,
                     close_control_center,
+                    close_editor,
                     self.current_input_region_task(),
                     Task::done(Message::OnOutput(
                         output,
@@ -323,7 +329,7 @@ impl OxiBar {
         self.config_job(None, None, reply, None, false)
     }
 
-    fn config_job(
+    pub(crate) fn config_job(
         &mut self,
         mutation: Option<Mutation>,
         revision: Option<u64>,
@@ -477,6 +483,8 @@ impl OxiBar {
             )));
         }
         tasks.push(self.reconcile_bars());
+        tasks.push(self.reconcile_docks());
+        tasks.push(self.reconcile_desktop());
         if old.host.osd != host.osd {
             tasks.push(self.apply_osd_config());
         }
@@ -566,9 +574,12 @@ impl OxiBar {
 
     pub(crate) fn status_data(&self) -> serde_json::Value {
         json!({"launcher_open": self.launcher.window_id.is_some(), "settings_open": self.settings.window_id.is_some(),
+            "compositor_backend":self.compositor.as_ref().map(|snapshot|&snapshot.backend),"compositor_error":self.compositor_error,"compositor_action_error":self.compositor_action_error,
+            "docks":self.docks.instances.values().map(|dock|json!({"instance":format!("{:?}",dock.id),"output":dock.output,"width":dock.size.0,"height":dock.size.1,"items":dock.items.len()})).collect::<Vec<_>>(),
+            "desktop_editing":self.desktop.draft.is_some(),"desktop_widgets":self.desktop.instances.values().map(|widget|json!({"id":widget.spec.id,"instance":format!("{:?}",widget.id),"plugin":widget.spec.plugin,"output":widget.output,"x":widget.rect.x,"y":widget.rect.y,"width":widget.rect.width,"height":widget.rect.height})).collect::<Vec<_>>(),
             "osds": self.osds.instances.iter().map(|(output, item)| json!({"instance": format!("{:?}", item.id), "output": output, "provider": item.plugin, "topic": item.topic, "generation": item.generation})).collect::<Vec<_>>(),
             "control_center_open": self.control_center.window_id.is_some(), "control_center_selected": self.control_center.selected, "control_center_widgets": self.control_center_plugins(),
-            "restart_required": self.restart_fields(), "loaded_plugins": self.plugins.keys().collect::<Vec<_>>(), "config_error": self.settings.error,
+            "restart_required": self.restart_fields(), "loaded_plugins": self.plugins.keys().collect::<Vec<_>>(), "active_subscriptions": self.plugins.iter().filter(|(name, (_, funcs))| self.subscription_enabled(name, funcs)).map(|(name, _)| name).collect::<Vec<_>>(), "config_error": self.settings.error,
             "monitor_backend": self.shell.inventory.as_ref().map(|inventory| &inventory.backend), "monitor_error": self.shell.inventory_error,
             "outputs": self.shell.inventory.as_ref().map(|inventory| inventory.outputs.iter().map(|output| output.json()).collect::<Vec<_>>()).unwrap_or_default(),
             "bars": self.shell.bars.iter().map(|(instance, bar)| json!({"instance": instance, "output": bar.output, "width": bar.size.width, "height": bar.size.height, "position": format!("{:?}", bar.config.position)})).collect::<Vec<_>>()})
@@ -577,6 +588,46 @@ impl OxiBar {
     pub(crate) fn control_request(&mut self, request: ControlRequest) -> Task<Message> {
         let snapshot = &self.config.snapshot;
         match request.command {
+            Command::Desktop(action) => {
+                if matches!(action, crate::desktop::Action::Save) {
+                    if self.desktop.draft.as_ref().is_none_or(|draft| draft.saving)
+                        || self.config.jobs > 0
+                    {
+                        request.reply.send(ipc::response(
+                            snapshot.revision,
+                            self.status_data(),
+                            Some("Desktop editor is not ready to save"),
+                        ));
+                        return Task::none();
+                    }
+                    let reply = request.reply;
+                    return self
+                        .update_desktop(action)
+                        .map(move |message| match message {
+                            Message::ConfigUpdated(mut outcome) => {
+                                std::sync::Arc::make_mut(&mut outcome).reply = Some(reply.clone());
+                                Message::ConfigUpdated(outcome)
+                            }
+                            message => message,
+                        });
+                }
+                let task = self.update_desktop(action);
+                request.reply.send(ipc::response(
+                    self.config.snapshot.revision,
+                    self.status_data(),
+                    None,
+                ));
+                task
+            }
+            Command::Windows => {
+                let data=self.compositor.as_ref().map(|snapshot|snapshot.windows.iter().map(|window|json!({"id":window.id,"pid":window.pid,"class":window.class,"title":window.title,"output":window.output,"workspace":window.workspace,"focused":window.focused})).collect::<Vec<_>>()).unwrap_or_default();
+                request.reply.send(ipc::response(
+                    snapshot.revision,
+                    json!({"windows":data,"error":self.compositor_error}),
+                    None,
+                ));
+                Task::none()
+            }
             Command::Action {
                 plugin,
                 action,
@@ -727,6 +778,7 @@ fn kind_data(kind: &oxibar_plugin_api::SettingKind) -> serde_json::Value {
         SettingKind::Number { min, max } => json!({"type": "number", "min": min, "max": max}),
         SettingKind::Text => json!({"type": "string"}),
         SettingKind::TextList => json!({"type": "string-array"}),
+        SettingKind::TableList => json!({"type": "table-array"}),
         SettingKind::Choice(options) => json!({"type": "enum", "options": options}),
         SettingKind::Arguments => json!({"type": "command-arguments"}),
     }

@@ -189,6 +189,14 @@ pub extern "Rust" fn control_center_view(
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn desktop_view(
+    model: PluginModel,
+    _: oxibar_plugin_api::PluginViewContext,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    control_center_view(model)
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn subscription() -> *mut PluginStream {
     let interval = *POLL_INTERVAL
         .get()

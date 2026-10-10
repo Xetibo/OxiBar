@@ -64,6 +64,21 @@
   persistence. Use shared oxiced surface buttons, badges and themed switches for
   spacious forms; preserve compact bar controls and the existing theme palette.
 
+## Instance and Compositor State
+
+- Keep provider-local actions stable across sorting, reindexing and removal; never
+  reinterpret a stale vector position as a new application.
+- Treat native window addresses as reusable handles. Keep incarnation IDs and
+  revalidate native identity/PID before delegating activation.
+- Persist requested logical geometry, not clamped fallback placement. Keep unknown
+  instance fields and starting-revision conflicts intact when saving drafts.
+- Capture drag press coordinates from the actual widget event; a separately queued
+  global cursor update is not a reliable gesture origin.
+- Passive views should not capture desktop input. Allow explicit per-instance
+  overrides and keep editing input separate from normal interaction.
+- Visible-only subscriptions must own cancellable timers/resources. Services remain
+  resident by default, and multiple consumers share one model and stream.
+
 ## Testing Expectations
 
 - Add unit tests near the helper functions they cover.

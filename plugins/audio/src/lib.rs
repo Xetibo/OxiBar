@@ -629,6 +629,24 @@ pub extern "Rust" fn control_center_view(
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn desktop_view(
+    model: PluginModel,
+    _: oxibar_plugin_api::PluginViewContext,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| {
+        vec![media_card(
+            model.snapshot.player.as_ref(),
+            model.pending.is_some(),
+        )]
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn desktop_interactive(model: PluginModel) -> bool {
+    with_model_read::<Model, _>(&model, |model| model.snapshot.player.is_some()).unwrap_or(false)
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn subscription() -> *mut PluginStream {
     let config = subscription_config()
         .lock()

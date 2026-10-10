@@ -13,6 +13,10 @@ const DESKTOP_GROUP: &str = "[Desktop Entry]";
 
 #[derive(Debug, Clone)]
 pub(crate) struct Entry {
+    pub(crate) id: usize,
+    pub(crate) desktop_id: String,
+    pub(crate) window_class: String,
+    pub(crate) executable: String,
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) icon: Option<PathBuf>,
@@ -76,12 +80,13 @@ fn load_entries_from(dirs: &[PathBuf], config: &Config, desktops: &[String]) -> 
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('/', "-");
-            if !seen.insert(id) {
+            if !seen.insert(id.clone()) {
                 continue;
             }
             if let Ok(contents) = fs::read_to_string(&path)
-                && let Some(entry) = parse_entry(&contents, &path, config, desktops)
+                && let Some(mut entry) = parse_entry(&contents, &path, config, desktops)
             {
+                entry.desktop_id = id;
                 entries.push(entry);
             }
         }
@@ -156,6 +161,21 @@ fn parse_entry(contents: &str, path: &Path, config: &Config, desktops: &[String]
         .map(unescape_value)
         .collect();
     Some(Entry {
+        id: 0,
+        desktop_id: path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        window_class: values
+            .get("StartupWMClass")
+            .map(|value| unescape_value(value))
+            .unwrap_or_default(),
+        executable: Path::new(&argv[0])
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
         name,
         description: values
             .get("Comment")
@@ -171,6 +191,17 @@ fn parse_entry(contents: &str, path: &Path, config: &Config, desktops: &[String]
             .filter(|value| !value.is_empty())
             .map(|value| PathBuf::from(unescape_value(value))),
     })
+}
+
+#[cfg(test)]
+pub(crate) fn test_entry(id: &str, name: &str) -> Entry {
+    parse_entry(
+        &format!("[Desktop Entry]\nType=Application\nName={name}\nExec=/bin/true\n"),
+        &PathBuf::from(id),
+        &crate::config::read_config(&oxibar_plugin_api::toml::Table::new()),
+        &[],
+    )
+    .unwrap()
 }
 
 fn desktop_visible(values: &HashMap<&str, &str>, desktops: &[String]) -> bool {

@@ -1,5 +1,17 @@
 # Technical Debt
 
+## Dock and Desktop Extensions
+
+- Initial dock/widgets are implemented and verified. Running-window activation is
+  currently a Hyprland adapter; other compositors retain pinned launches and
+  output-aware widgets but need a window/focus capability adapter.
+- Dock auto-hide and weather are optional extensions, not enabled implementations.
+- Generic output inventory still has its documented fallback polling/focus limits.
+  The shared Hyprland window/workspace broker is event-driven.
+- Legacy providers default to resident subscriptions. Clock/Stats opt into owned
+  visible-only timers; broader SDK lifecycle and release/performance checks remain
+  the final roadmap milestone.
+
 This file tracks accepted deviations from the current UI contract in `UI.md`. These are allowed only because `oxiced` does not yet provide the needed shared component or semantic token.
 
 It also tracks non-UI runtime/testing limitations that affect future plugin work.
@@ -200,14 +212,6 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Current state: clock calendar event days and the battery bar item use local themed tooltip container styles so hover details share the same chrome.
 - Why accepted: `oxiced` does not currently provide a shared plugin tooltip helper.
 - Target fix: add an `oxi_plugin` tooltip chrome helper and migrate local tooltip styles to it.
-
-### Workspace Pill Styling
-
-- Status: accepted temporary exception.
-- Affected code: `plugins/workspaces/src/lib.rs`.
-- Current state: workspace buttons use a custom pill style sized from `oxi_plugin::BAR_CONTROL_HEIGHT`, active/inactive theme colors, and a small named shadow.
-- Why accepted: `oxiced` does not currently provide a compact workspace/pill/bar-item helper that supports active, hover, pressed, and fixed square sizing.
-- Target fix: add a compact pill/bar-item helper to `oxiced`; remove local workspace style and shadow.
 
 ### Tray DBusMenu Completeness
 

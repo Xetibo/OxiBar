@@ -28,6 +28,7 @@ pub enum SettingKind {
     Number { min: f64, max: f64 },
     Text,
     TextList,
+    TableList,
     Choice(Vec<String>),
     Arguments,
 }

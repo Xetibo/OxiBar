@@ -254,6 +254,98 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
         ),
         SettingDescriptor::new("ipc.socket_path", "Control socket", Text, None, Restart),
         SettingDescriptor::new(
+            "dock.enabled",
+            "Enable dock",
+            Boolean,
+            Some(Value::Boolean(true)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "dock.outputs",
+            "Dock outputs",
+            TextList,
+            Some(Value::Array(Vec::new())),
+            Surface,
+        )
+        .description("Empty selects one output; * selects every connected output."),
+        SettingDescriptor::new(
+            "dock.output_fallback",
+            "Dock output fallback",
+            Boolean,
+            Some(Value::Boolean(true)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "dock.pinned",
+            "Pinned desktop IDs",
+            TextList,
+            Some(Value::Array(Vec::new())),
+            Live,
+        ),
+        SettingDescriptor::new(
+            "dock.show_running",
+            "Show running applications",
+            Boolean,
+            Some(Value::Boolean(true)),
+            Live,
+        ),
+        SettingDescriptor::new(
+            "dock.position",
+            "Dock edge",
+            SettingKind::Choice(vec!["top".into(), "bottom".into()]),
+            Some(Value::String("bottom".into())),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "dock.icon_size",
+            "Dock icon size",
+            Integer { min: 16, max: 128 },
+            Some(Value::Integer(40)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "dock.margin",
+            "Dock margin",
+            Integer { min: 0, max: 1024 },
+            Some(Value::Integer(12)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "dock.reserve_space",
+            "Reserve dock space",
+            Boolean,
+            Some(Value::Boolean(false)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "desktop.enabled",
+            "Enable desktop widgets",
+            Boolean,
+            Some(Value::Boolean(true)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "desktop.output_fallback",
+            "Widget output fallback",
+            Boolean,
+            Some(Value::Boolean(true)),
+            Surface,
+        ),
+        SettingDescriptor::new(
+            "desktop.grid",
+            "Placement grid",
+            Integer { min: 1, max: 128 },
+            Some(Value::Integer(16)),
+            Live,
+        ),
+        SettingDescriptor::new(
+            "desktop.widgets",
+            "Desktop widget instances",
+            SettingKind::TableList,
+            Some(Value::Array(Vec::new())),
+            Surface,
+        ),
+        SettingDescriptor::new(
             "startup.enabled",
             "Startup retry",
             Boolean,
@@ -322,6 +414,8 @@ pub fn validate(config: &Table, schema: &[SettingDescriptor]) -> Result<(), Stri
         "instance",
         "ipc",
         "monitor",
+        "dock",
+        "desktop",
     ] {
         if config.get(section).is_some_and(|value| !value.is_table()) {
             return Err(format!("{section}: expected a table"));
@@ -353,7 +447,9 @@ pub fn validate(config: &Table, schema: &[SettingDescriptor]) -> Result<(), Stri
             }
         }
     }
-    super::bars::validate_profiles(config, schema)
+    super::bars::validate_profiles(config, schema)?;
+    super::desktop::widgets(config)?;
+    Ok(())
 }
 
 pub fn validate_value(field: &SettingDescriptor, value: &Value) -> Result<(), String> {
@@ -366,6 +462,9 @@ pub fn validate_value(field: &SettingDescriptor, value: &Value) -> Result<(), St
         SettingKind::TextList => value
             .as_array()
             .is_some_and(|values| values.iter().all(Value::is_str)),
+        SettingKind::TableList => value
+            .as_array()
+            .is_some_and(|values| values.iter().all(Value::is_table)),
         SettingKind::Integer { min, max } => value
             .as_integer()
             .is_some_and(|value| (*min..=*max).contains(&value)),
@@ -401,6 +500,8 @@ pub fn validate_value(field: &SettingDescriptor, value: &Value) -> Result<(), St
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostConfig {
+    pub dock: super::desktop::DockConfig,
+    pub desktop: super::desktop::DesktopConfig,
     pub osd: crate::osd::OsdConfig,
     pub bar_width: Option<u32>,
     pub bar_height: u32,
@@ -448,6 +549,8 @@ impl HostConfig {
                 .collect()
         };
         Self {
+            dock: super::desktop::dock(table),
+            desktop: super::desktop::desktop(table),
             osd: crate::osd::OsdConfig {
                 enabled: boolean("osd.enabled"),
                 size: (integer("osd.width"), integer("osd.height")),

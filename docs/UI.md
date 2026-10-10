@@ -56,6 +56,20 @@
 - Session actions open a task confirmation; dismissal clears unsubmitted intent.
   Locking invokes the configured dedicated locker, not a visual shell overlay.
 
+## Dock and Desktop Interaction
+
+- Reuse themed buttons, cards, icons and focus/running accents for docks and
+  widgets. Preserve the shared palette and rounded mantle chrome.
+- Keep normal desktop input inside interactive widget bounds; read-only content
+  passes input through. Explicit edit mode may cover the output and show roomy
+  placement controls, move handles and resize corners.
+- Keep persistent output-relative placement when an output disappears; rendered
+  fallback must not silently rewrite the user's layout.
+- Capture pointer press positions on handles. Suppress inner provider actions in
+  edit previews, retain dirty drafts on conflicts, and provide Save/Cancel.
+- Outside clicks dismiss keyboard-focused overlays using their actual bounds,
+  releasing compositor grabs while retaining window-scoped keyboard behavior.
+
 ## Current Surfaces
 
 - Each bar uses `OXITHEME.mantle` unless its effective transparency is enabled,

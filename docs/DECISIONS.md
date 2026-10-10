@@ -1,5 +1,59 @@
 # Decisions
 
+## 2026-10-10 — Shared Dock and Persistent Desktop Widgets
+
+- Completed milestone 5 after `bd8c9bc` (System/OSDs). User explicitly authorized
+  every remaining milestone with a commit after each; continue through live themes/
+  expanded providers and the SDK/packaging/performance gate after this commit.
+- Applications now assigns persistent desktop-ID launch identities across reindex/
+  removal. Runner and dock share one `Arc` catalog/icon index, not another scanner.
+- One host Hyprland event broker supplies windows/workspaces and version-specific
+  native activation. Window IDs include an incarnation, bounded event reads survive
+  canceled partial reads, observed closes/reconnect retire identities, and activation
+  freshly validates address/PID. Workspaces uses this snapshot, removing duplicate
+  threads/font probes while retaining its id-sorted `launch(index)` compatibility.
+- Desktop widget IDs/configuration are separate from shared provider models. Normal
+  background surfaces use output-relative coordinates and zone `-1`, ignoring other
+  clients' bar reservations. Hotplug clamps rendered fallback only; saved intent is
+  unchanged. Clock/calendar, Audio media, Battery and new Stats reuse existing state.
+- Explicit full-output editing supports add/remove/hide/output selection, drag/
+  resize, grid snap, reset and revision-safe Save/Cancel. Save merges original raw
+  tables by ID, retaining unknown fields and immutable Nix base ownership.
+- Shared `oxi_drag_handle` captures press coordinates directly; stale global cursor
+  state had caused nondeterministic drag origins. Normal input defaults to provider
+  policy (Stats passive, media only interactive when present), with per-instance
+  automatic/on/off override. Policy changes replace the native surface, not its model.
+- Optional ABI-6 `dock_entries`, `desktop_view`, `desktop_interactive`,
+  `compositor_changed` and `subscription_policy` retain required signatures. Services/
+  legacy plugins stay resident; Clock/CalDAV and Stats use one cancellable visible-only
+  stream and resume immediately. Hidden widgets cannot multiply provider pollers.
+- Actual pointer traces showed exclusive Settings receiving clicks outside its bounds.
+  ID-scoped outside dismissal uses actual configured size and existing cleanup hooks;
+  no speculative pointer-backend rewrite or click replay. Native dock activation is
+  tested after moving away from the fixture workspace, not merely observing focus.
+- Full 209 workspace tests/doctests, strict Clippy and Nix host plus six plugin packages
+  passed. Private nested Hyprland 0.51.1/headless Sway 1.11/pinned Mesa checks passed
+  exact catalog launch/window activation, two-instance drag `(144,176)` and resize
+  `432×416`, save/restart/hotplug, unknown fields/read-only base, stale drafts and hide.
+  Stats correctly remains active while present in the bar; hiding that last consumer
+  pauses it, and restoring it resumes one stream. The earlier assertion was fixture
+  logic, not an SDK enum/ownership bug.
+- Final verified packages: host `f87gvmi1bagyg6i3pbpvds7n6bmcvlid`, Applications
+  `va72v4dcizpn4k85v2qbpzfvg8a0wd1h`, Clock `kmqr9hbnycmygyvxqq07d6h4xyf7v6k4`,
+  Audio `rr51zg0whjmyp9c8l63cdj1fwm1fl83r`, Stats `zp3qhi0jysa3xmkjwk0678bikrr3b2vj`.
+  The small final Workspaces launch compatibility correction passed its two focused
+  tests and strict workspace Clippy, and was repackaged as
+  `5r7m46mjihy68ihng93l4m6iwlcpvgs2`; ordinary UI activation was already covered by
+  the GUI run.
+- Temporary helpers live only in `/tmp/opencode`: desktop-dock smoke, output-mapped
+  virtual pointer and isolated compositor coordinator. Parent xdg-shell 6 override and
+  fully pinned graphics made a stable test environment; current-system nested Hyprland
+  failures were not attributed to an unproved product/OOM cause. All owned children/
+  fixtures were cleaned; real desktop/input/hardware/session stayed untouched. Images
+  remain private. Repeatable repository tooling and presentation benchmarks are step 7.
+- Review external staging before commit; exclude the unrelated pre-existing staged
+  deletion of `result`. No push or activation requested.
+
 This file records LLM-specific continuity decisions and low-impact choices that
 are useful for future agents. Omitted from this file are high-level architecture
 topics already covered by `ARCHITECTURE.md`.

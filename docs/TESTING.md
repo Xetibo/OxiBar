@@ -49,6 +49,12 @@
 - OSD/commands: per-output ID reuse, stale expiry, input-transparent layer settings,
   live geometry/disable, output retirement, authoritative model-before-reply,
   captured async output, serialized SDK transport and concurrent slow/fast IPC.
+- Dock/desktop: shared stable application catalogs, incarnation-safe window IDs,
+  bounded cancellation-safe event lines, two shared-model widget instances,
+  logical fallback/restore, grid drag/resize, revision conflicts, unknown fields,
+  hide/add/remove/output assignment, passive-input overrides and visible ownership.
+- Clock/Stats: bounded proc parsing and immediate owned-timer resume without a host
+  reactor. Modal tests also cover actual-bound outside dismissal and cleanup once.
 
 ## Expected Commands
 
@@ -94,6 +100,29 @@ plugin=$(nix build path:.#oxibar-applications --no-link --print-out-paths)
 nix develop path:. -c env OXIBAR_APPLICATIONS_PLUGIN="$plugin/lib/libapplications.so" \
   cargo test -p oxibar --test runner_dylib -- --ignored
 ```
+
+## Dock and Desktop Runtime Verification
+
+Use a private compositor, independent XDG/base/override/lock/socket files, built
+Applications/Clock/Audio/Stats/Workspaces libraries and a single harmless fixture
+desktop entry. Check actual dock launch and exact existing-window activation after
+switching away, rather than treating an already-focused window as activation proof.
+
+Add two calendar instances plus media/stats. Drag and resize using event-local
+pointer presses, save, restart and hotplug the requested output. Verify unknown
+fields and a read-only base symlink survive, fallback does not overwrite intended
+geometry, stale saves retain dirty drafts, and hidden widgets remove their surfaces.
+Check passive input flags and one visible-only subscription shared across consumers:
+hide both the widget and any bar/OSD consumer before asserting it is paused.
+
+The phase-5 packaged run passed every check using pinned Hyprland 0.51.1 nested on a
+private headless Sway 1.11 parent, pinned Mesa and an isolated DBus/MPRIS fixture.
+The temporary parent advertised supported xdg-shell version 6 for Aquamarine.
+Virtual pointer clients were output-mapped; the real desktop/input stayed untouched.
+Captured geometry was `(144,176)` and `432×416`; restart/hotplug preserved it.
+Outside Settings dismissal released the compositor grab before exact dock activation.
+209 workspace tests/doctests, strict Clippy and Nix host/six-plugin packaging passed.
+Images remain private; first-presented-frame release benchmarks remain milestone 7.
 
 ## Launcher Runtime Verification
 

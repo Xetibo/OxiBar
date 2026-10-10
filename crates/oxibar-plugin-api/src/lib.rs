@@ -282,6 +282,59 @@ pub type RunnerQueryFn =
     unsafe extern "Rust" fn(query: String, model: PluginModel) -> Option<Task<PluginMsg>>;
 pub type RunnerEntriesFn = unsafe extern "Rust" fn(model: PluginModel) -> Vec<RunnerEntry>;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockEntry {
+    pub index: usize,
+    pub desktop_id: String,
+    pub title: String,
+    pub icon: Option<std::path::PathBuf>,
+    pub window_class: String,
+    pub executable: String,
+}
+
+pub type DockEntriesFn = unsafe extern "Rust" fn(model: PluginModel) -> Arc<Vec<DockEntry>>;
+pub type DesktopViewFn = ContextViewFn;
+
+/// Optional desktop input policy. Read-only bodies return false so the host
+/// leaves the underlying desktop usable. Users can override each instance.
+pub type DesktopInteractiveFn = unsafe extern "Rust" fn(model: PluginModel) -> bool;
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CompositorSnapshot {
+    pub error: Option<String>,
+    pub backend: String,
+    pub lua_dispatch: bool,
+    pub windows: Vec<CompositorWindow>,
+    pub workspaces: Vec<CompositorWorkspace>,
+    pub active_workspaces: std::collections::BTreeMap<String, i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompositorWindow {
+    pub id: String,
+    pub pid: u32,
+    pub class: String,
+    pub title: String,
+    pub output: Option<String>,
+    pub workspace: i64,
+    pub focused: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompositorWorkspace {
+    pub id: i64,
+    pub name: String,
+    pub output: String,
+    pub windows: u32,
+}
+
+pub type CompositorChangedFn = unsafe extern "Rust" fn(
+    model: PluginModel,
+    snapshot: CompositorSnapshot,
+) -> Option<Task<PluginMsg>>;
+
+pub const HOST_REQUEST_WORKSPACE_PREFIX: &str = "oxibar.host.workspace:";
+
 /// Optional resident commands. Validate before starting work; the outcome reports
 /// completion and carries the ordinary model message back through host routing.
 #[derive(Debug, Clone)]
@@ -449,6 +502,16 @@ pub type AvailabilityFn = unsafe extern "Rust" fn(toml::Table) -> PluginAvailabi
 pub type PopupMetricsFn = unsafe extern "Rust" fn(model: PluginModel) -> PluginPopupMetrics;
 
 pub type SubscriptionFn = unsafe extern "Rust" fn() -> *mut PluginStream;
+
+/// Optional subscription ownership policy. Services stay resident by default;
+/// purely visual providers may pause their owned stream when no view consumes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubscriptionPolicy {
+    Always,
+    WhenVisible,
+}
+
+pub type SubscriptionPolicyFn = unsafe extern "Rust" fn() -> SubscriptionPolicy;
 
 pub type AbiVersionFn = unsafe extern "Rust" fn() -> u32;
 

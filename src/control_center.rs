@@ -80,12 +80,18 @@ impl OxiBar {
                 self.normalize_control_center_selection();
                 self.popup_open = false;
                 let size = self.config.snapshot.host.control_center_size;
+                let close_editor = if self.desktop.draft.is_some() {
+                    self.cancel_desktop_edit()
+                } else {
+                    Task::none()
+                };
                 Task::batch([
                     self.close_launcher(),
                     self.close_settings(),
                     self.close_modal(),
                     self.close_panel(),
                     self.close_control_center_toasts(),
+                    close_editor,
                     self.current_input_region_task(),
                     Task::done(Message::OnOutput(
                         output,

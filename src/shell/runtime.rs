@@ -40,6 +40,8 @@ impl OxiBar {
             }
         }
         tasks.push(self.reconcile_bars());
+        tasks.push(self.reconcile_docks());
+        tasks.push(self.reconcile_desktop());
         Task::batch(tasks)
     }
 
@@ -280,6 +282,8 @@ impl OxiBar {
         }
         self.toasts.retain(|toast| toast.window_id != id);
         self.osds.instances.retain(|_, instance| instance.id != id);
+        self.docks.instances.retain(|_, instance| instance.id != id);
+        self.desktop.forget(id);
         callback
     }
 
@@ -309,6 +313,11 @@ impl OxiBar {
     }
 
     pub(crate) fn surface_closed(&mut self, id: IcedId) -> Task<Message> {
+        let kind = self
+            .shell
+            .registry
+            .get(id)
+            .map(|record| record.kind.clone());
         let is_bar = self.shell.bar(id).is_some();
         let callback = self.forget_surface(id);
         if is_bar {
@@ -316,6 +325,13 @@ impl OxiBar {
             self.bar_window_id = None;
             return Task::batch([callback, self.reconcile_bars()]);
         }
-        callback
+        match kind {
+            Some(SurfaceKind::DesktopEditor) => Task::batch([callback, self.cancel_desktop_edit()]),
+            Some(SurfaceKind::DesktopWidget(_)) => {
+                Task::batch([callback, self.reconcile_desktop()])
+            }
+            Some(SurfaceKind::Dock) => Task::batch([callback, self.reconcile_docks()]),
+            _ => callback,
+        }
     }
 }

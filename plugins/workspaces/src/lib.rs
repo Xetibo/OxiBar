@@ -1,432 +1,156 @@
-//! Hyprland workspaces plugin.
-//!
-//! Subscribes to the hyprland event socket on a dedicated `std::thread` (no
-//! tokio runtime in the dylib — would clash with the host's iced runtime),
-//! and pushes events through a sync `try_send` bridge into iced's stream.
-
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
-use hyprland::{
-    data::Workspace,
-    event_listener::EventListener,
-    shared::{HyprData, HyprDataActive},
-};
+//! Workspace controls consume the host's single compositor event broker.
 use iced::{
-    Alignment, Border, Element, Font, Shadow, Task,
-    border::Radius,
-    futures::Stream,
-    stream,
+    Element, Task,
     widget::{Row, text},
 };
 use oxibar_plugin_api::{
-    ABI_VERSION, PluginModel, PluginMsg, PluginStream, drain_model_errors, plugin_model,
-    toml::Table, with_model_read, with_model_write,
+    ABI_VERSION, CompositorSnapshot, HOST_REQUEST_WORKSPACE_PREFIX, PluginModel, PluginMsg,
+    PluginStream, PluginViewContext, drain_model_errors, plugin_model, toml::Table,
+    with_model_read, with_model_write,
 };
-use oxiced::{
-    theme::theme_impl::OXITHEME,
-    widgets::{oxi_button, oxi_plugin},
-};
-
-const WORKSPACE_SHADOW_BLUR: f32 = 2.0;
+use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_plugin};
+use std::sync::Arc;
 
 #[derive(Debug, Default)]
-pub struct Model {
-    workspaces: HashMap<String, hyprland::data::Workspace>,
-    active_workspace_name: String,
-    font_family: Option<&'static str>,
-    /// Transient errors surfaced via the `errors()` ABI entry. Drained by the
-    /// host on each update.
+struct Model {
+    snapshot: CompositorSnapshot,
     errors: Vec<String>,
 }
-
-impl Model {
-    pub fn new(global_config: Table) -> Model {
-        let mut errors = Vec::new();
-        let active_workspace_name = match Workspace::get_active() {
-            Ok(w) => w.name,
-            Err(e) => {
-                errors.push(format!("could not query active workspace: {e}"));
-                String::new()
-            }
-        };
-        let font_family = global_config
-            .get("bar")
-            .and_then(|v| v.as_table())
-            .and_then(|t| t.get("font"))
-            .and_then(|v| v.as_str())
-            .map(resolve_font_family)
-            .map(|s| &*Box::leak(s.to_owned().into_boxed_str()));
-        Model {
-            workspaces: HashMap::new(),
-            active_workspace_name,
-            font_family,
-            errors,
-        }
-    }
+#[derive(Debug, Clone)]
+enum Message {
+    Activate(i64),
 }
-
-fn resolve_font_family(configured: &str) -> String {
-    let Ok(output) = std::process::Command::new("fc-match")
-        .args(["-f", "%{family}", configured])
-        .output()
-    else {
-        return configured.to_owned();
-    };
-    if !output.status.success() {
-        return configured.to_owned();
-    }
-    let family = String::from_utf8_lossy(&output.stdout);
-    family
-        .split(',')
-        .next()
-        .map(str::trim)
-        .filter(|family| !family.is_empty())
-        .unwrap_or(configured)
-        .to_owned()
-}
-
-/// Wrap a typed `Message` in the dyn-`OxiAny` envelope expected by the host.
-fn msg(m: Message) -> PluginMsg {
-    Arc::new(m)
-}
-
-#[derive(Clone, Debug)]
-pub enum Message {
-    ActiveWorkspaceChanged(String),
-    ActivateWorkspace(hyprland::shared::WorkspaceId),
-    WorkspacesInit(HashMap<String, hyprland::data::Workspace>),
-    WorkspaceAdded(hyprland::data::Workspace),
-    WorkspaceRemoved(String),
-}
-
-// ---------------- Plugin ABI ----------------
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn abi_version() -> u32 {
     ABI_VERSION
 }
-
 #[unsafe(no_mangle)]
 pub extern "Rust" fn name() -> &'static str {
     "Workspaces"
 }
-
 #[unsafe(no_mangle)]
-pub extern "Rust" fn model(global_config: Table) -> (PluginModel, Option<Task<PluginMsg>>) {
-    (plugin_model(Model::new(global_config)), None)
+pub extern "Rust" fn model(_: Table) -> (PluginModel, Option<Task<PluginMsg>>) {
+    (plugin_model(Model::default()), None)
 }
-
 #[unsafe(no_mangle)]
-pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Task<PluginMsg>> {
-    let m = msg_in.downcast_ref::<Message>()?.clone();
-    with_model_write::<Model, _>(&model, |model| match m {
-        Message::WorkspacesInit(workspaces) => {
-            model.workspaces = workspaces;
-            None
-        }
-        Message::ActivateWorkspace(id) => {
-            tracing::info!(workspace = id, "activating workspace");
-            if let Err(e) = dispatch_workspace(id) {
-                model
-                    .errors
-                    .push(format!("workspace dispatch to {id} failed: {e}"));
-            }
-            None
-        }
-        Message::WorkspaceAdded(workspace) => {
-            model.workspaces.insert(workspace.name.clone(), workspace);
-            None
-        }
-        Message::WorkspaceRemoved(name) => {
-            model.workspaces.remove(&name);
-            None
-        }
-        Message::ActiveWorkspaceChanged(name) => {
-            model.active_workspace_name = name;
-            None
-        }
-    })
-    .flatten()
-}
-
-fn dispatch_workspace(id: hyprland::shared::WorkspaceId) -> Result<(), String> {
-    // Equivalent to: hyprctl dispatch 'hl.dsp.focus({ workspace = <id> })'
-    let command = format!("hl.dsp.focus({{ workspace = {id} }})");
-    let output = std::process::Command::new("hyprctl")
-        .args(["dispatch", &command])
-        .output()
-        .map_err(|e| format!("could not run hyprctl: {e}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    if output.status.success() && (stdout.is_empty() || stdout == "ok") {
-        Ok(())
-    } else if stderr.is_empty() {
-        Err(stdout)
-    } else {
-        Err(stderr)
+pub extern "Rust" fn update(model: PluginModel, message: PluginMsg) -> Option<Task<PluginMsg>> {
+    let Message::Activate(id) = message.downcast_ref::<Message>()?;
+    if *id <= 0 {
+        return None;
     }
-}
-
-#[unsafe(no_mangle)]
-pub extern "Rust" fn launch(focused_index: usize, model: PluginModel) -> Option<Task<PluginMsg>> {
-    // Treat `focused_index` as the position in the id-sorted workspace list:
-    // a key binding "activate workspace #N" can call this without knowing
-    // the workspace's stringly-typed name.
     with_model_read::<Model, _>(&model, |model| {
-        let mut sorted: Vec<&hyprland::data::Workspace> = model.workspaces.values().collect();
-        sorted.sort_by_key(|w| w.id);
-        let target = sorted.get(focused_index)?;
-        Some(Task::done(msg(Message::ActivateWorkspace(target.id))))
+        model
+            .snapshot
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == *id)
     })
     .ok()
-    .flatten()
+    .filter(|valid| *valid)?;
+    Some(Task::done(
+        Arc::new(format!("{HOST_REQUEST_WORKSPACE_PREFIX}{id}")) as PluginMsg,
+    ))
 }
-
+#[unsafe(no_mangle)]
+pub extern "Rust" fn launch(index: usize, model: PluginModel) -> Option<Task<PluginMsg>> {
+    let id = with_model_read::<Model, _>(&model, |model| {
+        let mut ids: Vec<_> = model
+            .snapshot
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id)
+            .filter(|id| *id > 0)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids.get(index).copied()
+    })
+    .ok()
+    .flatten()?;
+    update(model, Arc::new(Message::Activate(id)))
+}
 #[unsafe(no_mangle)]
 pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
     drain_model_errors::<Model>(&model, |model| &mut model.errors)
 }
-
+#[unsafe(no_mangle)]
+pub extern "Rust" fn subscription() -> *mut PluginStream {
+    Box::into_raw(Box::new(Box::pin(iced::futures::stream::pending::<
+        PluginMsg,
+    >()))) as *mut PluginStream
+}
+#[unsafe(no_mangle)]
+pub extern "Rust" fn compositor_changed(
+    model: PluginModel,
+    snapshot: CompositorSnapshot,
+) -> Option<Task<PluginMsg>> {
+    with_model_write::<Model, _>(&model, |model| model.snapshot = snapshot);
+    None
+}
 #[unsafe(no_mangle)]
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    render(model, None)
+}
+#[unsafe(no_mangle)]
+pub extern "Rust" fn view_with_context(
+    model: PluginModel,
+    context: PluginViewContext,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    render(model, context.output_name.as_deref())
+}
+
+fn render(
+    model: PluginModel,
+    output: Option<&str>,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
-        let palette = &OXITHEME;
-        let mut sorted: Vec<hyprland::data::Workspace> =
-            model.workspaces.values().cloned().collect();
-        sorted.sort_by_key(|w| w.id);
-
-        let workspace_entries: Vec<Element<PluginMsg>> = sorted
-            .into_iter()
-            .map(|workspace| {
-                let is_active = model.active_workspace_name == workspace.name;
-                let bg_color = if is_active {
-                    iced::Background::Color(palette.primary)
-                } else {
-                    iced::Background::Color(palette.primary_bg)
-                };
-                let fg_color = if is_active {
-                    palette.primary_contrast
-                } else {
-                    palette.primary
-                };
-                let base_font = match model.font_family {
-                    Some(name) => Font::with_name(name),
-                    None => Font::DEFAULT,
-                };
-                let font = Font {
-                    weight: iced::font::Weight::Semibold,
-                    ..base_font
-                };
-
-                let base = iced::widget::button::Style {
-                    background: Some(bg_color),
-                    text_color: fg_color,
-                    border: Border {
-                        color: iced::Color::TRANSPARENT,
-                        width: 0.0,
-                        radius: Radius::from(oxi_plugin::BAR_CONTROL_HEIGHT / 2.0),
-                    },
-                    shadow: Shadow {
-                        blur_radius: WORKSPACE_SHADOW_BLUR,
-                        ..Shadow::default()
-                    },
-                    snap: false,
-                };
-                let style =
-                    move |base: iced::widget::button::Style,
-                          status: iced::widget::button::Status| {
-                        match status {
-                            iced::widget::button::Status::Active => base,
-                            iced::widget::button::Status::Pressed => iced::widget::button::Style {
-                                background: Some(iced::Background::Color(palette.primary_active)),
-                                ..base
-                            },
-                            iced::widget::button::Status::Hovered => iced::widget::button::Style {
-                                background: Some(iced::Background::Color(palette.primary_hover)),
-                                ..base
-                            },
-                            iced::widget::button::Status::Disabled => base,
-                        }
-                    };
-                oxi_button::button(
-                    text(format!("{}", workspace.id))
-                        .size(OXITHEME.font_md)
-                        .font(font)
-                        .align_y(Alignment::Center)
-                        .align_x(Alignment::Center),
-                    oxi_button::ButtonVariant::PrimaryBg,
-                )
-                .on_press(msg(Message::ActivateWorkspace(workspace.id)))
-                .style(move |&_, status| (style)(base, status))
-                .padding(0)
-                .height(oxi_plugin::BAR_CONTROL_HEIGHT)
-                .width(oxi_plugin::BAR_CONTROL_HEIGHT)
-                .into()
-            })
-            .collect();
-
-        vec![
-            Row::from_vec(workspace_entries)
-                .align_y(Alignment::Center)
-                .spacing(OXITHEME.padding_xs)
-                .into(),
-        ]
+        let mut row = Row::new().spacing(OXITHEME.padding_xs);
+        for workspace in model
+            .snapshot
+            .workspaces
+            .iter()
+            .filter(|workspace| output.is_none_or(|output| workspace.output == output))
+        {
+            let active =
+                model.snapshot.active_workspaces.get(&workspace.output) == Some(&workspace.id);
+            row = row.push(
+                oxi_plugin::bar_button(text(workspace.name.clone()).size(OXITHEME.font_md))
+                    .style(oxi_plugin::selectable_row_style(active))
+                    .on_press(Arc::new(Message::Activate(workspace.id)) as PluginMsg),
+            );
+        }
+        vec![row.into()]
     })
 }
-
-/// Returns a raw pointer to a boxed stream of plugin messages.
-///
-/// We intentionally don't spin up tokio in the plugin (would create a second
-/// runtime alongside the host's iced/tokio one). Instead a plain
-/// `std::thread` runs hyprland's sync `EventListener` and pushes into the
-/// stream via `try_send`.
-///
-/// The async block itself only awaits `pending::<()>()` so iced never drops
-/// the stream while the listener thread is still running.
-#[unsafe(no_mangle)]
-pub extern "Rust" fn subscription() -> *mut PluginStream {
-    let s = stream::channel(
-        100,
-        move |output: iced::futures::channel::mpsc::Sender<PluginMsg>| async move {
-            // `Mutex` so the synchronous handler closures (which are only
-            // `Fn`, not `FnMut`) can grab a `&mut Sender` to call `try_send`.
-            let output = Arc::new(Mutex::new(output));
-
-            std::thread::spawn(move || {
-                let send = |m: Message| {
-                    let _ = output.lock().unwrap().try_send(msg(m));
-                };
-
-                // Initial workspace fetch.
-                if let Ok(workspaces) = hyprland::data::Workspaces::get() {
-                    let map = workspaces
-                        .into_iter()
-                        .map(|w| (w.name.clone(), w))
-                        .collect();
-                    send(Message::WorkspacesInit(map));
-                }
-
-                let mut listener = EventListener::new();
-
-                {
-                    let output = output.clone();
-                    listener.add_workspace_added_handler(move |_| {
-                        if let Ok(workspaces) = hyprland::data::Workspaces::get() {
-                            let map = workspaces
-                                .into_iter()
-                                .map(|w| (w.name.clone(), w))
-                                .collect();
-                            let _ = output
-                                .lock()
-                                .unwrap()
-                                .try_send(msg(Message::WorkspacesInit(map)));
-                        }
-                    });
-                }
-
-                {
-                    let output = output.clone();
-                    listener.add_workspace_deleted_handler(move |workspace| {
-                        let _ = output
-                            .lock()
-                            .unwrap()
-                            .try_send(msg(Message::WorkspaceRemoved(workspace.name.to_string())));
-                    });
-                }
-
-                {
-                    let output = output.clone();
-                    listener.add_workspace_changed_handler(move |workspace| {
-                        let _ =
-                            output
-                                .lock()
-                                .unwrap()
-                                .try_send(msg(Message::ActiveWorkspaceChanged(
-                                    workspace.name.to_string(),
-                                )));
-                    });
-                }
-
-                {
-                    let output = output.clone();
-                    listener.add_active_monitor_changed_handler(move |monitor| {
-                        let name = monitor
-                            .workspace_name
-                            .map(|n| n.to_string())
-                            .unwrap_or_default();
-                        let _ = output
-                            .lock()
-                            .unwrap()
-                            .try_send(msg(Message::ActiveWorkspaceChanged(name)));
-                    });
-                }
-
-                if let Err(e) = listener.start_listener() {
-                    tracing::error!("hyprland event listener stopped: {e}");
-                }
-            });
-
-            // Keep the async task alive forever so iced doesn't drop the stream.
-            std::future::pending::<()>().await;
-        },
-    );
-
-    Box::into_raw(Box::new(s)) as *mut PluginStream
-}
-
-// Compile-time sanity check: confirm the channel-stream type really is a
-// `PluginStream`-shaped trait object so the cast above is sound.
-const _: fn() = || {
-    fn assert_stream<S: Stream<Item = PluginMsg> + Send + 'static>(_: &S) {}
-    let _ = |s: &iced::futures::stream::BoxStream<'static, PluginMsg>| assert_stream(s);
-};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_model() -> PluginModel {
-        plugin_model(Model {
-            workspaces: HashMap::new(),
-            active_workspace_name: String::new(),
-            font_family: None,
-            errors: Vec::new(),
-        })
-    }
-
     #[test]
-    fn update_tracks_active_workspace_without_hyprland() {
-        let plugin_model = test_model();
-        assert_eq!(name(), "Workspaces");
-        assert_eq!(abi_version(), ABI_VERSION);
-
-        let task = update(
-            plugin_model.clone(),
-            msg(Message::ActiveWorkspaceChanged("dev".to_owned())),
-        );
+    fn initial_view_is_quiet_and_empty() {
+        let (model, task) = model(Table::new());
         assert!(task.is_none());
-
-        let guard = plugin_model.read().unwrap();
-        let model = guard.downcast_ref::<Model>().unwrap();
-        assert_eq!(model.active_workspace_name, "dev");
+        assert!(view(model).is_ok());
     }
-
     #[test]
-    fn empty_view_launch_and_error_drain_are_deterministic() {
-        let plugin_model = test_model();
-        assert!(launch(0, plugin_model.clone()).is_none());
-        assert_eq!(view(plugin_model.clone()).unwrap().len(), 1);
-
-        {
-            let mut guard = plugin_model.write().unwrap();
-            let model = guard.downcast_mut::<Model>().unwrap();
-            model.errors.push("hyprland failed".to_owned());
-        }
-
-        assert_eq!(errors(plugin_model.clone()), vec!["hyprland failed"]);
-        assert!(errors(plugin_model).is_empty());
+    fn host_snapshot_is_shared_and_unknown_workspace_is_rejected() {
+        let (model, _) = model(Table::new());
+        let mut snapshot = CompositorSnapshot::default();
+        snapshot
+            .workspaces
+            .push(oxibar_plugin_api::CompositorWorkspace {
+                id: 2,
+                name: "2".into(),
+                output: "DP-1".into(),
+                windows: 1,
+            });
+        compositor_changed(model.clone(), snapshot);
+        assert!(launch(0, model.clone()).is_some());
+        assert!(launch(1, model.clone()).is_none());
+        assert!(update(model.clone(), Arc::new(Message::Activate(99))).is_none());
+        assert!(update(model, Arc::new(Message::Activate(2))).is_some());
     }
 }

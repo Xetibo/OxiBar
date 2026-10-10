@@ -13,6 +13,14 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `src/shell/`: explicit surface registry, per-output bar instances, source-window
   routing, hotplug reconciliation, input regions and auxiliary surface ownership.
 - `src/config/bars.rs`: common/per-output bar profile merging and validation.
+- `src/config/desktop.rs`: typed dock/widget layout, stable instance validation and
+  logical-coordinate persistence.
+- `src/compositor.rs`: one cached, event-driven window/workspace broker and bounded,
+  version-aware Hyprland activation adapter.
+- `src/dock.rs`: per-output dock composition from the resident application catalog
+  and shared compositor snapshot.
+- `src/desktop.rs`: desktop widget surfaces, revision-bound edit drafts, grid
+  geometry, input policy and output-removal fallback.
 - `src/single_instance.rs`: config-driven single-instance lock (`[instance]` table), flock acquisition, and the RAII `SingleInstanceGuard`.
 - `src/surfaces.rs`: bar, popup, modal, and panel view construction.
 - `src/messages.rs`: host message enum, layer-shell action conversion, and plugin message routing.
@@ -50,6 +58,8 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `plugins/system/`: one native system-bus owner with independent backlight,
   power-profile and session domains; DTO/file helpers, model transitions and themed
   views remain separate modules.
+- `plugins/stats/`: bounded proc-file snapshots and a visible-only, cancellable
+  refresh stream shared by all displays.
 - `crates/layershellev`: the published 0.17.1 backend with a local keyboard-focus
   correction. Compositor keyboard Enter/Leave owns keyboard routing independently
   of newly created or pointer-active surfaces.
@@ -117,6 +127,44 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   commands, and notification default timeout currently support live updates.
 - Visible popup size comes from `[bar.popup_sizes]`, then optional runtime `popup_metrics(model)`, then optional plugin metadata, then host default size. Plugins can also request a larger transparent popup input region through runtime metrics or metadata for detached overlays such as tray context menus.
 
+## Dock and Desktop Ownership
+
+The dock reads the Applications provider's immutable `Arc` catalog; it does not
+scan desktop entries or create another provider. Desktop IDs map to persistent
+provider-local launch IDs across reindexing. Rendered activations revalidate both
+IDs, so removal/reordering cannot launch a different application.
+
+One host compositor broker subscribes before taking its initial snapshot, coalesces
+window/workspace events, bounds IPC/event data and reconnects with fresh identities.
+Opaque window IDs include a monotonic incarnation, rather than exposing a reusable
+native address as UI identity. Observed close/reconnect invalidates it; activation
+checks the current snapshot and freshly verifies the native address/PID. Legacy and
+Lua dispatch are version-specific. Workspaces consumes this same snapshot and has
+no duplicate event listener or font-probing thread. Other compositors can still
+launch pinned applications when running-window activation is unavailable.
+
+Desktop widget IDs identify persistent instances, not provider models. Each instance
+receives its output/scale context while reusing one provider model. Requested
+output-relative logical geometry survives hotplug; only rendered fallback geometry
+is clamped. Normal background surfaces cover their own bounds and ignore other
+clients' reserved bar space. Passive providers use empty input regions; an optional
+per-instance override can enable/disable input. The editor alone covers the whole
+output with interactive previews and captured press coordinates for drag/resize.
+
+Editing keeps a starting revision and raw tables. Save atomically changes only the
+widget array, retaining unknown fields; conflicts preserve the dirty draft. Cancel
+restores the current effective configuration. Add/remove/hide, output assignment,
+grid snap and reset do not initialize another service or overwrite the Nix base.
+
+Legacy subscriptions remain resident. Pure visual providers can opt into
+`WhenVisible`: one owned stream runs while any bar/widget/editor/control-center/
+popup/modal/panel/toast/OSD/catalog consumer is visible, then cancels without
+unloading the model. Clock/CalDAV and Stats resume immediately using cancellable
+timers; repeated hidden/resume cycles do not leave detached polling threads.
+Exclusive overlays dismiss on ID-scoped outside clicks using actual configured
+bounds; this releases compositor input grabs without inventing pointer routing or
+replaying an application click.
+
 ## Native Audio Ownership
 
 The Audio plugin defaults to one native `libpulse-binding` context/mainloop for
@@ -179,7 +227,9 @@ capabilities remain follow-ups.
 - Optional symbols: `availability`, `metadata`, `popup_metrics`, `popup_view`,
   `modal_view`, `panel_view`, `toast_view`, `runner_query`, `runner_entries`,
   `settings_schema`, `config_changed`, `view_with_context`, and
-  `control_center_view`, `modal_closed`, `command` and `osd_view`.
+  `control_center_view`, `modal_closed`, `command`, `osd_view`, `dock_entries`,
+  `desktop_view`, `desktop_interactive`, `compositor_changed` and
+  `subscription_policy`.
 - `availability(config)` lets a plugin skip loading before model initialization, init tasks, and subscriptions when required hardware or system services are unavailable.
 - `ABI_VERSION` in `oxibar-plugin-api` gates host/plugin compatibility.
 - Plugin models are `Arc<RwLock<Box<dyn OxiAny>>>`; plugin messages are `Arc<dyn OxiAny>`.
@@ -197,6 +247,12 @@ capabilities remain follow-ups.
   OSD requests use `HostOsdRequest::into_message()` string transport, matching the
   existing toast convention; SDK struct `Any` identity can differ between separately
   compiled dependency graphs.
+- `dock_entries(model)` returns a shared catalog with stable launch/desktop IDs.
+  `desktop_view(model, context)` returns instance-aware inner content, and optional
+  `desktop_interactive(model)` defines automatic input policy.
+- `compositor_changed(model, snapshot)` shares host window/workspace state.
+  `subscription_policy()` optionally selects resident or visible-only ownership;
+  absent capabilities retain compatible defaults at ABI 6.
 
 ## System Services and OSD Ownership
 
@@ -238,8 +294,10 @@ Geometry, enablement and duration apply live without another provider model.
 - `network`: NetworkManager `nmcli` connection management and password modal; popup and modal surfaces.
 - `notifications`: Freedesktop notification server, toast layers, inline replies, DND state, and side panel. Toast layers start with keyboard interactivity disabled and are switched to `OnDemand` only after user hover intent so incoming notifications do not steal keyboard focus. New toast layers target Hyprland's focused monitor output when available, while the notification panel remains attached to the bar output. Toast timeout closes only the host toast surface; stored notifications remain in the panel until dismissed, cleared, replied to, or actioned.
 - `tray`: StatusNotifier watcher, dynamically sized tray item popup, activation, and DBusMenu-backed detached context menu rendering. Item registration publishes a fallback row immediately and refreshes DBus metadata asynchronously so registering applications are not blocked by property queries.
-- `workspaces`: Hyprland workspace display and dispatch.
-- `applications`: ported OxiRun desktop-entry/icon indexing, fuzzy matching, terminal command support, and application launching; a resident runner provider rather than a bar/popup view. Indexing/search use immutable snapshots and runtime-independent background workers; stale query generations are discarded.
+- `workspaces`: output-aware workspace display and dispatch from the shared host broker.
+- `applications`: resident OxiRun application/icon index, fuzzy matching, terminal
+  support and launching; runner/dock share immutable catalogs and stable IDs.
+- `stats`: cached CPU, memory and uptime summaries with visible-only refresh.
 
 Plugin `lib.rs` files should keep ABI symbols, model update, and view composition. External-system logic and parsers should live in sibling modules once they grow beyond small helpers.
 
@@ -265,8 +323,9 @@ Source-aware overrides, structured control commands and the initial settings UI
 are implemented, together with the first multi-output registry/inventory slice
 and control-center composition. Native audio, BlueZ and system services/OSDs are implemented;
 settings/control-center layouts share spacious oxiced controls while retaining
-the existing palette. Additional audio/adapter capabilities, dock/desktop
-widgets and live theme snapshots remain subsequent milestones.
+the existing palette. Dock and persistent desktop widgets are implemented with
+shared catalogs, compositor state and visible-only streams. Live theme snapshots,
+expanded providers and the SDK/packaging/performance gate are the next milestones.
 
 The roadmap identifies selective ReSet audio/BlueZ and monitor backend patterns.
 Audio, BlueZ and read-only monitor adapters follow these boundaries.

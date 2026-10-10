@@ -25,6 +25,11 @@ const MAX_DRIVE_STEPS: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FakePluginOptions {
+    pub visible_subscription: bool,
+    pub dock: bool,
+    pub desktop: bool,
+    pub passive_desktop: bool,
+    pub compositor: bool,
     pub command: bool,
     pub osd: bool,
     pub popup: bool,
@@ -146,7 +151,95 @@ pub struct TestOsd {
     pub generation: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct TestDesktop {
+    pub window: IcedId,
+    pub id: String,
+    pub plugin: String,
+    pub output: Option<String>,
+    pub rect: crate::desktop::Rect,
+    pub interactive: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TestDock {
+    pub window: IcedId,
+    pub output: Option<String>,
+    pub titles: Vec<String>,
+    pub actions: Vec<Option<crate::dock::Action>>,
+}
+
 impl TestHost {
+    pub fn desktop_widgets(&self) -> Vec<TestDesktop> {
+        self.bar
+            .desktop
+            .instances
+            .values()
+            .map(|instance| TestDesktop {
+                window: instance.id,
+                id: instance.spec.id.clone(),
+                plugin: instance.spec.plugin.clone(),
+                output: instance.output.clone(),
+                rect: instance.rect,
+                interactive: instance.interactive,
+            })
+            .collect()
+    }
+
+    pub fn subscribed_plugins(&self) -> Vec<String> {
+        let mut names: Vec<_> = self
+            .bar
+            .plugins
+            .iter()
+            .filter(|(name, (_, funcs))| self.bar.subscription_enabled(name, funcs))
+            .map(|(name, _)| name.clone())
+            .collect();
+        names.sort();
+        names
+    }
+    pub fn desktop_editors(&self) -> Vec<(Option<String>, IcedId)> {
+        self.bar
+            .desktop
+            .editors
+            .iter()
+            .map(|(output, (id, _))| (output.clone(), *id))
+            .collect()
+    }
+    pub fn desktop_draft(&self) -> Option<Vec<crate::config::desktop::WidgetSpec>> {
+        self.bar
+            .desktop
+            .draft
+            .as_ref()
+            .map(|draft| draft.widgets.clone())
+    }
+    pub fn desktop_error(&self) -> Option<&str> {
+        self.bar
+            .desktop
+            .draft
+            .as_ref()
+            .and_then(|draft| draft.error.as_deref())
+    }
+    pub fn docks(&self) -> Vec<TestDock> {
+        self.bar
+            .docks
+            .instances
+            .values()
+            .map(|instance| TestDock {
+                window: instance.id,
+                output: instance.output.clone(),
+                titles: instance
+                    .items
+                    .iter()
+                    .map(|item| item.title.clone())
+                    .collect(),
+                actions: instance
+                    .items
+                    .iter()
+                    .map(|item| item.action.clone())
+                    .collect(),
+            })
+            .collect()
+    }
     pub fn with_plugins<S>(plugins: impl IntoIterator<Item = (S, FakePluginOptions)>) -> Self
     where
         S: Into<String>,
@@ -186,6 +279,11 @@ impl TestHost {
         let settings = crate::settings::SettingsUi::new(&config.snapshot);
         let mut host = Self {
             bar: OxiBar {
+                docks: crate::dock::Docks::default(),
+                desktop: crate::desktop::Desktop::default(),
+                compositor: None,
+                compositor_error: None,
+                compositor_action_error: None,
                 osds: crate::osd::Osds::untimed(),
                 shell: crate::shell::Shell::new(Err("Test inventory".to_owned())),
                 config,
@@ -482,6 +580,13 @@ fn fake_model(dynamic_popup_metrics: Option<PluginPopupMetrics>) -> PluginModel 
 
 fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
     PluginFuncs {
+        subscription_policy: options
+            .visible_subscription
+            .then_some(fake_subscription_policy),
+        dock_entries: options.dock.then_some(fake_dock_entries),
+        desktop_view: options.desktop.then_some(fake_desktop_view),
+        desktop_interactive: options.passive_desktop.then_some(fake_desktop_interactive),
+        compositor_changed: options.compositor.then_some(fake_compositor_changed),
         command: options.command.then_some(fake_command),
         osd_view: options.osd.then_some(fake_osd_view),
         context_view: None,
@@ -591,6 +696,44 @@ unsafe extern "Rust" fn fake_launch(
 ) -> Option<Task<PluginMsg>> {
     oxibar_plugin_api::with_model_write::<FakePluginModel, _>(&model, |model| {
         model.seen.push(format!("launch:{focused_index}"));
+    });
+    None
+}
+
+unsafe extern "Rust" fn fake_dock_entries(
+    _: PluginModel,
+) -> Arc<Vec<oxibar_plugin_api::DockEntry>> {
+    Arc::new(vec![oxibar_plugin_api::DockEntry {
+        index: 7,
+        desktop_id: "fixture.desktop".into(),
+        title: "Fixture application".into(),
+        icon: None,
+        window_class: "fixture".into(),
+        executable: "fixture".into(),
+    }])
+}
+
+unsafe extern "Rust" fn fake_desktop_view(
+    _: PluginModel,
+    context: oxibar_plugin_api::PluginViewContext,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    Ok(vec![
+        text(format!("Desktop {}", context.instance_id)).into(),
+    ])
+}
+
+unsafe extern "Rust" fn fake_desktop_interactive(_model: PluginModel) -> bool {
+    false
+}
+
+unsafe extern "Rust" fn fake_compositor_changed(
+    model: PluginModel,
+    snapshot: oxibar_plugin_api::CompositorSnapshot,
+) -> Option<Task<PluginMsg>> {
+    oxibar_plugin_api::with_model_write::<FakePluginModel, _>(&model, |model| {
+        model
+            .seen
+            .push(format!("compositor:{}", snapshot.windows.len()))
     });
     None
 }
@@ -732,4 +875,8 @@ unsafe extern "Rust" fn fake_command(
 unsafe extern "Rust" fn fake_subscription() -> *mut PluginStream {
     let stream = iced::futures::stream::empty::<PluginMsg>();
     Box::into_raw(Box::new(stream)) as *mut PluginStream
+}
+
+unsafe extern "Rust" fn fake_subscription_policy() -> oxibar_plugin_api::SubscriptionPolicy {
+    oxibar_plugin_api::SubscriptionPolicy::WhenVisible
 }

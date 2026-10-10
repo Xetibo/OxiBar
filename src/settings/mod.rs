@@ -23,10 +23,12 @@ pub enum Category {
     Advanced,
     Monitors,
     ControlCenter,
+    Dock,
+    Desktop,
 }
 
 impl Category {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 9] = [
         Self::Appearance,
         Self::Bar,
         Self::Launcher,
@@ -34,6 +36,8 @@ impl Category {
         Self::Advanced,
         Self::Monitors,
         Self::ControlCenter,
+        Self::Dock,
+        Self::Desktop,
     ];
 
     fn label(self) -> &'static str {
@@ -45,6 +49,8 @@ impl Category {
             Self::Advanced => "Advanced",
             Self::Monitors => "Monitors",
             Self::ControlCenter => "Control center",
+            Self::Dock => "Dock",
+            Self::Desktop => "Desktop widgets",
         }
     }
 
@@ -57,6 +63,8 @@ impl Category {
             Self::Advanced => "Shell preferences and sparse GUI overrides.",
             Self::Monitors => "Connected displays and their current geometry.",
             Self::ControlCenter => "Quick controls from your running plugins.",
+            Self::Dock => "Pinned applications and running windows.",
+            Self::Desktop => "Place independent widget instances on your displays.",
         }
     }
 
@@ -81,6 +89,8 @@ impl Category {
                     "monitor.",
                     "control_center.",
                     "osd.",
+                    "dock.",
+                    "desktop.",
                 ]
                 .iter()
                 .any(|prefix| path.starts_with(prefix))
@@ -91,6 +101,8 @@ impl Category {
                 .any(|prefix| path.starts_with(prefix)),
             Self::Monitors => path.starts_with("monitor."),
             Self::ControlCenter => path.starts_with("control_center."),
+            Self::Dock => path.starts_with("dock."),
+            Self::Desktop => path.starts_with("desktop."),
         }
     }
 }

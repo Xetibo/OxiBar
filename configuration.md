@@ -158,6 +158,83 @@ retaining plugin state. Unknown/retired window events cannot become bars. Plugin
 may optionally export `view_with_context` for output-aware views; existing views
 remain supported.
 
+## Dock and desktop widgets
+
+The dock shares Applications' resident desktop-entry/icon catalog. Pinned entries
+use desktop IDs, such as `org.gnome.Nautilus.desktop`; running/focused indicators
+and exact-window activation use the host's single Hyprland event broker. Clicking
+an existing window activates it instead of launching another process. Other
+compositors retain pinned launches when window state is unavailable. Inspect cached
+window identities and diagnostics with `oxibar windows` or `oxibar status`.
+
+| `[dock]` key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Show selected output docks. |
+| `outputs` | `[]` | One selected output; `["*"]` selects all, names select connectors. |
+| `output_fallback` | `true` | Use an available output when a requested one is missing. |
+| `pinned` | `[]` | Ordered desktop IDs from the loaded Applications catalog. |
+| `show_running` | `true` | Include running-window groups. |
+| `position` | `"bottom"` | `top` or `bottom`. |
+| `icon_size` | `40` | Logical units, `16..128`. |
+| `margin` | `12` | Edge gap, `0..1024`; same-edge bars are accounted for. |
+| `reserve_space` | `false` | Reserve dock space instead of overlapping windows. |
+
+Desktop widgets reuse provider models. Clock/calendar, Audio media, Battery and
+Stats offer dedicated content; legacy popup content is also supported. Default
+layout is empty. Add/edit from the Desktop widgets settings page or:
+
+```sh
+oxibar desktop edit
+oxibar desktop save
+oxibar desktop cancel
+```
+
+Explicit edit mode replaces normal widgets with output-wide previews. Select a
+provider/output and Add; drag the title or resize corner, use arrow keys (Shift
+for larger steps), hide/show/remove, reset placement, then Save or Cancel. Saves
+are revision-checked sparse overrides. A conflict retains the draft and error.
+Unknown instance fields and the immutable base remain intact.
+
+```toml
+[dock]
+outputs = ["*"]
+pinned = ["org.gnome.Nautilus.desktop"]
+
+[desktop]
+enabled = true
+output_fallback = true
+grid = 16
+
+[[desktop.widgets]]
+id = "calendar-one"
+plugin = "Clock"
+output = "DP-1"
+x = 64
+y = 128
+width = 360
+height = 360
+enabled = true
+
+[[desktop.widgets]]
+id = "stats-one"
+plugin = "Stats"
+output = "DP-1"
+x = 480
+y = 128
+width = 300
+height = 360
+```
+
+Up to 32 uniquely named instances are supported. IDs use letters, digits, `-`, `_`
+or `.`. Positions are output-relative logical units (`0..16384`), dimensions
+`64..16384`; grid is `1..128`. Missing outputs render a clamped fallback when enabled,
+without changing requested placement. Reconnecting restores the intended output.
+Normal background widgets ignore reserved bar space and take no keyboard focus.
+Automatic input policy makes Stats pointer-transparent and media interactive only
+when controls exist. Optional `interactive = true/false` overrides it; the editor's
+Input button cycles automatic/on/off. Hidden widgets remove surfaces. Clock/Stats
+pause their one refresh stream only when no bar/widget/other consumer remains.
+
 ## Resident launcher
 
 Start `oxibar` once from the compositor/session startup configuration, then bind
@@ -340,8 +417,8 @@ oxibar settings open
 oxibar settings close
 ```
 
-Pages cover Appearance, Bar/Layout, Launcher, Plugins, Advanced, Monitors and
-Control Center. Search spans all declared settings. Fields show effective value,
+Pages cover Appearance, Bar/Layout, Launcher, Plugins, Advanced, Monitors,
+Control Center, Dock and Desktop widgets. Search spans all declared settings. Fields show effective value,
 base/default value, source
 and application mode. Text/number drafts save with Enter/Apply; switch/pick-list
 changes save immediately. Reset removes the GUI override and reveals the current
@@ -351,7 +428,7 @@ unknown plugin fields.
 Forms use spacious themed cards, normal-sized actions and switches. Desktop
 widths use category navigation on the left; narrow widths use a category picker.
 
-Keyboard controls: Ctrl+F focuses search, Alt+1 through Alt+7 selects pages,
+Keyboard controls: Ctrl+F focuses search, Alt+1 through Alt+9 selects pages,
 Tab/Shift+Tab traverses text fields, Enter applies a field, and Escape closes the
 settings surface. Settings access remains available when the launcher is disabled.
 
@@ -379,6 +456,7 @@ height then reveals 34. Unoverridden fields follow the regenerated base.
   enablement/order, OSD preferences, output selection/profiles, inventory interval,
   application-provider terminal and result limit, clock text size/bold/calendar
   command, notification default timeout, preferred backlight and locker preferences.
+  Dock geometry/content and desktop layout/input preferences also update live.
 - **Restart required:** font loading, plugin enable/disable/order, instance/control
   endpoint/startup policy, audio backend selection, Bluetooth discovery/pairing
   limits, System backlight root/fallback interval/session selection, existing plugin
@@ -495,13 +573,26 @@ days_ahead = 30
 Renders one button per Hyprland workspace, ordered by workspace id. The
 active workspace is highlighted. Clicking a workspace dispatches to it.
 
-This plugin currently has no configuration keys. It connects to Hyprland via
-`$HYPRLAND_INSTANCE_SIGNATURE` (set by Hyprland itself); if that environment
-variable is missing it logs an error to its `errors()` channel on startup.
+This plugin has no configuration keys. It consumes the host's shared event-driven
+compositor snapshot and filters each bar to its output. There is no second event
+thread or font probe. Missing compositor support is diagnosed through `status`;
+the provider stays loaded and recovers when the host broker reconnects.
 
 The host-level `launch(focused_index)` ABI hook is implemented: index `N`
 into the id-sorted workspace list activates that workspace. There is no
 default keybinding for this yet — wire one up via your compositor.
+
+### `[stats]` — lightweight system summaries
+
+`libstats.so` is included in Home Manager's default plugin set. CPU, memory and
+uptime come from bounded proc-file reads and share one model across bar, desktop
+and optional control-center views. Refresh pauses when no view uses it, then resumes
+immediately. Errors retain the last useful snapshot with inline health.
+
+| Key | Type | Default | Mode |
+| --- | --- | --- | --- |
+| `refresh_seconds` | integer `1..3600` | `2` | Restart; visible refresh cadence. |
+| `proc_root` | string | `"/proc"` | Restart; advanced namespace/fixture root. |
 
 ### `[system]` — brightness, power profiles and session controls
 
