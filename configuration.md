@@ -23,13 +23,59 @@ Example:
 plugins = ["libclock.so", "libworkspaces.so", "libbattery.so", "libbluetooth.so", "libnotifications.so"]
 ```
 
-A plugin file present on disk but not listed here is ignored. Unknown names
+A plugin file present on disk but not listed here is not initialized; it remains
+visible in the installed catalog. Unknown enabled names
 are skipped with a warning. Plugins whose `abi_version()` does not match the
 host's are also skipped with a warning — rebuild them against the current
 `oxibar-plugin-api`. Plugins can also export an availability check; oxibar
 may skip them before model initialization/subscriptions when mandatory dependencies
 are missing. Reconnecting native plugins can stay loaded with empty/offline state;
 Bluetooth recovers when the service or adapters later appear.
+
+## Installed catalog and session startup
+
+`oxibar plugins` returns installed filenames, enabled/running state, ABI version
+and optional capabilities. Settings → Plugins uses the same metadata without
+starting disabled models or subscriptions. Enablement requires a daemon restart;
+host and native libraries must use the same pinned Rust/dependency graph.
+
+The Home Manager module supports `programs.oxibar.extraPlugins` for installed but
+disabled libraries. `config.plugins` still defines the immutable enabled package
+set. For example, install the SDK example separately:
+
+```nix
+programs.oxibar = {
+  enable = true;
+  extraPlugins = [ inputs.oxibar.packages.${pkgs.system}.oxibar-example ];
+  systemd.enable = true;
+  systemd.target = "hyprland-session.target";
+};
+```
+
+`systemd.enable` defaults to **false**; the default target is
+`graphical-session.target`. Deliberate startup attaches the user service to the
+chosen session target, requires `WAYLAND_DISPLAY`, restarts on failure and gives
+the shell its own control-group termination scope. Import the compositor session
+environment into the user manager first. See [Home Manager](examples/home-manager.nix)
+and [Sway](examples/sway.conf) binding/startup examples; no compositor bindings are
+installed automatically.
+
+Application, tool, calendar and locker launches prefer a native transient user
+service in `app.slice`, outside the shell service's termination cgroup. The actual
+job result is awaited; uncertain acceptance never causes a second direct launch.
+When the user manager is definitely unavailable/unsupported, a reaped argument-
+based process-group fallback is used. It cannot promise independent cgroup lifetime
+without that manager. This does not change explicit user-configured calendar shell
+commands into implicit shell execution for other providers.
+
+The optional SDK example exposes a shared counter and confirmation form:
+`oxibar action Example increment`, `reset`, `popup`, and `osd`. Its
+`example.label` is live; `example.available` is a restart-only availability probe.
+Clock also supports `oxibar action Clock popup`, `refresh`, and
+`day YYYY-MM-DD`, using the configured calendar launcher.
+
+See [release checks](docs/RELEASE_CHECKS.md) for reproducible package, catalog,
+Home Manager, private app-lifetime, compositor smoke and performance verification.
 
 ## `[bar]` — bar surface
 

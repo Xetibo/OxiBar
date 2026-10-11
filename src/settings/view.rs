@@ -485,6 +485,22 @@ impl OxiBar {
                                     .size(OXITHEME.font_sm)
                                     .style(oxi_plugin::text_muted),
                             )
+                            .push(
+                                text(format!(
+                                    "ABI {} · {}",
+                                    plugin
+                                        .abi
+                                        .map(|abi| abi.to_string())
+                                        .unwrap_or_else(|| "unknown".to_owned()),
+                                    if plugin.capabilities.is_empty() {
+                                        "bar only".to_owned()
+                                    } else {
+                                        plugin.capabilities.join(" · ")
+                                    }
+                                ))
+                                .size(OXITHEME.font_sm)
+                                .style(oxi_plugin::text_muted),
+                            )
                             .spacing(OXITHEME.padding_sm)
                             .width(Length::Fill),
                     )

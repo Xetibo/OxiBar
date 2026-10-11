@@ -1,0 +1,502 @@
+//! Argument-based app handoff, independent of the shell's systemd control group.
+use iced::futures::{
+    FutureExt, StreamExt,
+    executor::block_on,
+    future::{Either, select},
+};
+use std::{
+    os::unix::{fs::PermissionsExt, process::CommandExt},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+use zbus::{
+    Connection, Proxy,
+    zvariant::{OwnedObjectPath, Value},
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Handoff {
+    UserService(String),
+    Direct(u32),
+}
+static NEXT_UNIT: AtomicU64 = AtomicU64::new(0);
+
+/// Call from a worker, never from rendering. User-systemd is preferred; a host
+/// without that manager gets an independently grouped, reaped direct child.
+pub fn launch(arguments: Vec<String>, directory: Option<PathBuf>) -> Result<Handoff, String> {
+    validate(&arguments, directory.as_deref())?;
+    let executable = resolve(&arguments[0], directory.as_deref())?;
+    block_on(async {
+        let connection = bounded(
+            async {
+                zbus::connection::Builder::session()
+                    .map_err(|error| error.to_string())?
+                    .method_timeout(Duration::from_secs(3))
+                    .build()
+                    .await
+                    .map_err(|error| error.to_string())
+            },
+            Duration::from_secs(1),
+        )
+        .await;
+        match connection {
+            Ok(connection) => {
+                match handoff(&connection, &executable, &arguments, directory.as_deref()).await {
+                    Ok(Some(unit)) => Ok(Handoff::UserService(unit)),
+                    Ok(None) => direct(arguments, directory),
+                    Err(error) => Err(error),
+                }
+            }
+            Err(_) => direct(arguments, directory),
+        }
+    })
+}
+
+fn validate(arguments: &[String], directory: Option<&Path>) -> Result<(), String> {
+    if arguments.is_empty()
+        || arguments.len() > 256
+        || arguments[0].is_empty()
+        || arguments
+            .iter()
+            .any(|value| value.len() > 16_384 || value.contains('\0'))
+        || arguments.iter().map(String::len).sum::<usize>() > 524_288
+    {
+        return Err("invalid application argument list".into());
+    }
+    if directory.is_some_and(|path| !path.is_dir()) {
+        return Err("application working directory is unavailable".into());
+    }
+    Ok(())
+}
+
+fn resolve(program: &str, directory: Option<&Path>) -> Result<PathBuf, String> {
+    let valid = |path: &Path| {
+        path.metadata()
+            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+    };
+    let path = Path::new(program);
+    let relative_to_workdir = |path: &Path| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            directory.unwrap_or_else(|| Path::new(".")).join(path)
+        }
+    };
+    let candidate = if path.is_absolute() || program.contains('/') {
+        let path = relative_to_workdir(path);
+        valid(&path).then_some(path)
+    } else {
+        std::env::var_os("PATH").and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|directory| relative_to_workdir(&directory.join(path)))
+                .find(|path| valid(path))
+        })
+    }
+    .ok_or_else(|| format!("application executable is unavailable: {program}"))?;
+    candidate.canonicalize().map_err(|error| error.to_string())
+}
+
+async fn bounded<T>(
+    future: impl std::future::Future<Output = Result<T, String>>,
+    timeout: Duration,
+) -> Result<T, String> {
+    match select(
+        future.boxed_local(),
+        FutureExt::boxed_local(async_io::Timer::after(timeout)),
+    )
+    .await
+    {
+        Either::Left((result, _)) => result,
+        Either::Right(_) => Err("application handoff timed out".into()),
+    }
+}
+
+async fn handoff(
+    connection: &Connection,
+    executable: &Path,
+    arguments: &[String],
+    directory: Option<&Path>,
+) -> Result<Option<String>, String> {
+    let Some(executable) = executable.to_str() else {
+        return Ok(None);
+    };
+    let directory = directory
+        .map(Path::canonicalize)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    if directory
+        .as_ref()
+        .is_some_and(|path| path.to_str().is_none())
+    {
+        return Ok(None);
+    }
+    let manager = Proxy::new(
+        connection,
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let mut jobs = match manager.receive_signal("JobRemoved").await {
+        Ok(stream) => stream,
+        Err(_) => return Ok(None),
+    };
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let unit = format!(
+        "oxibar-app-{}-{nonce}-{}.service",
+        std::process::id(),
+        NEXT_UNIT.fetch_add(1, Ordering::Relaxed)
+    );
+    let environment: Vec<String> = std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .filter(|(key, _)| {
+            !matches!(
+                key.as_str(),
+                "INVOCATION_ID"
+                    | "JOURNAL_STREAM"
+                    | "WAYLAND_SOCKET"
+                    | "NOTIFY_SOCKET"
+                    | "LISTEN_PID"
+                    | "LISTEN_FDS"
+                    | "LISTEN_FDNAMES"
+                    | "SYSTEMD_EXEC_PID"
+            )
+        })
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect();
+    let mut properties = vec![
+        ("Description", Value::from("Application launched by Oxibar")),
+        ("Type", Value::from("exec")),
+        ("Slice", Value::from("app.slice")),
+        ("CollectMode", Value::from("inactive-or-failed")),
+        ("StandardInput", Value::from("null")),
+        ("StandardOutput", Value::from("null")),
+        ("StandardError", Value::from("null")),
+        ("Environment", Value::from(environment)),
+        (
+            "ExecStart",
+            Value::from(vec![(executable.to_owned(), arguments.to_vec(), false)]),
+        ),
+    ];
+    if let Some(directory) = directory {
+        properties.push((
+            "WorkingDirectory",
+            Value::from(directory.to_str().expect("checked UTF-8").to_owned()),
+        ));
+    }
+    let auxiliaries: Vec<(String, Vec<(String, Value<'_>)>)> = Vec::new();
+    let job: OwnedObjectPath = match manager
+        .call(
+            "StartTransientUnit",
+            &(unit.as_str(), "fail", properties, auxiliaries),
+        )
+        .await
+    {
+        Ok(job) => job,
+        Err(zbus::Error::MethodError(name, _, _))
+            if matches!(
+                name.as_str(),
+                "org.freedesktop.DBus.Error.ServiceUnknown"
+                    | "org.freedesktop.DBus.Error.NameHasNoOwner"
+                    | "org.freedesktop.DBus.Error.UnknownMethod"
+            ) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(format!("application service submission failed: {error}")),
+    };
+    // Once accepted, never spawn a fallback: that could execute the same app twice.
+    bounded(
+        async {
+            while let Some(message) = jobs.next().await {
+                let Ok((_, path, name, result)) =
+                    message
+                        .body()
+                        .deserialize::<(u32, OwnedObjectPath, String, String)>()
+                else {
+                    continue;
+                };
+                if path == job && name == unit {
+                    return if result == "done" {
+                        Ok(Some(unit))
+                    } else {
+                        Err(format!("application service failed: {result}"))
+                    };
+                }
+            }
+            Err("application service completion stream stopped".into())
+        },
+        Duration::from_secs(4),
+    )
+    .await
+}
+
+/// Direct fallback for hosts without a user manager and hermetic executable tests.
+pub fn direct(arguments: Vec<String>, directory: Option<PathBuf>) -> Result<Handoff, String> {
+    validate(&arguments, directory.as_deref())?;
+    let mut command = Command::new(&arguments[0]);
+    command
+        .args(&arguments[1..])
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(directory) = directory {
+        command.current_dir(directory);
+    }
+    let child = command.spawn().map_err(|error| error.to_string())?;
+    let pid = child.id();
+    let child = Arc::new(Mutex::new(Some(child)));
+    let reaper = child.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name("oxibar-app-reaper".into())
+        .spawn(move || {
+            if let Some(mut child) = reaper
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take()
+            {
+                let _ = child.wait();
+            }
+        })
+    {
+        if let Some(mut child) = child
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        return Err(error.to_string());
+    }
+    Ok(Handoff::Direct(pid))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::{interface, object_server::SignalEmitter, zvariant::OwnedValue};
+
+    struct Manager {
+        children: Arc<Mutex<Vec<std::process::Child>>>,
+        fail_reply: Arc<std::sync::atomic::AtomicBool>,
+    }
+    #[interface(name = "org.freedesktop.systemd1.Manager")]
+    impl Manager {
+        async fn start_transient_unit(
+            &self,
+            name: &str,
+            mode: &str,
+            properties: Vec<(String, OwnedValue)>,
+            _auxiliaries: Vec<(String, Vec<(String, OwnedValue)>)>,
+            #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+        ) -> zbus::fdo::Result<OwnedObjectPath> {
+            assert_eq!(mode, "fail");
+            let mut properties: std::collections::HashMap<_, _> = properties.into_iter().collect();
+            for (field, expected) in [
+                ("Type", "exec"),
+                ("Slice", "app.slice"),
+                ("CollectMode", "inactive-or-failed"),
+            ] {
+                assert_eq!(
+                    String::try_from(properties.remove(field).unwrap()).unwrap(),
+                    expected
+                );
+            }
+            let entries: Vec<(String, Vec<String>, bool)> =
+                properties.remove("ExecStart").unwrap().try_into().unwrap();
+            let (executable, arguments, ignore_failure) = &entries[0];
+            assert!(!ignore_failure);
+            let environment: Vec<String> = properties
+                .remove("Environment")
+                .unwrap()
+                .try_into()
+                .unwrap();
+            assert!(
+                environment
+                    .iter()
+                    .all(|entry| !entry.starts_with("INVOCATION_ID=")
+                        && !entry.starts_with("NOTIFY_SOCKET="))
+            );
+            let mut command = Command::new(executable);
+            command
+                .args(&arguments[1..])
+                .process_group(0)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            if let Some(directory) = properties.remove("WorkingDirectory") {
+                command.current_dir(String::try_from(directory).unwrap());
+            }
+            for entry in environment {
+                if let Some((key, value)) = entry.split_once('=') {
+                    command.env(key, value);
+                }
+            }
+            self.children.lock().unwrap().push(
+                command
+                    .spawn()
+                    .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?,
+            );
+            if self.fail_reply.load(Ordering::Relaxed) {
+                return Err(zbus::fdo::Error::Failed(
+                    "uncertain accepted request".into(),
+                ));
+            }
+            let path: OwnedObjectPath = "/org/freedesktop/systemd1/job/1".try_into().unwrap();
+            let signal_path = path.clone();
+            let emitter = emitter.to_owned();
+            let name = name.to_owned();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(20));
+                block_on(Self::job_removed(&emitter, 1, &signal_path, &name, "done")).unwrap();
+            });
+            Ok(path)
+        }
+        #[zbus(signal)]
+        async fn job_removed(
+            emitter: &SignalEmitter<'_>,
+            id: u32,
+            job: &OwnedObjectPath,
+            unit: &str,
+            result: &str,
+        ) -> zbus::Result<()>;
+    }
+
+    #[test]
+    #[ignore = "requires an explicitly private dbus-run-session"]
+    fn private_user_manager_handoff_survives_caller_exit() {
+        assert_eq!(std::env::var("OXIBAR_TEST_PRIVATE_BUS").as_deref(), Ok("1"));
+        let children = Arc::new(Mutex::new(Vec::new()));
+        let fail_reply = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let connection = block_on(
+            zbus::connection::Builder::session()
+                .unwrap()
+                .name("org.freedesktop.systemd1")
+                .unwrap()
+                .serve_at(
+                    "/org/freedesktop/systemd1",
+                    Manager {
+                        children: children.clone(),
+                        fail_reply: fail_reply.clone(),
+                    },
+                )
+                .unwrap()
+                .build(),
+        )
+        .unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "oxibar-handoff-{}-{}",
+            std::process::id(),
+            NEXT_UNIT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let marker = root.join("alive");
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "launch::tests::private_user_service_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("OXIBAR_TEST_LAUNCH_CHILD", "1")
+            .env("OXIBAR_TEST_LAUNCH_MARKER", &marker)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !marker.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(marker.exists());
+        {
+            let mut children = children.lock().unwrap();
+            assert_eq!(children.len(), 1);
+            assert!(
+                children[0].try_wait().unwrap().is_none(),
+                "application died with the caller"
+            );
+            children[0].kill().unwrap();
+            children[0].wait().unwrap();
+        }
+        fail_reply.store(true, Ordering::Relaxed);
+        let uncertain = root.join("uncertain");
+        assert!(
+            launch(
+                vec![
+                    "sh".into(),
+                    "-c".into(),
+                    format!("printf x >> '{}'", uncertain.display())
+                ],
+                Some(root.clone())
+            )
+            .is_err()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(
+            std::fs::read_to_string(uncertain).unwrap(),
+            "x",
+            "uncertain acceptance must not execute a fallback copy"
+        );
+        children.lock().unwrap()[1].wait().unwrap();
+        block_on(connection.close()).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "child entry point for private user-manager test"]
+    fn private_user_service_child() {
+        if std::env::var("OXIBAR_TEST_LAUNCH_CHILD").as_deref() != Ok("1") {
+            return;
+        }
+        let marker = std::env::var("OXIBAR_TEST_LAUNCH_MARKER").unwrap();
+        let result = launch(
+            vec![
+                "sh".into(),
+                "-c".into(),
+                format!("printf alive > '{marker}'; exec sleep 60"),
+            ],
+            None,
+        )
+        .unwrap();
+        assert!(matches!(result, Handoff::UserService(_)));
+    }
+    #[test]
+    fn invalid_arguments_are_rejected_without_spawning() {
+        assert!(direct(vec![], None).is_err());
+        assert!(launch(vec!["bad\0argument".into()], None).is_err());
+        assert!(resolve("/missing/oxibar-program", None).is_err());
+    }
+    #[test]
+    fn relative_executable_uses_the_requested_working_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "oxibar-executable-{}-{}",
+            std::process::id(),
+            NEXT_UNIT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let program = root.join("private-program");
+        std::fs::write(&program, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            resolve("./private-program", Some(&root)).unwrap(),
+            program.canonicalize().unwrap()
+        );
+        assert!(resolve("./missing", Some(&root)).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

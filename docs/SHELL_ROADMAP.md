@@ -22,7 +22,8 @@ per-monitor widget editing. Its implementation stack is not a dependency.
 milestone 3 and milestone 4's control-center/native services/OSDs. Settings/control-center
 surfaces use spacious Android-inspired grouping
 with the existing oxiced theme. Milestone 5's dock and persistent desktop widgets
-and milestone 6's live themes/providers are implemented. The release gate is next.
+and milestone 6's live themes/providers are implemented. Milestone 7's SDK,
+packaging, isolated smoke checks and named release gates are verified.
 Shared `oxiced` now lives in this workspace.
 
 ## Starting Point
@@ -441,9 +442,9 @@ icons, filesystem updates and private usage/favorite ranking. Tools adds every
 planned provider, including opt-in ephemeral native clipboard history. Prefixes,
 captured immutable actions, pure validators and latest-only workers are verified
 in source and isolated packaged GUI checks. Optional wallpaper-derived colors
-remain an extension; the SDK/packaging/presentation-time gate follows.
+remain an extension. The SDK/packaging/presentation-time gate below is verified.
 
-### 7. Packaging, Plugin SDK and Release Gate — P2
+### 7. Packaging, Plugin SDK and Release Gate — Implemented
 
 **Depends on:** earlier functionality; apply verification continuously, not only here.
 
@@ -467,6 +468,19 @@ while idle; idle CPU below 1% of one core on the reference setup; no monotonical
 growing memory or worker count. The current configuration-time measurements are
 not substitutes for presentation-time measurements.
 
+The documented SDK/example and installed catalog are shipped with process-safe
+code retention, owned subscriptions and real availability/dylib lifecycle tests.
+Opt-in Home Manager startup, session bindings and native user-manager app handoff
+are verified; private caller-exit and uncertain-acceptance tests prevent termination
+coupling or duplicate execution. All fourteen separate Nix outputs build.
+
+Repeatable repository smoke covers existing modal/panel/toast, calendar, network,
+tray, inline reply, settings/OSD input, multi-output and desktop edit/revision flows.
+The named 2,000-entry Sway reference passed actual warm presentation p95 20.83 ms,
+query max 0.83 ms, idle 0.30% of one core with zero idle draws, +130 KiB reopen RSS
+and no worker growth. Commands, counters, tolerances and the machine-readable
+record are in `RELEASE_CHECKS.md`; configure timing is not used for this gate.
+
 ## Completed First Implementation Slice
 
 1. Implement and test `ConfigSnapshot`, source-aware recursive merge and sparse
@@ -482,9 +496,10 @@ not substitutes for presentation-time measurements.
 All five steps are implemented and verified. Registry/read-only output geometry,
 control-center composition, native Audio/BlueZ/System services and OSDs are also
 implemented. User authorized completing every remaining roadmap step, committing
-after each. Dock/desktop instances and live themes/providers are implemented and
-verified. Next: the SDK/packaging/performance gate, with inventory/focus
-refinements alongside.
+after each. Dock/desktop instances, live themes/providers and the final SDK/
+packaging/performance gate are implemented and verified. All implementation
+milestones are complete. Optional native extensions, compositor adapters and
+accessibility improvements remain tracked in `TECHNICAL_DEBT.md`.
 
 ## UX References
 

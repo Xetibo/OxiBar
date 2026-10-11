@@ -15,6 +15,7 @@ members = [
 	"plugins/system",
     "plugins/stats",
     "plugins/tools",
+    "plugins/example",
 	"plugins/tray",
 	"plugins/workspaces",
 ]

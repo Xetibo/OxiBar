@@ -200,7 +200,7 @@ async fn short_job<T: Send + 'static>(
 }
 
 fn execute(config: config::Config, intent: query::Intent) -> Result<(), String> {
-    let (mut argv, directory) = match intent {
+    let (argv, directory) = match intent {
         query::Intent::Execute {
             argv,
             terminal,
@@ -216,27 +216,11 @@ fn execute(config: config::Config, intent: query::Intent) -> Result<(), String> 
         query::Intent::Open(target) => (config.opener.into_iter().chain([target]).collect(), None),
         query::Intent::Copy { .. } => return Err("Clipboard copy requires native owner".into()),
     };
-    if argv.is_empty() {
-        return Err("Empty action".into());
-    }
-    let executable = argv.remove(0);
-    let mut command = std::process::Command::new(executable);
-    command
-        .args(argv)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    if let Some(directory) = directory {
-        command.current_dir(directory);
-    }
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
-    std::thread::Builder::new()
-        .name("oxibar-tools-reaper".into())
-        .spawn(move || {
-            let _ = child.wait();
-        })
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    #[cfg(test)]
+    let result = oxibar_plugin_api::launch::direct(argv, directory);
+    #[cfg(not(test))]
+    let result = oxibar_plugin_api::launch::launch(argv, directory);
+    result.map(|_| ())
 }
 
 #[unsafe(no_mangle)]

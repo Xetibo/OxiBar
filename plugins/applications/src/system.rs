@@ -2,7 +2,6 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
 };
 
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
@@ -664,25 +663,9 @@ pub(crate) fn watch_roots() -> Vec<PathBuf> {
 }
 
 pub(crate) fn launch(entry: &Entry) -> Result<(), String> {
-    let Some(program) = entry.argv.first() else {
-        return Err("empty application command".to_owned());
-    };
-    let mut command = Command::new(program);
-    command
-        .args(&entry.argv[1..])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    if let Some(dir) = entry.working_dir.as_ref() {
-        command.current_dir(dir);
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("could not launch {}: {error}", entry.name))?;
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+    oxibar_plugin_api::launch::launch(entry.argv.clone(), entry.working_dir.clone())
+        .map(|_| ())
+        .map_err(|error| format!("could not launch {}: {error}", entry.name))
 }
 
 #[cfg(test)]

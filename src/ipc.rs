@@ -43,6 +43,7 @@ pub enum ConfigCommand {
 pub enum Command {
     Desktop(crate::desktop::Action),
     Windows,
+    Plugins,
     Action {
         plugin: String,
         action: String,
@@ -175,6 +176,7 @@ fn parse_request(text: &str) -> Result<Command, String> {
         }
         "status" => Command::Status,
         "windows" => Command::Windows,
+        "plugins" => Command::Plugins,
         "desktop" => Command::Desktop(match string("action")? {
             "edit" => crate::desktop::Action::Edit,
             "save" => crate::desktop::Action::Save,
@@ -300,11 +302,12 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
                  oxibar config reset <path> | reset-all | reload | schema\n\
                  oxibar config export [effective|overrides]\n\
                  oxibar status\n\n\
-                 oxibar outputs\n\n\
+                  oxibar outputs | windows | plugins\n\
+                  oxibar desktop [edit|save|cancel]\n\n\
                  oxibar action <provider> <verb> [args...]\n\
                  oxibar osd <provider> <topic> | osd close\n\n\
-                 No arguments: start the bar and resident launcher.\n\
-                 launcher: send a command to the running bar."
+                  No arguments: start the resident widget shell.\n\
+                  launcher: send a command to the running shell."
             );
         }
         ["--version"] | ["-V"] => println!("oxibar {}", env!("CARGO_PKG_VERSION")),
@@ -344,6 +347,7 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
                     }
                     ["status"] => request["command"] = "status".into(),
                     ["windows"] => request["command"] = "windows".into(),
+                    ["plugins"] => request["command"] = "plugins".into(),
                     ["desktop"] | ["desktop", "edit"] => {
                         request["command"] = "desktop".into();
                         request["action"] = "edit".into();

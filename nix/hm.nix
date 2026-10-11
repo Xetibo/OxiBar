@@ -38,6 +38,24 @@ in {
       '';
     };
 
+    extraPlugins = mkOption {
+      type = with types; listOf package;
+      default = [];
+      description = mdDoc ''
+        Additional plugin libraries installed in the GUI catalog without enabling
+        them in the immutable base configuration. GUI enablement requires restart.
+      '';
+    };
+
+    systemd = {
+      enable = mkEnableOption "the Oxibar user service";
+      target = mkOption {
+        type = types.str;
+        default = "graphical-session.target";
+        description = "Session target that owns the opt-in user service.";
+      };
+    };
+
     config = {
       plugins = mkOption {
         type = with types; listOf package;
@@ -66,12 +84,16 @@ in {
           source = "${pkg}/lib/${pluginLibraryName pkg}";
         };
       })
-      cfg.config.plugins);
+      (lib.unique (cfg.config.plugins ++ cfg.extraPlugins)));
   in
     lib.mkIf
     cfg.enable
     {
-      home.packages = lib.optional (cfg.package != null) cfg.package ++ cfg.config.plugins;
+      assertions = [{
+        assertion = !cfg.systemd.enable || cfg.package != null;
+        message = "programs.oxibar.systemd.enable requires a non-null package.";
+      }];
+      home.packages = lib.optional (cfg.package != null) cfg.package ++ cfg.config.plugins ++ cfg.extraPlugins;
       xdg.configFile = plugin_files // {
         "oxibar/config.toml".source =
         (pkgs.formats.toml {}).generate "oxibar"
@@ -80,6 +102,23 @@ in {
             plugins = fetchedPlugins;
           }
           cfg.config.plugin_config);
+      };
+      systemd.user.services.oxibar = lib.mkIf cfg.systemd.enable {
+        Unit = {
+          Description = "Oxibar Rust/Iced widget shell";
+          After = [cfg.systemd.target];
+          PartOf = [cfg.systemd.target];
+          ConditionEnvironment = "WAYLAND_DISPLAY";
+        };
+        Service = {
+          ExecStart = lib.getExe cfg.package;
+          Restart = "on-failure";
+          RestartSec = 2;
+          TimeoutStopSec = 10;
+          KillMode = "control-group";
+          Slice = "app.slice";
+        };
+        Install.WantedBy = [cfg.systemd.target];
       };
     };
 }

@@ -555,23 +555,37 @@ impl OxiBar {
         self.settings.catalog = files
             .into_iter()
             .map(|filename| {
+                let info = crate::plugins::inspect_library(
+                    &self.config.directory.join("plugins").join(&filename),
+                );
                 let loaded = self
                     .plugins
                     .iter()
                     .find(|(_, (_, funcs))| funcs.filename == filename);
                 PluginStatus {
-                    label: loaded.map(|(name, _)| name.clone()).unwrap_or_else(|| {
-                        filename
-                            .trim_start_matches("lib")
-                            .trim_end_matches(".so")
-                            .to_owned()
-                    }),
-                    state: loaded.map(|_| "Running".to_owned()).unwrap_or_else(|| {
-                        self.plugin_failures
+                    label: loaded
+                        .map(|(name, _)| name.clone())
+                        .or(info.name)
+                        .unwrap_or_else(|| {
+                            filename
+                                .trim_start_matches("lib")
+                                .trim_end_matches(".so")
+                                .to_owned()
+                        }),
+                    state: match (loaded.is_some(), info.error) {
+                        (true, Some(error)) => format!("Running · installed library: {error}"),
+                        (true, None) => "Running".to_owned(),
+                        (false, Some(error)) => error,
+                        (false, None) => self
+                            .plugin_failures
                             .get(&filename)
                             .cloned()
-                            .unwrap_or_else(|| "Installed / not running".to_owned())
-                    }),
+                            .unwrap_or_else(|| "Installed / not running".to_owned()),
+                    },
+                    abi: info.abi,
+                    capabilities: info.capabilities,
+                    enabled: crate::config::get_allowed_plugins(&self.config.snapshot.effective)
+                        .contains(&filename.as_str()),
                     filename,
                 }
             })
@@ -581,6 +595,9 @@ impl OxiBar {
     pub(crate) fn status_data(&self) -> serde_json::Value {
         json!({"launcher_open": self.launcher.window_id.is_some(), "settings_open": self.settings.window_id.is_some(),
             "launcher_results": self.launcher.entries.iter().map(|entry| json!({"provider": entry.plugin_id, "id": entry.result.index, "score": entry.result.score, "favorite": entry.favorite})).collect::<Vec<_>>(),
+            "launcher_query_revision":self.launcher.query_revision,"launcher_query_us":self.launcher.query_elapsed_us,
+            "popup_open":self.popup_open,"popup_provider":self.popup_plugin,
+            "modal_open":self.modal_window_id.is_some(),"modal_provider":self.modal_plugin,"panel_open":self.panel_window_id.is_some(),"panel_provider":self.panel_plugin,"toast_count":self.toasts.len(),
             "compositor_backend":self.compositor.as_ref().map(|snapshot|&snapshot.backend),"compositor_error":self.compositor_error,"compositor_action_error":self.compositor_action_error,
             "docks":self.docks.instances.values().map(|dock|json!({"instance":format!("{:?}",dock.id),"output":dock.output,"width":dock.size.0,"height":dock.size.1,"items":dock.items.len()})).collect::<Vec<_>>(),
             "desktop_editing":self.desktop.draft.is_some(),"desktop_widgets":self.desktop.instances.values().map(|widget|json!({"id":widget.spec.id,"instance":format!("{:?}",widget.id),"plugin":widget.spec.plugin,"output":widget.output,"x":widget.rect.x,"y":widget.rect.y,"width":widget.rect.width,"height":widget.rect.height})).collect::<Vec<_>>(),
@@ -626,6 +643,11 @@ impl OxiBar {
                     None,
                 ));
                 task
+            }
+            Command::Plugins => {
+                self.refresh_plugin_catalog();
+                request.reply.send(ipc::response(self.config.snapshot.revision, json!({"plugins":self.settings.catalog.iter().map(|plugin| json!({"filename":plugin.filename,"name":plugin.label,"state":plugin.state,"enabled":plugin.enabled,"abi":plugin.abi,"capabilities":plugin.capabilities})).collect::<Vec<_>>()}), None));
+                Task::none()
             }
             Command::Windows => {
                 let data=self.compositor.as_ref().map(|snapshot|snapshot.windows.iter().map(|window|json!({"id":window.id,"pid":window.pid,"class":window.class,"title":window.title,"output":window.output,"workspace":window.workspace,"focused":window.focused})).collect::<Vec<_>>()).unwrap_or_default();

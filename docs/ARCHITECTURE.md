@@ -288,7 +288,11 @@ capabilities remain follow-ups.
 - `availability(config)` lets a plugin skip loading before model initialization, init tasks, and subscriptions when required hardware or system services are unavailable.
 - `ABI_VERSION` in `oxibar-plugin-api` gates host/plugin compatibility.
 - Plugin models are `Arc<RwLock<Box<dyn OxiAny>>>`; plugin messages are `Arc<dyn OxiAny>`.
-- Plugin subscriptions return a raw pointer to a boxed stream. The host rebuilds it while keeping the dynamic library alive for function-pointer validity.
+- Plugin subscriptions return a raw pointer to a boxed stream. Successfully
+  initialized libraries stay process-resident: opaque models, messages, tasks and
+  deferred destructors can contain plugin vtables after a surface is retired.
+  Owned subscriptions still cancel/drop normally; library retention is not another
+  service instance and does not introduce hot unloading.
 - `control_center_view(model)` has the ordinary `ViewFn` signature and returns
   inner content without a second full-height scroll surface. The capability is
   optional at ABI 6; existing popup/panel exports remain compatible fallbacks.
@@ -359,12 +363,17 @@ Geometry, enablement and duration apply live without another provider model.
 - `tools`: commands, calculator, files, bookmarks, named argument actions and
   opt-in native clipboard history with cancellable cached searches.
 - `stats`: cached CPU, memory and uptime summaries with visible-only refresh.
+- `example`: separately packaged SDK reference with shared views, live schema,
+  validation, scoped confirmation cleanup, commands/OSD and an owned visible timer;
+  it is available for the installed catalog but not in the default enabled set.
 
 Plugin `lib.rs` files should keep ABI symbols, model update, and view composition. External-system logic and parsers should live in sibling modules once they grow beyond small helpers.
 
 ## Tradeoffs
 
-- Several runtime integrations call external CLIs or DBus APIs directly; pure parsing/state helpers should be covered by unit tests, while live integration remains manual.
+- Runtime integrations combine pure unit coverage with opt-in private service,
+  real dylib and repeatable isolated compositor tests. Physical hardware and policy
+  integrations retain explicit manual follow-ups.
 - The clock plugin's CalDAV sync shells out to `curl` to avoid adding a full HTTP stack to the dynamic plugin. It enforces `https://`, curl HTTPS-only protocol flags, and normal certificate verification.
 - Thunderbird integration is limited to launching `thunderbird --calendar`; date-focused navigation remains a user-configured `calendar_command` concern because Thunderbird has no stable CLI for opening a specific calendar date.
 - Per-output width/height/layout/transparency and top/bottom placement come from
@@ -386,8 +395,41 @@ are implemented, together with the first multi-output registry/inventory slice
 and control-center composition. Native audio, BlueZ and system services/OSDs are implemented;
 settings/control-center layouts share spacious oxiced controls while retaining
 the existing palette. Dock and persistent desktop widgets are implemented with
-  shared catalogs, compositor state and visible-only streams. Live theme snapshots
-  and expanded providers are implemented. The SDK/packaging/performance gate is next.
+shared catalogs, compositor state and visible-only streams. Live theme snapshots
+and expanded providers are implemented. The SDK, startup/app handoff, repeatable
+smoke checks and named presentation-time release gate are implemented and verified.
+
+## SDK, Application Lifetime and Release Verification
+
+`PLUGIN_SDK.md` defines required ABI 6 signatures, optional capabilities and owned
+resource rules. Installed catalog inspection resolves ABI/name/capability metadata
+without model or subscription initialization; availability precedes factories and
+duplicate names instantiate once. GUI enablement remains restart-classified.
+
+SDK application handoff prefers a native user-manager transient service in
+`app.slice`, separate from the shell service's termination cgroup. It subscribes to
+job completion before submission and reports the actual accepted result. An
+uncertain or accepted failure cannot trigger a second direct execution. Definite
+unsupported/unavailable managers fall back to argument-based, reaped process-group
+launch; that fallback cannot promise independent cgroup ownership. Caller-only
+service/activation FD variables are removed from the new unit's environment.
+
+Home Manager startup is opt-in and bound to a configured compositor session target.
+Enabled packages and disabled installed catalog packages are separate; immutable
+base generation never owns GUI overrides. All host/plugin packages share Crane
+artifacts and the same patched layer-shell dependency graph.
+
+The SDK interval stream owns its cancellation timer. Clock/Stats visible timers and
+Network/Battery resident refresh intervals no longer create detached polling loops.
+Filesystem watchers retain unchanged watches, track directory device/inode/mode
+and filter unrelated events from missing-root parent watches, preventing idle
+reindex feedback loops.
+
+`scripts/run-isolated.py` owns a private bus/compositor/runtime for repeatable GUI
+checks. `scripts/performance.py` uses optional `wp_presentation` feedback before
+the next drawn buffer, actual presented timestamps and native surface retirement.
+Normal runtime has no tracing protocol/writes. `RELEASE_CHECKS.md` records the named
+reference, query/idle/wakeup-proxy/RSS/worker gates and repeatable commands.
 
 The roadmap identifies selective ReSet audio/BlueZ and monitor backend patterns.
 Audio, BlueZ and read-only monitor adapters follow these boundaries.

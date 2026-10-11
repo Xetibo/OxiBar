@@ -1,0 +1,41 @@
+{
+  "reference": {
+    "cpu": "AMD Ryzen 9 7950X 16-Core Processor",
+    "gpu_pci_ids": [
+      { "vendor": "0x1002", "device": "0x744c" },
+      { "vendor": "0x1002", "device": "0x164e" }
+    ],
+    "kernel": "7.2.8-xanmod1",
+    "compositor": { "name": "Sway", "version": "sway version 1.11" },
+    "presentation_clock": { "id": 1, "advertised": true, "explicit_override": false },
+    "backend": "isolated headless GLES2",
+    "profile": "release / Apps+Tools / no dock / 2000-desktop-entry local index"
+  },
+  "samples": { "desktop_entries": 2000, "warm_opens": 50, "queries": 20, "idle_seconds": 10.000016774996766 },
+  "cold_control_ms": 122.684656,
+  "cold_bar_presented_ms": 122.040957,
+  "warm_presented_ms": { "median": 20.555113499999997, "p95": 20.827424, "max": 21.119808 },
+  "query_to_results_ms": { "median": 0.5285, "p95": 0.81, "max": 0.826 },
+  "idle": {
+    "cpu_percent_one_core": 0.29999949675094123,
+    "draws": 0,
+    "voluntary_context_switches_per_second_all_threads": 202.59966013913564
+  },
+  "reopen_memory": {
+    "baseline_rss_kib": 149580,
+    "first10_median_kib": 149636.0,
+    "last10_median_kib": 149766.0,
+    "growth_kib": 130.0,
+    "initial_threads": 66,
+    "final_threads": 64,
+    "max_threads": 66
+  },
+  "gates": {
+    "warm_presented_p95_under_50ms": true,
+    "all_query_results_under_one_60hz_frame": true,
+    "idle_under_one_percent_core": true,
+    "no_continuous_idle_render": true,
+    "bounded_rss_after_reopen": true,
+    "no_worker_growth": true
+  }
+}

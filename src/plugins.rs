@@ -246,17 +246,103 @@ unsafe fn load_one(
     ))
 }
 
+// Rust trait-object tasks, messages and cached widgets may outlive the program
+// state during executor shutdown. Loaded code therefore stays mapped until exit.
+static RESIDENT_LIBRARIES: std::sync::Mutex<Vec<Arc<Library>>> = std::sync::Mutex::new(Vec::new());
+
+fn retain_resident_library(library: &Arc<Library>) {
+    let mut libraries = RESIDENT_LIBRARIES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if !libraries
+        .iter()
+        .any(|existing| Arc::ptr_eq(existing, library))
+    {
+        libraries.push(library.clone());
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct LibraryInfo {
+    pub name: Option<String>,
+    pub abi: Option<u32>,
+    pub capabilities: Vec<String>,
+    pub error: Option<String>,
+}
+
+pub(crate) fn inspect_library(path: &std::path::Path) -> LibraryInfo {
+    let mut info = LibraryInfo::default();
+    let inspected = (|| {
+        let library = unsafe { Library::new(path) }.map_err(|error| error.to_string())?;
+        let abi: AbiVersionFn =
+            unsafe { resolve(&library, "abi_version") }.map_err(|error| error.to_string())?;
+        let abi = unsafe { abi() };
+        info.abi = Some(abi);
+        if abi != ABI_VERSION {
+            return Err(format!("ABI mismatch (plugin={abi}, host={ABI_VERSION})"));
+        }
+        let name: NameFn =
+            unsafe { resolve(&library, "name") }.map_err(|error| error.to_string())?;
+        info.name = Some(unsafe { name() }.to_owned());
+        for required in [
+            "model",
+            "update",
+            "launch",
+            "view",
+            "errors",
+            "subscription",
+        ] {
+            if unsafe { library.get::<*const ()>(required.as_bytes()) }.is_err() {
+                return Err(format!("Missing required symbol `{required}`"));
+            }
+        }
+        for (label, symbol) in [
+            ("availability", "availability"),
+            ("settings", "settings_schema"),
+            ("validation", "config_validate"),
+            ("live config", "config_changed"),
+            ("live theme", "theme_changed"),
+            ("popup", "popup_view"),
+            ("modal", "modal_view"),
+            ("modal lifecycle", "modal_closed"),
+            ("panel", "panel_view"),
+            ("toast", "toast_view"),
+            ("control center", "control_center_view"),
+            ("desktop", "desktop_view"),
+            ("input policy", "desktop_interactive"),
+            ("dock catalog", "dock_entries"),
+            ("runner", "runner_entries"),
+            ("runner prefixes", "runner_prefixes"),
+            ("favorites", "runner_favorite"),
+            ("commands", "command"),
+            ("OSD", "osd_view"),
+            ("compositor state", "compositor_changed"),
+            ("visibility lifecycle", "subscription_policy"),
+        ] {
+            if unsafe { library.get::<*const ()>(symbol.as_bytes()) }.is_ok() {
+                info.capabilities.push(label.to_owned());
+            }
+        }
+        Ok(())
+    })();
+    info.error = inspected.err();
+    info
+}
+
 /// Load and instantiate plugins in the order listed by `plugins = [...]`.
 /// Failures are logged and skipped — never fatal.
 pub fn load_plugins(config: &Table) -> LoadedPlugins {
+    load_plugins_from_dir(config, &get_oxirun_dir().join("plugins"))
+}
+
+fn load_plugins_from_dir(config: &Table, plugin_dir: &std::path::Path) -> LoadedPlugins {
     let mut plugins = PluginMap::new();
     let mut tasks = Vec::new();
     let mut order = Vec::new();
     let mut failures = BTreeMap::new();
 
-    let plugin_dir = get_oxirun_dir().join("plugins");
     if !plugin_dir.is_dir()
-        && let Err(e) = std::fs::create_dir(&plugin_dir)
+        && let Err(e) = std::fs::create_dir(plugin_dir)
     {
         error!("could not create plugin dir {}: {e}", plugin_dir.display());
         return LoadedPlugins {
@@ -283,6 +369,7 @@ pub fn load_plugins(config: &Table) -> LoadedPlugins {
                 }
                 let (model, init_task) = unsafe { (funcs.model)(config.clone()) };
                 let funcs = Arc::new(funcs);
+                retain_resident_library(&funcs._lib);
                 let key = plugin_name.clone();
                 if let Some(task) = init_task {
                     let key_for_task = key.clone();
@@ -460,5 +547,73 @@ mod tests {
             error.to_string(),
             "plugin `Battery` unavailable: no battery found"
         );
+    }
+
+    #[test]
+    fn resident_code_outlives_model_and_deferred_message_destruction() {
+        let library = Arc::new(Library::from(libloading::os::unix::Library::this()));
+        let weak = Arc::downgrade(&library);
+        retain_resident_library(&library);
+        retain_resident_library(&library);
+        #[derive(Debug)]
+        struct Deferred(std::sync::Weak<Library>);
+        impl Drop for Deferred {
+            fn drop(&mut self) {
+                assert!(self.0.upgrade().is_some());
+            }
+        }
+        let model = oxibar_plugin_api::plugin_model(Deferred(weak.clone()));
+        let message: PluginMsg = Arc::new(Deferred(weak.clone()));
+        drop(library);
+        drop(model);
+        drop(message);
+        assert_eq!(weak.strong_count(), 1);
+    }
+
+    #[test]
+    #[ignore = "requires OXIBAR_EXAMPLE_PLUGIN pointing to the Nix-built SDK example"]
+    fn real_loader_catalog_and_availability_skip_models_and_duplicate_names() {
+        let path = std::path::PathBuf::from(
+            std::env::var_os("OXIBAR_EXAMPLE_PLUGIN").expect("set OXIBAR_EXAMPLE_PLUGIN"),
+        );
+        let library = unsafe { Library::new(&path) }.unwrap();
+        let initializations: unsafe extern "Rust" fn() -> u64 =
+            unsafe { *library.get(b"example_initializations").unwrap() };
+        let before = unsafe { initializations() };
+        let info = inspect_library(&path);
+        assert_eq!(info.abi, Some(ABI_VERSION));
+        assert!(
+            info.error.is_none()
+                && info
+                    .capabilities
+                    .iter()
+                    .any(|capability| capability == "availability")
+        );
+        assert_eq!(unsafe { initializations() }, before);
+        let root = std::env::temp_dir().join(format!(
+            "oxibar-loader-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        std::os::unix::fs::symlink(path.canonicalize().unwrap(), root.join("libexample.so"))
+            .unwrap();
+        let unavailable: Table = "plugins=['libexample.so']\n[example]\navailable=false"
+            .parse()
+            .unwrap();
+        let denied = load_plugins_from_dir(&unavailable, &root);
+        assert!(denied.plugins.is_empty() && denied.tasks.is_empty() && denied.order.is_empty());
+        assert!(denied.failures["libexample.so"].contains("disabled by example.available"));
+        assert_eq!(unsafe { initializations() }, before);
+        let accepted: Table = "plugins=['libexample.so','libexample.so']".parse().unwrap();
+        let loaded = load_plugins_from_dir(&accepted, &root);
+        assert_eq!(loaded.order, ["Example"]);
+        assert_eq!(loaded.plugins.len(), 1);
+        assert_eq!(unsafe { initializations() }, before + 1);
+        drop(loaded);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

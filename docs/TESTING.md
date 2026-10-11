@@ -4,10 +4,15 @@
 
 - Unit tests cover host main-loop helpers and every plugin crate.
 - Tests avoid live DBus, NetworkManager, Bluetooth, Hyprland, PulseAudio, Wayland, or notification daemon dependencies unless explicitly marked as integration tests.
-- External command wrappers remain manually verified unless they are refactored behind injectable seams.
+- External command wrappers use private injectable fixtures where available;
+  physical hardware/policy behavior remains a separate manual check.
 - Plugin system modules carry parser/helper tests next to the code they own.
 
 ## Current Unit Coverage
+
+- SDK/release: actual-completion app handoff validation, owned interval cancellation,
+  quiet root-filtered filesystem watches, process-resident code/deferred vtable
+  cleanup, shared example views/config/modal state and Network stale-edit replies.
 
 - Host/config: plugin allow-list parsing, plugin unavailable error formatting, anchor parsing, host-request message mapping, dynamic bar width/height fallback parsing, popup geometry/config/dynamic metrics, toast keyboard interactivity actions, toast output-option fallback mapping, panel output anchoring, bar section lookup, layer resize state updates, popup state setters, `[instance]` policy parsing (defaults, configured values, wrong value types), and single-instance lock acquisition (second acquire reports already-running; lock released when the guard drops).
 - `audio`: percent parsing, file URL decoding, selected-device fallback, config
@@ -229,8 +234,9 @@ cleanup and late background results.
 
 The same packaged smoke also passed with `HYPRLAND_INSTANCE_SIGNATURE` omitted,
 forcing the generic wl_output/xdg_output backend. This verifies protocol fallback
-inventory/geometry/hotplug on the running compositor; a separate Sway/Niri session
-has not been exercised. Existing settings/Nix-override smoke and the opt-in real
+inventory/geometry/hotplug on the running compositor. The later release benchmark
+also runs generic Wayland startup/presentation under an owned Sway session; Niri
+runtime remains untested. Existing settings/Nix-override smoke and the opt-in real
 runner dylib test also passed after the surface refactor.
 
 For limited temporary storage, build packages with `nix build --max-jobs 1 ...`:
@@ -401,6 +407,60 @@ Screenshots remain private. With limited storage, use `CARGO_PROFILE_DEV_DEBUG=0
 target directory. The patched backend is outside workspace membership; formatting
 its changed Rust file uses `rustfmt` explicitly alongside workspace `cargo fmt`.
 
+## Final SDK, Lifecycle and Release Verification
+
+The final source check passed **243 normal tests/doctests**, with eleven explicitly
+opt-in tests, plus strict Clippy for every workspace target. All fourteen Nix
+outputs built with shared Crane artifacts. Actual Nix example dylib checks ran
+25 model/task/view/theme/config/modal/owned-stream cycles without host Tokio TLS.
+The actual loader verifies metadata does not initialize models, availability
+skips precede factories and duplicate names initialize once.
+
+The private user-manager test verifies transient unit properties, actual job
+completion, caller exit while its app remains alive, and no duplicate execution
+after uncertain accepted submission. It uses only a private bus/service/child:
+
+```sh
+nix develop --impure --file nix/gui-tests.nix -c \
+  dbus-run-session --config-file=scripts/private-bus.conf -- \
+  nix develop -c env OXIBAR_TEST_PRIVATE_BUS=1 cargo test -p oxibar-plugin-api \
+  private_user_manager_handoff_survives_caller_exit -- --ignored
+```
+
+`RELEASE_CHECKS.md` supplies real loader, example, module-evaluation and compositor
+commands. `nix/hm-test.nix` verifies startup defaults to no user unit, deliberate
+session-target ownership, disabled installed catalog packages, enabled-only base
+generation and unmanaged GUI overrides. No activation is involved.
+
+Repository tooling owns its private runtime, bus and compositor:
+
+- `scripts/run-isolated.py`: headless Sway/private nested Hyprland; `--parent`
+  selects Sway for a conforming presentation clock.
+- `scripts/smoke.py`, `fixtures.py`, `virtual-pointer.c`: catalog, confirmation
+  Escape/replacement, actual live field application while an OSD is visible,
+  launcher handoff, CalDAV/day fixture, secure network password save, native tray
+  menu, notification toast/panel/inline reply/DND, two-instance drag/resize,
+  stale-save retention, hotplug and ten control-center reopen cycles.
+- `scripts/performance.py`: actual first `wp_presentation.Presented` feedback,
+  native retirement, accepted query latency, idle CPU/draws, all-thread voluntary
+  context-switch wakeup proxy and reopen RSS/worker samples.
+
+The strengthened complete smoke passed against final Nix packages. Private fixture
+shims and a private SNI server never touch real NetworkManager/HTTPS calendars;
+all test children/compositors/files are reaped. Screenshots remain private.
+
+The named 2,000-entry Sway reference passed all six gates: actual warm frame p95
+20.83 ms, query max 0.83 ms, idle 0.30% of one core/zero redraws in ten seconds,
++130 KiB median reopen RSS and thread count 66 → 64. See `RELEASE_CHECKS.md` and
+`performance-reference.json` for exact workload, counters and the 2 MiB RSS noise
+budget. Configure/IPC timestamps are not presentation substitutes. Nested Hyprland
+0.51.1's missing clock event/stale feedback was rejected for benchmark use.
+
+Profiling uncovered watcher feedback from redundant registration and unrelated
+missing-root sibling events. Real filesystem regressions now assert both quiet
+idle and correct create/update/recovery behavior. Optional presentation tracing is
+disabled in normal runtime.
+
 ## Coverage Goals
 
 - Host: config-derived bar placement, plugin message mapping, popup geometry, and modal/panel state transitions where they can run without a GUI runtime.
@@ -408,12 +468,11 @@ its changed Rust file uses `rustfmt` explicitly alongside workspace `cargo fmt`.
 
 ## Known Gaps
 
-- Dynamic library loading from `$XDG_CONFIG_HOME/oxibar/plugins/` is not covered by an integration test yet.
-- The opt-in runner dylib test exercises real library exports/tasks, but general availability-gate/load-order coverage through `load_plugins()` is still missing.
 - Normal tests avoid live system services. Opt-in tests exercise the real runner
   timer, native audio events/actions, private BlueZ state/pairing/cancellation and
-  private System domains/actions;
-  other service subscriptions and general dylib lifecycle coverage remain incomplete.
+  private System domains/actions, modern/compatible clipboard, real example and
+  loader lifecycle plus private user-manager handoff. Additional native hardware,
+  system policy and compositor-specific capabilities remain manual/extension work.
 - UI rendering tests only validate that view functions return elements for valid models; they do not assert pixel output.
 - Keyboard search, text-field traversal/application, category shortcuts and Escape
   are verified; generic checkbox/button keyboard focus and screen-reader support

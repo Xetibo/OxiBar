@@ -256,6 +256,30 @@ pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn command(
+    model: PluginModel,
+    command: String,
+    arguments: Vec<String>,
+) -> Result<Task<oxibar_plugin_api::CommandOutcome>, String> {
+    if !arguments.is_empty() {
+        return Err("Tray popup and menu commands take no arguments".to_owned());
+    }
+    let message = match command.as_str() {
+        "popup" => Message::TogglePopup,
+        "menu" => Message::ToggleContextMenu(
+            with_model_read::<Model, _>(&model, |model| model.items.keys().next().cloned())
+                .map_err(|error| error.to_string())?
+                .ok_or("No cached tray item")?,
+        ),
+        _ => return Err("Use Tray popup or menu".to_owned()),
+    };
+    Ok(Task::done(oxibar_plugin_api::CommandOutcome {
+        message: msg(message),
+        result: Ok(()),
+    }))
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {

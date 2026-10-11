@@ -48,6 +48,9 @@ pub(crate) struct Launcher {
     pub(crate) focused: usize,
     pub(crate) size: (u32, u32),
     pub(crate) open_started_at: Option<Instant>,
+    pub(crate) query_revision: u64,
+    pub(crate) query_started_at: Option<Instant>,
+    pub(crate) query_elapsed_us: Option<u64>,
     max_entries: usize,
     statuses: Vec<(String, oxibar_plugin_api::RunnerStatus)>,
     prefixes: Vec<String>,
@@ -69,6 +72,9 @@ impl Launcher {
                 .unwrap_or(true),
             window_id: None,
             open_started_at: None,
+            query_revision: 0,
+            query_started_at: None,
+            query_elapsed_us: None,
             query: String::new(),
             entries: Vec::new(),
             focused: 0,
@@ -183,6 +189,11 @@ impl Launcher {
                     .position(|entry| entry.plugin_id == plugin_id && entry.result.index == index)
             })
             .unwrap_or_else(|| self.focused.min(self.entries.len().saturating_sub(1)));
+        if self.query_elapsed_us.is_none() && !self.entries.is_empty() {
+            self.query_elapsed_us = self
+                .query_started_at
+                .map(|started| started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64);
+        }
     }
 
     pub(crate) fn move_focus(&mut self, forward: bool) {

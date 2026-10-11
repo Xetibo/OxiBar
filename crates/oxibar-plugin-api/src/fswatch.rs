@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    os::unix::fs::MetadataExt,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -47,11 +48,32 @@ impl FileWatch {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .sender = Some(sender.clone());
-        let watcher = RecommendedWatcher::new(move |result: notify::Result<notify::Event>| {
-            if !matches!(result, Ok(event) if matches!(event.kind, notify::EventKind::Access(_))) {
-                let _ = sender.clone().try_send(());
-            }
-        }, notify::Config::default()).ok();
+        let callback_client = client.clone();
+        let watcher = RecommendedWatcher::new(
+            move |result: notify::Result<notify::Event>| {
+                let relevant = match result {
+                    Ok(event) => {
+                        let state = callback_client
+                            .state
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner());
+                        !matches!(event.kind, notify::EventKind::Access(_))
+                            && (event.paths.is_empty()
+                                || event.paths.iter().any(|path| {
+                                    state.roots.iter().any(|root| {
+                                        path.starts_with(root) || root.starts_with(path)
+                                    })
+                                }))
+                    }
+                    Err(_) => true,
+                };
+                if relevant {
+                    let _ = sender.clone().try_send(());
+                }
+            },
+            notify::Config::default(),
+        )
+        .ok();
         let state = Events {
             client,
             receiver,
@@ -88,9 +110,16 @@ struct Events {
     client: Arc<FileWatch>,
     receiver: mpsc::Receiver<()>,
     watcher: Option<RecommendedWatcher>,
-    watched: BTreeMap<PathBuf, RecursiveMode>,
+    watched: BTreeMap<PathBuf, Watched>,
     next: std::time::Instant,
     interval: Duration,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct Watched {
+    mode: RecursiveMode,
+    device: u64,
+    inode: u64,
 }
 
 impl Events {
@@ -102,15 +131,36 @@ impl Events {
             .unwrap_or_else(|error| error.into_inner())
             .roots
             .clone();
-        let wanted = watched_roots(&roots);
+        let wanted: BTreeMap<_, _> = watched_roots(&roots)
+            .into_iter()
+            .filter_map(|(path, mode)| {
+                let metadata = std::fs::metadata(&path).ok()?;
+                Some((
+                    path,
+                    Watched {
+                        mode,
+                        device: metadata.dev(),
+                        inode: metadata.ino(),
+                    },
+                ))
+            })
+            .collect();
         if let Some(watcher) = &mut self.watcher {
-            for path in self.watched.keys() {
-                let _ = watcher.unwatch(path);
+            let removed: Vec<_> = self
+                .watched
+                .iter()
+                .filter(|(path, old)| wanted.get(*path) != Some(*old))
+                .map(|(path, _)| path.clone())
+                .collect();
+            for path in removed {
+                let _ = watcher.unwatch(&path);
+                self.watched.remove(&path);
             }
-            self.watched.clear();
-            for (path, mode) in wanted {
-                if watcher.watch(&path, mode).is_ok() {
-                    self.watched.insert(path, mode);
+            for (path, watched) in wanted {
+                if self.watched.get(&path) != Some(&watched)
+                    && watcher.watch(&path, watched.mode).is_ok()
+                {
+                    self.watched.insert(path, watched);
                 }
             }
         }
@@ -159,6 +209,20 @@ mod tests {
         );
         let mut stream = client.events(Duration::from_secs(60));
         assert!(stream.next().now_or_never().is_none());
+        std::fs::write(root.join("unrelated-trace.log"), "sibling noise").unwrap();
+        iced::futures::executor::block_on(async {
+            assert!(
+                matches!(
+                    iced::futures::future::select(
+                        stream.next(),
+                        Box::pin(async_io::Timer::after(Duration::from_millis(350)))
+                    )
+                    .await,
+                    iced::futures::future::Either::Right(_)
+                ),
+                "missing-root parent watches must ignore unrelated siblings"
+            );
+        });
         std::fs::create_dir(&watched).unwrap();
         let wait = |stream: &mut BoxStream<'static, ()>| {
             iced::futures::executor::block_on(async {
@@ -180,6 +244,19 @@ mod tests {
         );
         std::fs::write(watched.join("fixture.desktop"), "fixture").unwrap();
         wait(&mut stream);
+        iced::futures::executor::block_on(async {
+            assert!(
+                matches!(
+                    iced::futures::future::select(
+                        stream.next(),
+                        Box::pin(async_io::Timer::after(Duration::from_millis(350)))
+                    )
+                    .await,
+                    iced::futures::future::Either::Right(_)
+                ),
+                "unchanged watches must not generate self-refresh loops"
+            );
+        });
         let before = std::time::Instant::now();
         drop(stream);
         assert!(before.elapsed() < Duration::from_secs(1));

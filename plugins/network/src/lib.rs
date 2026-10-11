@@ -5,8 +5,7 @@ use std::time::Duration;
 
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Shadow, Task,
-    futures::Stream,
-    stream,
+    futures::{Stream, StreamExt},
     widget::{Column, Container, Row, Space, button, scrollable},
 };
 use iced_anim::{AnimationBuilder, transition::Easing};
@@ -60,6 +59,8 @@ pub struct Model {
     hovered_entry: Option<String>,
     saved_expanded: bool,
     pending: Option<String>,
+    action_generation: u64,
+    edit_generation: u64,
     errors: Vec<String>,
 }
 
@@ -75,6 +76,8 @@ impl Model {
             hovered_entry: None,
             saved_expanded: false,
             pending: None,
+            action_generation: 0,
+            edit_generation: 0,
             errors: Vec::new(),
         }
     }
@@ -114,6 +117,8 @@ enum Message {
     ActionDone {
         result: Result<String, String>,
         close_modal: bool,
+        generation: u64,
+        edit_generation: u64,
     },
 }
 
@@ -184,6 +189,7 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             None
         }
         Message::EditWifi(ssid) => {
+            model.edit_generation = model.edit_generation.wrapping_add(1);
             model.editing = Some(EditState {
                 label: ssid.clone(),
                 target: EditTarget::Wifi { ssid },
@@ -194,6 +200,7 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             ))
         }
         Message::EditConnection { uuid, name } => {
+            model.edit_generation = model.edit_generation.wrapping_add(1);
             model.editing = Some(EditState {
                 label: name,
                 target: EditTarget::Connection { uuid },
@@ -224,6 +231,7 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             run_action(model, action, true)
         }
         Message::CancelEdit => {
+            model.edit_generation = model.edit_generation.wrapping_add(1);
             model.editing = None;
             Some(Task::done(
                 Arc::new(HOST_REQUEST_CLOSE_MODAL.to_owned()) as PluginMsg
@@ -232,10 +240,15 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
         Message::ActionDone {
             result,
             close_modal,
+            generation,
+            edit_generation,
         } => {
+            if generation != model.action_generation {
+                return None;
+            }
             model.pending = None;
             match result {
-                Ok(_) if close_modal => {
+                Ok(_) if close_modal && edit_generation == model.edit_generation => {
                     model.editing = None;
                     let close: PluginMsg = Arc::new(HOST_REQUEST_CLOSE_MODAL.to_owned());
                     Some(Task::batch(vec![
@@ -262,6 +275,45 @@ pub extern "Rust" fn launch(_focused_index: usize, _model: PluginModel) -> Optio
 #[unsafe(no_mangle)]
 pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
     drain_model_errors::<Model>(&model, |model| &mut model.errors)
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn command(
+    model: PluginModel,
+    command: String,
+    arguments: Vec<String>,
+) -> Result<Task<oxibar_plugin_api::CommandOutcome>, String> {
+    let message = match (command.as_str(), arguments.as_slice()) {
+        ("popup", []) => Message::TogglePopup,
+        ("refresh", []) => Message::Refresh,
+        ("edit", [uuid]) => with_model_read::<Model, _>(&model, |model| {
+            model
+                .saved
+                .iter()
+                .find(|connection| &connection.uuid == uuid)
+                .map(|connection| Message::EditConnection {
+                    uuid: connection.uuid.clone(),
+                    name: connection.name.clone(),
+                })
+                .or_else(|| {
+                    model
+                        .connected
+                        .iter()
+                        .find(|connection| &connection.uuid == uuid)
+                        .map(|connection| Message::EditConnection {
+                            uuid: connection.uuid.clone(),
+                            name: connection.name.clone(),
+                        })
+                })
+        })
+        .map_err(|error| error.to_string())?
+        .ok_or("Unknown cached network connection")?,
+        _ => return Err("Use Network popup, refresh, or edit <cached connection UUID>".to_owned()),
+    };
+    Ok(Task::done(oxibar_plugin_api::CommandOutcome {
+        message: msg(message),
+        result: Ok(()),
+    }))
 }
 
 #[unsafe(no_mangle)]
@@ -459,22 +511,20 @@ pub extern "Rust" fn modal_view(
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn modal_closed(model: PluginModel) -> Option<Task<PluginMsg>> {
+    with_model_write::<Model, _>(&model, |model| {
+        model.edit_generation = model.edit_generation.wrapping_add(1);
+        model.editing = None;
+    });
+    None
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn subscription() -> *mut PluginStream {
     let interval = *SCAN_INTERVAL
         .get()
         .unwrap_or(&Duration::from_secs(DEFAULT_SCAN_SECONDS));
-    let s = stream::channel(
-        32,
-        move |mut output: iced::futures::channel::mpsc::Sender<PluginMsg>| async move {
-            std::thread::spawn(move || {
-                loop {
-                    std::thread::sleep(interval);
-                    let _ = output.try_send(msg(Message::Refresh));
-                }
-            });
-            std::future::pending::<()>().await;
-        },
-    );
+    let s = oxibar_plugin_api::worker::interval(interval).map(|()| msg(Message::Refresh));
 
     Box::into_raw(Box::new(s)) as *mut PluginStream
 }
@@ -485,12 +535,17 @@ fn run_action(
     close_modal: bool,
 ) -> Option<Task<PluginMsg>> {
     model.pending = Some(action.label());
+    model.action_generation = model.action_generation.wrapping_add(1);
+    let generation = model.action_generation;
+    let edit_generation = model.edit_generation;
     Some(Task::perform(
         async move { run_network_action(action) },
         move |result| {
             msg(Message::ActionDone {
                 result,
                 close_modal,
+                generation,
+                edit_generation,
             })
         },
     ))
@@ -898,5 +953,68 @@ mod tests {
         assert!(task.is_none());
         assert_eq!(errors(plugin_model.clone()), vec!["network failed"]);
         assert!(errors(plugin_model).is_empty());
+    }
+
+    #[test]
+    fn dismissed_editor_and_stale_actions_cannot_close_a_new_password_draft() {
+        let owner = plugin_model(Model::new(Table::new()));
+        drop(update(
+            owner.clone(),
+            msg(Message::EditWifi("Old".to_owned())),
+        ));
+        let old_edit = with_model_write::<Model, _>(&owner, |model| {
+            model.action_generation = 1;
+            model.edit_generation
+        })
+        .unwrap();
+        modal_closed(owner.clone());
+        drop(update(
+            owner.clone(),
+            msg(Message::EditWifi("New".to_owned())),
+        ));
+        drop(update(
+            owner.clone(),
+            msg(Message::ActionDone {
+                result: Ok(String::new()),
+                close_modal: true,
+                generation: 1,
+                edit_generation: old_edit,
+            }),
+        ));
+        assert_eq!(
+            with_model_read::<Model, _>(&owner, |model| model
+                .editing
+                .as_ref()
+                .unwrap()
+                .label
+                .clone())
+            .unwrap(),
+            "New"
+        );
+        with_model_write::<Model, _>(&owner, |model| {
+            model.action_generation = 2;
+            model.pending = Some("new action".to_owned());
+        });
+        assert!(
+            update(
+                owner.clone(),
+                msg(Message::ActionDone {
+                    result: Err("old error".to_owned()),
+                    close_modal: true,
+                    generation: 1,
+                    edit_generation: old_edit
+                })
+            )
+            .is_none()
+        );
+        assert_eq!(
+            with_model_read::<Model, _>(&owner, |model| model.pending.clone())
+                .unwrap()
+                .as_deref(),
+            Some("new action")
+        );
+        assert!(errors(owner.clone()).is_empty());
+        modal_closed(owner.clone());
+        assert!(with_model_read::<Model, _>(&owner, |model| model.editing.is_none()).unwrap());
     }
 }

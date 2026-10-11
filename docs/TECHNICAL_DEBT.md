@@ -9,8 +9,8 @@
 - Generic output inventory still has its documented fallback polling/focus limits.
   The shared Hyprland window/workspace broker is event-driven.
 - Legacy providers default to resident subscriptions. Clock/Stats opt into owned
-  visible-only timers; broader SDK lifecycle and release/performance checks remain
-  the final roadmap milestone.
+  visible-only timers; Network/Battery use owned SDK intervals. SDK, loader, private
+  app lifetime, compositor smoke and release measurements are now verified.
 
 This file tracks accepted deviations from the current UI contract in `UI.md`. These are allowed only because `oxiced` does not yet provide the needed shared component or semantic token.
 
@@ -154,10 +154,26 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ### Missing Dynamic Plugin Loading Integration Test
 
-- Status: accepted temporary limitation.
-- Affected code: `src/plugins.rs` and all dynamic plugin crates.
-- Current state: the host supports optional `availability(config)` gates and unit-tests the pure plugin availability probes, but does not run an integration test that builds temporary dylibs and verifies skip-before-model behavior through `load_plugins()`.
-- Target fix: add a small dynamic-loading integration test once plugin test fixtures can be built reproducibly through the workspace/Nix setup.
+- Status: resolved with the Nix-built SDK example.
+- Actual loader tests verify metadata inspection does not initialize models,
+  availability skips before factories and duplicate names instantiate once.
+  The real example contract exercises 25 shared-model/task/view/stream/theme/config/
+  modal cycles without a host Tokio reactor; initialized code remains process-resident.
+
+### Release and Application Lifetime Tradeoffs
+
+- Named Sway/headless release gates passed actual presentation, bounded local query,
+  idle CPU/draws and reopen RSS/workers. The record is workload-specific; all-thread
+  voluntary context switches are a wakeup proxy, and RSS uses a documented 2 MiB
+  noise budget. See `RELEASE_CHECKS.md` and `performance-reference.json`.
+- Nested Hyprland 0.51.1 did not advertise its presentation clock and returned stale
+  feedback; it is used for owned UI smoke, not the presentation reference.
+- Successful plugin code is retained until process exit for opaque/deferred Rust
+  vtable safety. Existing notification/tray bus servers remain process-lifetime
+  providers; safe generic in-process unloading is not part of ABI 6.
+- Native user-manager app handoff escapes the shell termination cgroup where
+  supported. Direct fallback creates a reaped process group but cannot escape an
+  existing systemd cgroup without a user manager.
 
 ## UI Theme Debt
 

@@ -1,5 +1,12 @@
 # UI Guidelines
 
+- Installed plugin catalog entries show enabled/running state, ABI and optional
+  capabilities using the existing themed typography/cards. Inspection must not
+  start disabled models or background subscriptions.
+- Confirmation modals retain unsubmitted intent until an explicit action; Escape,
+  replacement and outside dismissal use the same scoped cleanup. App handoff
+  lifetime is independent of the transient UI surface.
+
 `UI.md` at the repository root is the full styling contract. This file exists in `docs/` because global agent rules require docs-local UI guidance.
 
 ## Rules

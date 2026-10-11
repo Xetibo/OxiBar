@@ -35,40 +35,5 @@ pub async fn run<T: Send + 'static>(
 }
 
 pub fn launch(arguments: Vec<String>) -> Result<(), String> {
-    let executable = arguments
-        .first()
-        .filter(|value| !value.is_empty())
-        .ok_or("Locker command is empty")?;
-    let child = std::process::Command::new(executable)
-        .args(&arguments[1..])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    let child = std::sync::Arc::new(std::sync::Mutex::new(Some(child)));
-    let reaper = child.clone();
-    if let Err(error) = std::thread::Builder::new()
-        .name("oxibar-locker-reaper".to_owned())
-        .spawn(move || {
-            if let Some(mut child) = reaper
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .take()
-            {
-                let _ = child.wait();
-            }
-        })
-    {
-        if let Some(mut child) = child
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .take()
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        return Err(error.to_string());
-    }
-    Ok(())
+    oxibar_plugin_api::launch::launch(arguments, None).map(|_| ())
 }

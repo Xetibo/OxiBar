@@ -117,7 +117,10 @@ pub use waycrate_xkbkeycode::xkb_keyboard;
 
 pub mod dpi;
 mod events;
+mod performance;
 mod strtoshape;
+
+use wayland_protocols::wp::presentation_time::client::wp_presentation::WpPresentation;
 
 use events::DispatchMessageInner;
 
@@ -458,12 +461,20 @@ impl<T> WindowStateUnitBuilder<T> {
                 scale: 120,
                 request_flag: Default::default(),
                 present_available_state: Default::default(),
+                presentation: None,
+                namespace: String::new(),
+                frames: 0,
             },
         }
     }
 
     fn build(self) -> WindowStateUnit<T> {
         self.inner
+    }
+
+    fn namespace(mut self, namespace: String) -> Self {
+        self.inner.namespace = namespace;
+        self
     }
 
     fn size(mut self, size: (u32, u32)) -> Self {
@@ -542,6 +553,9 @@ pub struct WindowStateUnit<T> {
     scale: u32,
     request_flag: WindowStateUnitRequestFlag,
     present_available_state: PresentAvailableState,
+    presentation: Option<WpPresentation>,
+    namespace: String,
+    frames: u64,
 }
 
 impl<T> WindowStateUnit<T> {
@@ -780,7 +794,10 @@ impl<T> WindowStateUnit<T> {
         }
     }
 
-    pub fn take_present_slot(&mut self) -> bool {
+    pub fn take_present_slot(&mut self) -> bool
+    where
+        T: 'static,
+    {
         if !self.should_refresh() {
             return false;
         }
@@ -789,6 +806,21 @@ impl<T> WindowStateUnit<T> {
         }
         self.request_flag.refresh = RefreshRequest::Wait;
         self.present_available_state = PresentAvailableState::Taken;
+        if let Some(presentation) = &self.presentation {
+            self.frames += 1;
+            presentation.feedback(
+                &self.wl_surface,
+                &self.qh,
+                performance::Feedback {
+                    id: self.id,
+                    namespace: self.namespace.clone(),
+                    frame: self.frames,
+                },
+            );
+            performance::record(
+                serde_json::json!({"event":"draw","surface":format!("{:?}",self.id),"namespace":self.namespace,"frame":self.frames}),
+            );
+        }
         true
     }
 
@@ -899,6 +931,7 @@ pub struct WindowState<T> {
     viewporter: Option<WpViewporter>,
     fractional_scale_manager: Option<WpFractionalScaleManagerV1>,
     globals: Option<GlobalList>,
+    presentation: Option<WpPresentation>,
 
     // background
     background_surface: Option<WlSurface>,
@@ -964,6 +997,9 @@ impl<T> WindowState<T> {
             .iter()
             .position(|unit| unit.id == id && unit.becreated)?;
 
+        performance::record(
+            serde_json::json!({"event":"closed","surface":format!("{:?}",id),"namespace":self.units[index].namespace}),
+        );
         self.units[index].shell.destroy();
         self.units[index].wl_surface.destroy();
 
@@ -1005,7 +1041,11 @@ impl<T> WindowState<T> {
         &self.units
     }
 
-    fn push_window(&mut self, window_state_unit: WindowStateUnit<T>) {
+    fn push_window(&mut self, mut window_state_unit: WindowStateUnit<T>) {
+        window_state_unit.presentation = self.presentation.clone();
+        performance::record(
+            serde_json::json!({"event":"surface","surface":format!("{:?}",window_state_unit.id),"namespace":window_state_unit.namespace}),
+        );
         let surface = window_state_unit.wl_surface.clone();
         self.units.push(window_state_unit);
         // new created surface will be current_surface.
@@ -1424,6 +1464,7 @@ impl<T> Default for WindowState<T> {
             viewporter: None,
             xdg_output_manager: None,
             globals: None,
+            presentation: None,
             fractional_scale_manager: None,
             virtual_keyboard: None,
 
@@ -2627,6 +2668,13 @@ impl<T: 'static> WindowState<T> {
         let mut event_queue = connection.new_event_queue::<WindowState<T>>();
         let qh = event_queue.handle();
 
+        if performance::enabled() {
+            self.presentation = globals.bind::<WpPresentation, _, _>(&qh, 1..=1, ()).ok();
+            if self.presentation.is_none() {
+                performance::record(serde_json::json!({"event":"presentation_unavailable"}));
+            }
+        }
+
         let wmcompositer = globals.bind::<WlCompositor, _, _>(&qh, 1..=5, ())?;
 
         let shm = globals.bind::<WlShm, _, _>(&qh, 1..=1, ())?;
@@ -3136,11 +3184,13 @@ impl<T: 'static> WindowState<T> {
                             let layer_shell = globals
                                 .bind::<ZwlrLayerShellV1, _, _>(&qh, 3..=4, ())
                                 .unwrap();
+                            let namespace =
+                                namespace.unwrap_or_else(|| window_state.namespace.clone());
                             let layer = layer_shell.get_layer_surface(
                                 &wl_surface,
                                 output.as_ref(),
                                 layer,
-                                namespace.unwrap_or_else(|| window_state.namespace.clone()),
+                                namespace.clone(),
                                 &qh,
                                 (),
                             );
@@ -3187,6 +3237,7 @@ impl<T: 'static> WindowState<T> {
                                     wl_surface,
                                     Shell::LayerShell(layer),
                                 )
+                                .namespace(namespace)
                                 .viewport(viewport)
                                 .fractional_scale(fractional_scale)
                                 .wl_output(output)

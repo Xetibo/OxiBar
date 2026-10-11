@@ -1,5 +1,5 @@
 {
-  description = "A simple bar made with Iced";
+  description = "A Rust/Iced Wayland widget shell with resident plugins";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -183,6 +183,7 @@
           oxibar-system = pluginPackage "system";
           oxibar-stats = pluginPackage "stats";
           oxibar-tools = pluginPackage "tools";
+          oxibar-example = pluginPackage "example";
           oxibar-tray = pluginPackage "tray";
           oxibar-workspaces = pluginPackage "workspaces";
           default = oxibar;

@@ -16,7 +16,6 @@
 //!
 //! Clicking the time toggles a host-owned calendar popup.
 
-use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -438,6 +437,39 @@ fn start_caldav_refresh(model: &mut Model) -> Option<Task<PluginMsg>> {
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn command(
+    model: PluginModel,
+    command: String,
+    arguments: Vec<String>,
+) -> Result<Task<oxibar_plugin_api::CommandOutcome>, String> {
+    match (command.as_str(), arguments.as_slice()) {
+        ("popup", []) => Ok(Task::done(oxibar_plugin_api::CommandOutcome {
+            message: msg(Message::ToggleCalendar),
+            result: Ok(()),
+        })),
+        ("refresh", []) => Ok(Task::done(oxibar_plugin_api::CommandOutcome {
+            message: msg(Message::RefreshCalendar),
+            result: Ok(()),
+        })),
+        ("day", [date]) => {
+            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                .map_err(|_| "Use an ISO date: YYYY-MM-DD".to_owned())?;
+            let command =
+                with_model_read::<Model, _>(&model, |model| model.calendar_command.clone())
+                    .map_err(|error| error.to_string())?;
+            Ok(Task::perform(
+                async move { open_calendar_day(date, command) },
+                |result| oxibar_plugin_api::CommandOutcome {
+                    message: msg(Message::CalendarOpenResult(result.clone())),
+                    result,
+                },
+            ))
+        }
+        _ => Err("Use Clock popup, refresh, or day <YYYY-MM-DD>".to_owned()),
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn launch(_focused_index: usize, _model: PluginModel) -> Option<Task<PluginMsg>> {
     // No keyboard-launch semantics for the clock yet. A future binding
     // could map this to "toggle calendar".
@@ -736,20 +768,9 @@ fn open_calendar_day(date: NaiveDate, command: Option<String>) -> Result<(), Str
         .replace("{year}", &date.year().to_string())
         .replace("{month}", &format!("{:02}", date.month()))
         .replace("{day}", &format!("{:02}", date.day()));
-    let output = Command::new("sh")
-        .args(["-c", &command])
-        .output()
-        .map_err(|e| format!("clock: failed to run calendar_command: {e}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        if stderr.is_empty() {
-            Err("clock: calendar_command failed".to_owned())
-        } else {
-            Err(format!("clock: calendar_command failed: {stderr}"))
-        }
-    }
+    oxibar_plugin_api::launch::launch(vec!["sh".into(), "-c".into(), command], None)
+        .map(|_| ())
+        .map_err(|error| format!("clock: failed to launch calendar_command: {error}"))
 }
 
 /// Wrap chrono's panicking `format` so a malformed user spec doesn't take

@@ -1,5 +1,93 @@
 # Decisions
 
+## 2026-10-11 — SDK, Independent App Lifetime and Verified Release Gates
+
+- Completed the final milestone after `5bfa536` (live themes/providers). User's
+  instruction remains: "after this step is done, proceed with all remaining steps,
+  committing after each step". Phases 0–7 are implemented and verified; this final
+  phase completes the authorized commit sequence. Preserve unrelated staged deletion of
+  `result`; no push, activation or delegation was requested.
+- Added `PLUGIN_SDK.md`, a separately packaged Example provider, actual installed
+  catalog/`oxibar plugins` with ABI/capabilities/enabled state, and real factory/
+  availability/duplicate-name tests. The example shares one model across bar,
+  popup, CC, desktop and OSD, live label/validator, owned visible timer and scoped
+  unsubmitted reset cleanup. `example.available`/initialization probe are example-
+  only contract seams, not new required ABI exports. ABI 6 remains unchanged.
+- Successfully initialized native libraries stay process-resident. Opaque messages,
+  futures/widgets/models can retain vtables during deferred executor teardown;
+  pinning code avoids unload-before-destructor. Owned models/streams still cancel
+  and drop normally. The real Example contract passed 25 cycles without host Tokio,
+  and metadata/availability inspection initializes zero models; duplicate names one.
+- SDK owns periodic interval streams; Network/Battery no longer spawn forever
+  polling threads. Network action/edit generations prevent old completion from
+  clearing a newer password form; modal close clears only unsubmitted state.
+  Network/Tray/Clock optional command hooks expose cached UI/confirmed actions
+  through ordinary command outcomes; Example demonstrates popup/serialized OSD.
+- Shared SDK app handoff uses native systemd user-manager transient services in
+  `app.slice`, outside shell termination scope. It resolves validated argv, strips
+  caller service/FD variables (including `WAYLAND_SOCKET`), listens before submit
+  and awaits actual job result. Definite unsupported/unavailable manager permits
+  direct reaped process-group fallback; uncertain acceptance cannot duplicate an
+  app. Private manager tests prove caller exit/app survival and accepted-error
+  single execution. Direct fallback cannot escape an existing cgroup without a
+  manager. Apps, Tools, explicit calendar command and dedicated locker share it.
+- HM startup is opt-in false with session target/Wayland condition/control-group
+  service ownership. `extraPlugins` installs disabled catalog packages without
+  enabling them in generated base or managing overrides. Examples provide session
+  environment/keybindings. Repeatable `nix/hm-test.nix` passed all eight false/true
+  startup/catalog/ownership assertions, using the external HM checkout with pinned
+  nixpkgs; its HM 26.05 vs nixpkgs 25.11 warning was version mismatch only. No real
+  service was activated.
+- Added repository `nix/gui-tests.nix`, private-bus config, isolated compositor
+  coordinator, fixture server/shims and output-mapped virtual pointer. Test-only
+  Sway xdg-shell advertisement permits a private pinned Hyprland 0.51.1 child;
+  Mesa/vendor/GBM/DRI paths are pinned. It owns runtime/cache/bus/compositors and
+  never touches actual desktop input/clipboard/network/calendar/hardware.
+- Full repeatable smoke passed actual catalog, SDK confirmation Escape/replacement,
+  theme density 1.2 application while OSD remains visible, launcher app handoff,
+  CalDAV/day fixture, secure network save, native tray menu, notification toast/
+  panel/inline reply/DND, two-instance pointer drag/resize, stale revision, hotplug
+  and ten CC reopen cycles. Geometry corrections were fixture hit targets/padding;
+  no speculative pointer backend changes were made. Screenshots stay private.
+- Optional backend `OXIBAR_PERF_TRACE` binds `wp_presentation` only in measurement
+  mode, requests feedback before next Iced draw/buffer commit and records actual
+  presented clock stamps/native retirement. No normal-runtime protocol/writes.
+  Nested Hyprland 0.51.1 omitted clock advertisement/returned stale timestamps, so
+  it was rejected as a benchmark reference; owned Sway 1.11 advertises clock 1.
+- Profiling found self-reindex feedback from unconditional watch replacement and
+  sibling trace writes under a missing-root parent. SDK watches now diff path/mode/
+  device/inode and filter to configured root relationships, with real quiet/create/
+  update/recovery regressions. Traces live outside watched fixtures.
+- Named release reference: Ryzen 9 7950X, GPU PCI `1002:744c`/`1002:164e`, kernel
+  `7.2.8-xanmod1`, pinned Sway 1.11 headless GLES2, release Apps+Tools/no dock/local
+  2,000-entry index. 50 warm opens/20 queries/10 seconds idle passed all six gates:
+  cold control 122.685 ms/bar actual presentation 122.041 ms; warm median/p95/max
+  20.555/20.827/21.120 ms; query max 0.826 ms; idle 0.30% one core/zero draws;
+  all-thread voluntary context switches 202.60/s (wakeup proxy); reopen RSS median
+  +130 KiB within 2 MiB noise budget, threads 66 → 64/max 66. Record/commands are
+  committed in `RELEASE_CHECKS.md`/`performance-reference.json`.
+- Final source review corrected relative executable/PATH resolution to use the
+  requested working directory before native handoff. A private owned-file regression
+  covers `./private-program`; argument vectors and direct child cwd remain unchanged.
+- Final source verification passed 243 normal workspace tests/doctests, eleven
+  explicit opt-ins ignored, strict all-targets Clippy and formatting. Actual native
+  loader/Example FFI, private manager and full final compositor smoke passed. All
+  fourteen final Nix outputs built; host is
+  `/nix/store/vbl1q4zvr3mpywm2b491gwynbpblbxrv-oxibar-0.1.0`, Example
+  `/nix/store/y15yanwva3qxda65rg5341x92kbpv2w4-example-0.1.0`. These final packages
+  include the working-directory regression fix; presentation/query/idle paths did
+  not change after their measured release proof.
+- Keep explicit session-owned `/tmp/opencode/oxibar-target` with debug info and
+  incremental disabled for agent checks, filtered source for untracked manifests
+  and serial Nix builds. Two earlier test commands accidentally used the existing
+  workspace target; it was not deleted. Review both external staging and new files
+  before final commit; include only intended work and leave `result` deletion.
+- All requested implementation milestones are complete. Remaining generic focused-
+  output/window adapters, native hardware extensions, accessibility, optional
+  weather/autohide and safe future hot unloading are documented follow-ups, not
+  claims of implemented universal support. No deployment/activation is part of this
+  source delivery.
+
 ## 2026-10-11 — Live Immutable Themes and Expanded Launcher Providers
 
 - Completed milestone 6 after `2ed9892` (dock/widgets). User authorization remains

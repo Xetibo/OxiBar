@@ -152,6 +152,9 @@ pub(crate) struct PluginStatus {
     pub filename: String,
     pub label: String,
     pub state: String,
+    pub abi: Option<u32>,
+    pub capabilities: Vec<String>,
+    pub enabled: bool,
 }
 
 pub(crate) struct SettingsUi {

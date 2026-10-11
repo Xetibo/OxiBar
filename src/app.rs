@@ -742,6 +742,9 @@ impl OxiBar {
             }
             Action::Close => self.close_launcher(),
             Action::Query(query) => {
+                self.launcher.query_revision = self.launcher.query_revision.saturating_add(1);
+                self.launcher.query_started_at = Some(std::time::Instant::now());
+                self.launcher.query_elapsed_us = None;
                 self.launcher.query = query;
                 self.launcher.focused = 0;
                 self.query_runner_plugins()

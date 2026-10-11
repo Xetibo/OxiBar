@@ -5,8 +5,7 @@ use std::time::Duration;
 
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Shadow, Task,
-    futures::Stream,
-    stream,
+    futures::{Stream, StreamExt},
     widget::{Column, Row, container, tooltip},
 };
 use oxibar_plugin_api::{
@@ -204,18 +203,7 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
     let interval = *POLL_INTERVAL
         .get()
         .unwrap_or(&Duration::from_secs(DEFAULT_POLL_SECONDS));
-    let s = stream::channel(
-        16,
-        move |mut output: iced::futures::channel::mpsc::Sender<PluginMsg>| async move {
-            std::thread::spawn(move || {
-                loop {
-                    std::thread::sleep(interval);
-                    let _ = output.try_send(msg(Message::Refresh));
-                }
-            });
-            std::future::pending::<()>().await;
-        },
-    );
+    let s = oxibar_plugin_api::worker::interval(interval).map(|()| msg(Message::Refresh));
 
     Box::into_raw(Box::new(s)) as *mut PluginStream
 }

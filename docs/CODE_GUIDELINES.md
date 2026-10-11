@@ -1,5 +1,18 @@
 # Code Guidelines
 
+## SDK and Release Ownership
+
+- Retain initialized native plugin code for process lifetime; deferred trait-object
+  destructors, messages and tasks may outlive their original surface. Cancel owned
+  streams normally; do not equate code retention with another service or hot unload.
+- Use owned SDK interval streams instead of detached forever polling threads.
+- Diff filesystem watch path/mode/device/inode identity. Filter parent-watch events
+  to the configured root relationship; unrelated logs must not cause reindex loops.
+- Launch external apps through the shared argument-based user-manager handoff from
+  worker context. Never direct-launch again after uncertain submission acceptance.
+- Measure actual compositor presentation for first-frame gates. Keep measurement
+  traces outside watched fixtures and preserve normal idle behavior when disabled.
+
 ## Rust Style
 
 - Keep changes small and aligned with existing module boundaries.

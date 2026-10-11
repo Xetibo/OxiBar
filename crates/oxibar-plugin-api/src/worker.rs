@@ -6,7 +6,17 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
-use iced::futures::{FutureExt, channel::oneshot, future::BoxFuture};
+use iced::futures::{FutureExt, StreamExt, channel::oneshot, future::BoxFuture};
+
+/// A subscription-owned timer: dropping its stream cancels the sleep and keeps
+/// repeated subscriptions from accumulating detached poll threads.
+pub fn interval(duration: std::time::Duration) -> iced::futures::stream::BoxStream<'static, ()> {
+    iced::futures::stream::unfold((), move |()| async move {
+        async_io::Timer::after(duration).await;
+        Some(((), ()))
+    })
+    .boxed()
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct CancelToken(Arc<AtomicBool>);
@@ -180,6 +190,18 @@ impl<T: Send + 'static> Drop for LatestWorker<T> {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn interval_ownership_can_be_dropped_and_resumed_without_a_host_reactor() {
+        for _ in 0..25 {
+            let mut ticks = interval(Duration::from_millis(1));
+            assert_eq!(iced::futures::executor::block_on(ticks.next()), Some(()));
+            assert!(ticks.next().now_or_never().is_none());
+            let started = Instant::now();
+            drop(ticks);
+            assert!(started.elapsed() < Duration::from_millis(100));
+        }
+    }
 
     #[test]
     fn coalesces_pending_work_and_cancels_running_work_without_a_reactor() {

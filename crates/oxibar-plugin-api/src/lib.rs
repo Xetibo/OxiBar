@@ -297,6 +297,7 @@ pub type DesktopViewFn = ContextViewFn;
 
 pub use oxiced;
 pub mod fswatch;
+pub mod launch;
 pub mod runner;
 pub mod worker;
 
