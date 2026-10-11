@@ -20,6 +20,7 @@
   makeWrapper,
   makeFontsConf,
   fontconfig,
+  xdg-utils,
   adwaita-fonts,
   ...
 }: let
@@ -98,7 +99,7 @@ in
     postFixup = ''
       patchelf --set-rpath "${runtimeLibPath}" "$out/bin/oxibar"
       wrapProgram "$out/bin/oxibar" \
-        --prefix PATH : "${lib.makeBinPath [fontconfig]}" \
+        --prefix PATH : "${lib.makeBinPath [fontconfig xdg-utils]}" \
         --set FONTCONFIG_FILE "${fontsConf}" \
         --set VK_ICD_FILENAMES "${vkIcdFiles}"
     '';

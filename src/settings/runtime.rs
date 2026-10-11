@@ -381,6 +381,7 @@ impl OxiBar {
 
     pub(crate) fn config_updated(&mut self, outcome: &ConfigOutcome) -> Task<Message> {
         self.config.jobs = self.config.jobs.saturating_sub(1);
+        self.settings.error = outcome.error.clone();
         let old = self.config.snapshot.clone();
         let mut tasks = Vec::new();
         if outcome.snapshot.revision >= old.revision {
@@ -389,6 +390,9 @@ impl OxiBar {
             if old.effective != outcome.snapshot.effective
                 || old.overrides != outcome.snapshot.overrides
             {
+                if old.effective.get("theme") != self.config.snapshot.effective.get("theme") {
+                    tasks.push(self.apply_theme(false));
+                }
                 tasks.push(self.apply_host_config(&old));
             }
             if old.effective != outcome.snapshot.effective {
@@ -406,10 +410,12 @@ impl OxiBar {
                             })
                         }),
                 );
+                if self.launcher.window_id.is_some() {
+                    tasks.push(self.query_runner_plugins());
+                }
                 self.launcher.refresh(&self.plugins);
             }
         }
-        self.settings.error = outcome.error.clone();
         if outcome.error.is_none() {
             if let Some(path) = outcome.edited_path.as_ref() {
                 self.settings.drafts.remove(path);
@@ -574,12 +580,14 @@ impl OxiBar {
 
     pub(crate) fn status_data(&self) -> serde_json::Value {
         json!({"launcher_open": self.launcher.window_id.is_some(), "settings_open": self.settings.window_id.is_some(),
+            "launcher_results": self.launcher.entries.iter().map(|entry| json!({"provider": entry.plugin_id, "id": entry.result.index, "score": entry.result.score, "favorite": entry.favorite})).collect::<Vec<_>>(),
             "compositor_backend":self.compositor.as_ref().map(|snapshot|&snapshot.backend),"compositor_error":self.compositor_error,"compositor_action_error":self.compositor_action_error,
             "docks":self.docks.instances.values().map(|dock|json!({"instance":format!("{:?}",dock.id),"output":dock.output,"width":dock.size.0,"height":dock.size.1,"items":dock.items.len()})).collect::<Vec<_>>(),
             "desktop_editing":self.desktop.draft.is_some(),"desktop_widgets":self.desktop.instances.values().map(|widget|json!({"id":widget.spec.id,"instance":format!("{:?}",widget.id),"plugin":widget.spec.plugin,"output":widget.output,"x":widget.rect.x,"y":widget.rect.y,"width":widget.rect.width,"height":widget.rect.height})).collect::<Vec<_>>(),
             "osds": self.osds.instances.iter().map(|(output, item)| json!({"instance": format!("{:?}", item.id), "output": output, "provider": item.plugin, "topic": item.topic, "generation": item.generation})).collect::<Vec<_>>(),
             "control_center_open": self.control_center.window_id.is_some(), "control_center_selected": self.control_center.selected, "control_center_widgets": self.control_center_plugins(),
             "restart_required": self.restart_fields(), "loaded_plugins": self.plugins.keys().collect::<Vec<_>>(), "active_subscriptions": self.plugins.iter().filter(|(name, (_, funcs))| self.subscription_enabled(name, funcs)).map(|(name, _)| name).collect::<Vec<_>>(), "config_error": self.settings.error,
+            "theme": {"revision": self.appearance.snapshot.revision, "font": self.appearance.snapshot.font_family, "font_loading": self.appearance.font_loading, "preset": self.appearance.snapshot.preset, "density": self.appearance.snapshot.density, "font_scale": self.appearance.snapshot.font_scale, "reduced_motion": self.appearance.snapshot.reduced_motion, "animation_ms": self.appearance.snapshot.animation_ms, "primary": oxiced::theme::snapshot::color_hex(self.appearance.snapshot.tokens.primary), "mantle": oxiced::theme::snapshot::color_hex(self.appearance.snapshot.tokens.mantle), "failures": self.appearance.failures, "upgraded_plugins": self.plugins.iter().filter(|(_, (_, funcs))| funcs.theme_changed.is_some()).map(|(name, _)| name).collect::<Vec<_>>()},
             "monitor_backend": self.shell.inventory.as_ref().map(|inventory| &inventory.backend), "monitor_error": self.shell.inventory_error,
             "outputs": self.shell.inventory.as_ref().map(|inventory| inventory.outputs.iter().map(|output| output.json()).collect::<Vec<_>>()).unwrap_or_default(),
             "bars": self.shell.bars.iter().map(|(instance, bar)| json!({"instance": instance, "output": bar.output, "width": bar.size.width, "height": bar.size.height, "position": format!("{:?}", bar.config.position)})).collect::<Vec<_>>()})
@@ -777,6 +785,7 @@ fn kind_data(kind: &oxibar_plugin_api::SettingKind) -> serde_json::Value {
         SettingKind::Integer { min, max } => json!({"type": "integer", "min": min, "max": max}),
         SettingKind::Number { min, max } => json!({"type": "number", "min": min, "max": max}),
         SettingKind::Text => json!({"type": "string"}),
+        SettingKind::Color => json!({"type": "color"}),
         SettingKind::TextList => json!({"type": "string-array"}),
         SettingKind::TableList => json!({"type": "table-array"}),
         SettingKind::Choice(options) => json!({"type": "enum", "options": options}),

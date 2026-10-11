@@ -121,6 +121,10 @@
           craneLib = inputs.crane.mkLib pkgs;
           lockFile = ./Cargo.lock;
           src = craneLib.cleanCargoSource ./.;
+          layershellevSource = builtins.path {
+            path = ./crates/layershellev/src;
+            name = "oxibar-layershellev-source";
+          };
           cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
           cargoVendorDir = craneLib.vendorCargoDeps {
             inherit src;
@@ -155,7 +159,7 @@
               # Registry iced_layershell consumes this local patched dependency.
               # Keep its API source in Crane's otherwise stubbed dependency build.
               postPatch = ''
-                cp -R ${src}/crates/layershellev/src crates/layershellev/
+                cp -R ${layershellevSource}/. crates/layershellev/src/
               '';
               cargoBuildExtraArgs = "--workspace";
               cargoCheckExtraArgs = "--workspace --all-targets";
@@ -178,6 +182,7 @@
           oxibar-notifications = pluginPackage "notifications";
           oxibar-system = pluginPackage "system";
           oxibar-stats = pluginPackage "stats";
+          oxibar-tools = pluginPackage "tools";
           oxibar-tray = pluginPackage "tray";
           oxibar-workspaces = pluginPackage "workspaces";
           default = oxibar;

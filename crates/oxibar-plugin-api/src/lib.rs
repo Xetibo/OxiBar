@@ -295,6 +295,49 @@ pub struct DockEntry {
 pub type DockEntriesFn = unsafe extern "Rust" fn(model: PluginModel) -> Arc<Vec<DockEntry>>;
 pub type DesktopViewFn = ContextViewFn;
 
+pub use oxiced;
+pub mod fswatch;
+pub mod runner;
+pub mod worker;
+
+#[derive(Debug, Clone, Default)]
+pub struct RunnerStatus {
+    pub available: bool,
+    pub indexing: bool,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RunnerFavorite {
+    pub path: String,
+    pub values: Vec<String>,
+    pub active: bool,
+}
+
+pub type RunnerPrefixesFn = unsafe extern "Rust" fn(PluginModel) -> Vec<String>;
+pub type RunnerCancelFn = unsafe extern "Rust" fn(PluginModel);
+pub type RunnerStatusFn = unsafe extern "Rust" fn(PluginModel) -> RunnerStatus;
+pub type RunnerFavoriteFn = unsafe extern "Rust" fn(PluginModel, usize) -> Option<RunnerFavorite>;
+/// Pure, thread-safe validation of an effective configuration before persistence.
+pub type ConfigValidateFn = unsafe extern "Rust" fn(toml::Table) -> Result<(), String>;
+pub type ThemeChangedFn = unsafe extern "Rust" fn(
+    model: PluginModel,
+    snapshot: Arc<oxiced::theme::snapshot::ThemeSnapshot>,
+) -> Result<(), String>;
+
+#[macro_export]
+macro_rules! export_theme_changed {
+    () => {
+        #[unsafe(no_mangle)]
+        pub extern "Rust" fn theme_changed(
+            _: $crate::PluginModel,
+            snapshot: std::sync::Arc<$crate::oxiced::theme::snapshot::ThemeSnapshot>,
+        ) -> Result<(), String> {
+            $crate::oxiced::theme::snapshot::install(snapshot)
+        }
+    };
+}
+
 /// Optional desktop input policy. Read-only bodies return false so the host
 /// leaves the underlying desktop usable. Users can override each instance.
 pub type DesktopInteractiveFn = unsafe extern "Rust" fn(model: PluginModel) -> bool;

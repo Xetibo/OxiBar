@@ -27,6 +27,7 @@ pub enum SettingKind {
     Integer { min: i64, max: i64 },
     Number { min: f64, max: f64 },
     Text,
+    Color,
     TextList,
     TableList,
     Choice(Vec<String>),

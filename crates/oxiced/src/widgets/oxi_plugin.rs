@@ -1,12 +1,20 @@
 use iced::{
     Background, Border, Color, Element, Length, Shadow, Theme,
     border::Radius,
-    widget::{Button, Container, button, container, text},
+    widget::{Button, Container, button, container},
 };
 
 use crate::theme::theme_impl::OXITHEME;
 
 pub const BAR_CONTROL_HEIGHT: f32 = 22.5;
+
+pub mod text {
+    pub use iced::widget::text::*;
+}
+
+pub fn text<'a>(content: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
+    iced::widget::text(content).font(crate::theme::snapshot::current_font())
+}
 
 pub fn text_primary(_: &Theme) -> text::Style {
     text::Style {

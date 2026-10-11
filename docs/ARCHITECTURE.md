@@ -25,6 +25,8 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `src/surfaces.rs`: bar, popup, modal, and panel view construction.
 - `src/messages.rs`: host message enum, layer-shell action conversion, and plugin message routing.
 - `src/font.rs`: bar font config, fontconfig resolution, and font byte loading.
+- `src/theme.rs`: immutable live theme delivery, bounded font loading and
+  late-result guards; host renderer and upgraded providers receive the same snapshot.
 - `src/config/`: source-aware snapshots, typed host/plugin schemas, recursive
   base/GUI merging, atomic override persistence, revision checks and filesystem
   watching. Startup/instance compatibility helpers remain in `mod.rs`.
@@ -46,6 +48,8 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   connected while socket-setting changes await restart.
 - `src/plugins.rs`: dynamic library discovery, ABI symbol resolution, optional plugin availability checks, plugin model initialization, and safe wrappers for plugin view/update/error calls.
 - `crates/oxibar-plugin-api`: shared ABI types used by host and plugins.
+- SDK runner utilities own latest-only cancellable workers, private versioned usage
+  state and debounced filesystem watchers with nonrecursive missing-root fallbacks.
 - `crates/oxiced`: local shared theme/widget library imported from the previously
   pinned upstream revision; host/plugins use one workspace dependency and lockfile.
 - `plugins/*`: dynamic plugin crates loaded from `$XDG_CONFIG_HOME/oxibar/plugins/` when their library filename appears in `plugins = [...]`.
@@ -60,9 +64,12 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   views remain separate modules.
 - `plugins/stats/`: bounded proc-file snapshots and a visible-only, cancellable
   refresh stream shared by all displays.
+- `plugins/tools/`: pure typed configuration/calculator/search, cached PATH/file
+  indexes and one owned native data-control clipboard connection.
 - `crates/layershellev`: the published 0.17.1 backend with a local keyboard-focus
   correction. Compositor keyboard Enter/Leave owns keyboard routing independently
-  of newly created or pointer-active surfaces.
+  of newly created or pointer-active surfaces. Seat capability updates retain
+  existing resources, release removed devices and ignore retired keyboard events.
 - `plugins/clock/src/caldav.rs`: HTTPS-only CalDAV sync, current-month calendar queries, minimal iCalendar parsing, common recurrence expansion, and Nextcloud-compatible calendar query support.
 - `flake.nix` and `nix/*.nix`: Nix packaging for the host and dynamic plugin libraries. Crane builds one workspace dependency artifact derivation and reuses it for every host/plugin package so shared Rust dependencies are not rebuilt per plugin.
 
@@ -84,8 +91,8 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - Host-request mapping is centralized in `map_plugin_message()`, so plugin subscription messages and plugin initialization tasks use the same routing rules.
 - The host owns popup, modal, panel, toast and control-center layer-shell surfaces.
   Plugins render only inner content for those surfaces. Popup open/close layout
-  animation uses a fixed quick ease-out transition so app-side popups track
-  notification-panel layer opening speed more closely.
+  animation uses the shared theme duration; reduced motion or zero duration bypasses
+  animation builders rather than evaluating a zero-duration transition.
 - Modal retirement invokes an optional provider `modal_closed` hook once for that
   instance, including Escape, replacement, compositor closure and output removal.
   Nonblocking cleanup tasks still update the model after their window disappears.
@@ -121,10 +128,13 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   provenance changes both affect layout: explicit empty GUI arrays suppress the
   legacy all-empty fallback. Control-center geometry/order/enablement also apply
   live. Settings, launcher and control-center focus are window-scoped.
-- Plugin lifecycle/font/timer changes are classified as restart-required. Current
+- Plugin lifecycle/legacy bar-font/timer changes are classified as restart-required. Current
   plugin libraries/models stay loaded; optional config hooks apply supported live
   values without losing plugin state. Applications, clock presentation/calendar
   commands, and notification default timeout currently support live updates.
+- Live palette, font, density and motion preferences are a separate supported
+  theme capability. Configuration validation retains provider library ownership
+  while pure callbacks run on background transactions or external reloads.
 - Visible popup size comes from `[bar.popup_sizes]`, then optional runtime `popup_metrics(model)`, then optional plugin metadata, then host default size. Plugins can also request a larger transparent popup input region through runtime metrics or metadata for detached overlays such as tray context menus.
 
 ## Dock and Desktop Ownership
@@ -164,6 +174,50 @@ timers; repeated hidden/resume cycles do not leave detached polling threads.
 Exclusive overlays dismiss on ID-scoped outside clicks using actual configured
 bounds; this releases compositor input grabs without inventing pointer routing or
 replaying an application click.
+
+## Live Theme and Runner Ownership
+
+`oxiced::theme::snapshot::ThemeSnapshot` carries immutable tokens, font and motion
+metadata. The host explicitly delivers the same `Arc` to every optional
+`theme_changed` hook. Bundled providers install that snapshot into their synchronized
+library-local handle; missing hooks retain the legacy seed. Defaults preserve the
+existing oxiced palette, including an existing oxiced theme file. Presets and GUI
+overrides derive new snapshots rather than mutating shared token objects.
+
+Legacy field access remains safe through bounded immutable palette/font interning
+(128 distinct values per library). Previously returned references stay valid;
+revision/motion-only changes reuse values. Validation refuses exhausted capacity.
+Shared text/input/picker helpers use the active font. Native font lookup/read is
+bounded; bytes are uploaded before switching to the canonical family, and stale
+font requests cannot replace newer colors or families.
+
+Runner providers advertise optional prefixes, status, cancellation and favorites.
+The host selects the longest matching prefix and cancels inactive scopes; providers
+parse their own query. Rendered rows and input submission capture provider/local
+identity, not ranked position. Favorite changes go through the revision-checked
+config store as a single sparse declared field. Pure provider validators retain
+their library `Arc` and run before candidate adoption or persistence.
+
+Applications and Tools each own one index worker and one query worker, with one
+running and one latest pending job. Cancellation is cooperative and results are
+generation-gated. Ranking keeps bounded top results, combines usage/favorites, and
+does not clone whole indexes per query. Owned filesystem watchers debounce changes;
+missing roots watch an existing parent nonrecursively until the real root appears.
+
+Applications supports localized desktop fields, separate stable desktop actions,
+icon-theme inheritance and a dock catalog that excludes action rows. Tools supplies
+argument-list commands, bounded calculator evaluation, files, bookmarks and named
+actions. Immutable action contents participate in identity so edits/reindexing
+cannot redirect an old displayed item. Usage is versioned owner-only state under
+XDG state, loaded before local counts are persisted; invalid metadata is retained.
+
+Clipboard history is opt-in, ephemeral and bounded. One native worker prefers
+ext-data-control with wlr compatibility and owns polling, wake sockets, pipe FDs,
+deadlines and shutdown. Copy works without history capture and acknowledges actual
+selection ownership. Capture/selection epochs prevent old reads surviving opt-out;
+history identities remain monotonic across reconnect. Clipboard text is not stored
+in usage/favorites or the historical intent ledger. Status reports opaque result
+identities, not queries/titles/clipboard contents.
 
 ## Native Audio Ownership
 
@@ -229,7 +283,8 @@ capabilities remain follow-ups.
   `settings_schema`, `config_changed`, `view_with_context`, and
   `control_center_view`, `modal_closed`, `command`, `osd_view`, `dock_entries`,
   `desktop_view`, `desktop_interactive`, `compositor_changed` and
-  `subscription_policy`.
+  `subscription_policy`, `theme_changed`, `runner_prefixes`, `runner_status`,
+  `runner_cancel`, `runner_favorite` and `config_validate`.
 - `availability(config)` lets a plugin skip loading before model initialization, init tasks, and subscriptions when required hardware or system services are unavailable.
 - `ABI_VERSION` in `oxibar-plugin-api` gates host/plugin compatibility.
 - Plugin models are `Arc<RwLock<Box<dyn OxiAny>>>`; plugin messages are `Arc<dyn OxiAny>`.
@@ -253,6 +308,9 @@ capabilities remain follow-ups.
 - `compositor_changed(model, snapshot)` shares host window/workspace state.
   `subscription_policy()` optionally selects resident or visible-only ownership;
   absent capabilities retain compatible defaults at ABI 6.
+- `theme_changed(model, Arc<ThemeSnapshot>)` receives an explicit immutable value.
+  `runner_cancel(model)` is nonblocking and returns no task; favorite hooks return
+  a declared sparse field, and `config_validate(table)` is pure and thread-safe.
 
 ## System Services and OSD Ownership
 
@@ -296,7 +354,10 @@ Geometry, enablement and duration apply live without another provider model.
 - `tray`: StatusNotifier watcher, dynamically sized tray item popup, activation, and DBusMenu-backed detached context menu rendering. Item registration publishes a fallback row immediately and refreshes DBus metadata asynchronously so registering applications are not blocked by property queries.
 - `workspaces`: output-aware workspace display and dispatch from the shared host broker.
 - `applications`: resident OxiRun application/icon index, fuzzy matching, terminal
-  support and launching; runner/dock share immutable catalogs and stable IDs.
+  support, localized fields/actions, inherited icons, filesystem refresh and
+  usage/favorite ranking; runner/dock share immutable catalogs and stable IDs.
+- `tools`: commands, calculator, files, bookmarks, named argument actions and
+  opt-in native clipboard history with cancellable cached searches.
 - `stats`: cached CPU, memory and uptime summaries with visible-only refresh.
 
 Plugin `lib.rs` files should keep ABI symbols, model update, and view composition. External-system logic and parsers should live in sibling modules once they grow beyond small helpers.
@@ -313,7 +374,8 @@ Plugin `lib.rs` files should keep ABI symbols, model update, and view compositio
 - The stream raw-pointer ABI is documented as practical but not fully C-ABI-safe.
 - Dynamic plugins cannot assume the host's Tokio runtime is visible through their
   own copy of Tokio TLS. Runner workers and native audio/BlueZ/System owners are cancelled
-  and joined by their owning streams; asynchronous DBus/media uses async-io/zbus.
+  and joined by their owners; asynchronous DBus/media uses async-io/zbus. Native
+  clipboard uses a wakeable poll loop and owns all transfer FDs.
 
 ## Shell Expansion
 
@@ -324,8 +386,8 @@ are implemented, together with the first multi-output registry/inventory slice
 and control-center composition. Native audio, BlueZ and system services/OSDs are implemented;
 settings/control-center layouts share spacious oxiced controls while retaining
 the existing palette. Dock and persistent desktop widgets are implemented with
-shared catalogs, compositor state and visible-only streams. Live theme snapshots,
-expanded providers and the SDK/packaging/performance gate are the next milestones.
+  shared catalogs, compositor state and visible-only streams. Live theme snapshots
+  and expanded providers are implemented. The SDK/packaging/performance gate is next.
 
 The roadmap identifies selective ReSet audio/BlueZ and monitor backend patterns.
 Audio, BlueZ and read-only monitor adapters follow these boundaries.
@@ -343,4 +405,7 @@ No donor daemon/GTK architecture is required by the Rust/Iced host or plugin API
 - Native dependencies must be available to shared dependency compilation and the
   owning final plugin. `libpulseaudio` is in the Audio library's runtime search
   path; other plugins do not gain that plugin-specific runtime dependency.
+- The host wrapper supplies fontconfig and the argument-based `xdg-open` helper.
+  The backend source has its own filtered input so unrelated application edits do
+  not invalidate the shared dependency artifact's post-patch source identity.
 - This reduces rebuild time when multiple plugins are updated because dependency crates such as `iced`, `oxiced`, `zbus`, and `oxibar-plugin-api` are compiled once per dependency graph instead of once per plugin derivation. Final plugin crate compilation and linking still happen per plugin.

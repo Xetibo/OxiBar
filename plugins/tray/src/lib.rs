@@ -13,7 +13,7 @@ use iced::{
     },
     futures::Stream,
     stream,
-    widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, svg, text},
+    widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, svg},
 };
 use oxibar_plugin_api::{
     ABI_VERSION, HOST_REQUEST_TOGGLE_POPUP, PluginMetadata, PluginModel, PluginMsg,
@@ -22,6 +22,7 @@ use oxibar_plugin_api::{
 };
 use oxiced::theme::theme_impl::OXITHEME;
 use oxiced::widgets::oxi_plugin;
+use oxiced::widgets::oxi_plugin::text;
 use zbus::{blocking::Connection, fdo::RequestNameFlags, interface, message::Header};
 
 mod system;
@@ -96,6 +97,8 @@ pub enum Message {
 fn msg(m: Message) -> PluginMsg {
     Arc::new(m)
 }
+
+oxibar_plugin_api::export_theme_changed!();
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn abi_version() -> u32 {

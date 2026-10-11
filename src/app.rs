@@ -236,6 +236,7 @@ fn run_bar(connection: Option<Connection>) -> Result<(), iced_layershell::Error>
 }
 
 pub(crate) struct OxiBar {
+    pub(crate) appearance: crate::theme::ThemeRuntime,
     pub(crate) docks: crate::dock::Docks,
     pub(crate) desktop: crate::desktop::Desktop,
     pub(crate) compositor: Option<oxibar_plugin_api::CompositorSnapshot>,
@@ -322,6 +323,22 @@ impl OxiBar {
         {
             error = Some(problem);
         }
+        for (name, (_, funcs)) in &loaded.plugins {
+            if let Some(validate) = funcs.config_validate
+                && let Err(error) = store
+                    .lock()
+                    .expect("initial configuration")
+                    .register_validator(name.clone(), validate, funcs._lib.clone())
+            {
+                tracing::warn!("Plugin configuration validation failed: {error}");
+            }
+        }
+        error = store
+            .lock()
+            .expect("initial configuration")
+            .error
+            .clone()
+            .or(error);
         let runtime = ConfigRuntime::shared(store);
         let mut settings_ui = SettingsUi::new(&runtime.snapshot);
         settings_ui.error = error;
@@ -354,7 +371,9 @@ impl OxiBar {
             start_widgets
         };
         let launcher = Launcher::new(config);
+        let appearance = crate::theme::ThemeRuntime::new(config, runtime.snapshot.revision, true);
         let mut bar = Self {
+            appearance,
             docks: crate::dock::Docks::default(),
             desktop: crate::desktop::Desktop::default(),
             compositor: None,
@@ -386,6 +405,7 @@ impl OxiBar {
         };
         bar.refresh_plugin_catalog();
         let mut tasks = loaded.tasks;
+        tasks.push(bar.apply_theme(true));
         tasks.push(bar.reconcile_bars());
         tasks.push(bar.reconcile_docks());
         tasks.push(bar.reconcile_desktop());
@@ -398,6 +418,10 @@ impl OxiBar {
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::ThemeFontLoaded(requested, result) => {
+                self.theme_font_loaded(requested, result)
+            }
+            Message::ThemeFontReady(requested, result) => self.theme_font_ready(requested, result),
             Message::OverlayPointer(id, position) => {
                 if let Some(record) = self.shell.registry.get_mut(id) {
                     record.pointer =
@@ -728,17 +752,67 @@ impl OxiBar {
             }
             Action::LaunchFocused => self.launch_runner_entry(self.launcher.focused),
             Action::Launch(index) => self.launch_runner_entry(index),
+            Action::Activate(plugin, index) => self
+                .launcher
+                .entries
+                .iter()
+                .position(|entry| entry.plugin_id == plugin && entry.result.index == index)
+                .map(|position| self.launch_runner_entry(position))
+                .unwrap_or_else(Task::none),
+            Action::Favorite(plugin, index) => {
+                if self.config.jobs > 0 {
+                    return Task::none();
+                }
+                let Some((model, funcs)) = self.plugins.get(&plugin) else {
+                    return Task::none();
+                };
+                let Some(favorite) = funcs
+                    .runner_favorite
+                    .and_then(|favorite| unsafe { favorite(model.clone(), index) })
+                else {
+                    return Task::none();
+                };
+                if !self.config.snapshot.schema.iter().any(|field| {
+                    field.path == favorite.path
+                        && field.kind == oxibar_plugin_api::SettingKind::TextList
+                }) {
+                    return Task::none();
+                }
+                self.config_job(
+                    Some(crate::config::Mutation::Set(
+                        favorite.path,
+                        toml::Value::Array(
+                            favorite
+                                .values
+                                .into_iter()
+                                .map(toml::Value::String)
+                                .collect(),
+                        ),
+                    )),
+                    Some(self.config.snapshot.revision),
+                    None,
+                    None,
+                    false,
+                )
+            }
         }
     }
 
-    fn query_runner_plugins(&mut self) -> Task<Message> {
+    pub(crate) fn query_runner_plugins(&mut self) -> Task<Message> {
         let tasks: Vec<_> = self
             .plugins
             .iter()
             .filter_map(|(plugin_id, (model, funcs))| {
                 let query = funcs.runner_query?;
                 funcs.runner_entries?;
-                let task = unsafe { query(self.launcher.query.clone(), model.clone()) };
+                let task = if self.launcher.accepts(&self.plugins, funcs, model) {
+                    unsafe { query(self.launcher.query.clone(), model.clone()) }
+                } else {
+                    if let Some(cancel) = funcs.runner_cancel {
+                        unsafe { cancel(model.clone()) };
+                    }
+                    None
+                };
                 let id = plugin_id.clone();
                 task.map(|task| task.map(move |message| map_plugin_message(id.clone(), message)))
             })
@@ -769,14 +843,23 @@ impl OxiBar {
 
     pub(crate) fn close_launcher(&mut self) -> Task<Message> {
         self.launcher.open_started_at = None;
-        self.launcher
-            .window_id
-            .take()
-            .map(|id| {
-                self.shell.registry.remove(id);
-                Task::done(Message::CloseLauncherLayer(id))
-            })
-            .unwrap_or_else(Task::none)
+        for (model, funcs) in self.plugins.values() {
+            if let Some(cancel) = funcs.runner_cancel {
+                unsafe { cancel(model.clone()) };
+            }
+        }
+        let mut tasks = Vec::new();
+        tasks.push(
+            self.launcher
+                .window_id
+                .take()
+                .map(|id| {
+                    self.shell.registry.remove(id);
+                    Task::done(Message::CloseLauncherLayer(id))
+                })
+                .unwrap_or_else(Task::none),
+        );
+        Task::batch(tasks)
     }
 
     pub(crate) fn plugin_section(&self, plugin_id: &str) -> BarSection {
@@ -1361,6 +1444,7 @@ mod tests {
 
     fn empty_bar() -> OxiBar {
         let mut bar = OxiBar {
+            appearance: crate::theme::ThemeRuntime::new(&Table::new(), 0, false),
             docks: crate::dock::Docks::default(),
             desktop: crate::desktop::Desktop::default(),
             compositor: None,

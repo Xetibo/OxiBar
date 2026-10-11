@@ -25,6 +25,7 @@ const MAX_DRIVE_STEPS: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FakePluginOptions {
+    pub live_theme: bool,
     pub visible_subscription: bool,
     pub dock: bool,
     pub desktop: bool,
@@ -42,6 +43,8 @@ pub struct FakePluginOptions {
     pub dynamic_popup_metrics: Option<PluginPopupMetrics>,
     pub runner: bool,
     pub runner_score: i64,
+    pub runner_prefix: Option<&'static str>,
+    pub runner_favorites: bool,
     pub live_settings: bool,
     pub control_center: bool,
 }
@@ -123,10 +126,15 @@ impl FakePluginOptions {
 
 #[derive(Debug, Default)]
 struct FakePluginModel {
+    theme: Option<Arc<oxiced::theme::snapshot::ThemeSnapshot>>,
     seen: Vec<String>,
     errors: Vec<String>,
     dynamic_popup_metrics: Option<PluginPopupMetrics>,
     runner_score: i64,
+    runner_prefix: Option<String>,
+    runner_active: bool,
+    runner_index: Option<usize>,
+    favorites: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -170,6 +178,18 @@ pub struct TestDock {
 }
 
 impl TestHost {
+    pub fn theme_snapshot(&self) -> Arc<oxiced::theme::snapshot::ThemeSnapshot> {
+        self.bar.appearance.snapshot.clone()
+    }
+    pub fn plugin_theme(&self, name: &str) -> Option<Arc<oxiced::theme::snapshot::ThemeSnapshot>> {
+        let model = &self.bar.plugins.get(name)?.0;
+        model
+            .read()
+            .ok()?
+            .downcast_ref::<FakePluginModel>()?
+            .theme
+            .clone()
+    }
     pub fn desktop_widgets(&self) -> Vec<TestDesktop> {
         self.bar
             .desktop
@@ -256,6 +276,10 @@ impl TestHost {
                 .downcast_mut::<FakePluginModel>()
                 .unwrap()
                 .runner_score = options.runner_score;
+            oxibar_plugin_api::with_model_write::<FakePluginModel, _>(&model, |state| {
+                state.runner_prefix = options.runner_prefix.map(str::to_owned);
+                state.runner_active = true;
+            });
             let funcs = Arc::new(fake_funcs(options));
             plugin_map.insert(name.clone(), (model, funcs));
             order.push(name);
@@ -279,6 +303,11 @@ impl TestHost {
         let settings = crate::settings::SettingsUi::new(&config.snapshot);
         let mut host = Self {
             bar: OxiBar {
+                appearance: crate::theme::ThemeRuntime::new(
+                    &config.snapshot.effective,
+                    config.snapshot.revision,
+                    false,
+                ),
                 docks: crate::dock::Docks::default(),
                 desktop: crate::desktop::Desktop::default(),
                 compositor: None,
@@ -468,6 +497,22 @@ impl TestHost {
         self.bar.launcher.window_id
     }
 
+    pub fn launcher_entries(&self) -> Vec<(String, usize, Option<bool>)> {
+        self.bar
+            .launcher
+            .entries
+            .iter()
+            .map(|entry| (entry.plugin_id.clone(), entry.result.index, entry.favorite))
+            .collect()
+    }
+
+    pub fn set_runner_index(&mut self, name: &str, index: usize) {
+        let model = &self.bar.plugins.get(name).expect("fixture provider").0;
+        oxibar_plugin_api::with_model_write::<FakePluginModel, _>(model, |state| {
+            state.runner_index = Some(index)
+        });
+    }
+
     pub fn popup_open(&self) -> bool {
         self.bar.popup_open
     }
@@ -585,6 +630,7 @@ fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
             .then_some(fake_subscription_policy),
         dock_entries: options.dock.then_some(fake_dock_entries),
         desktop_view: options.desktop.then_some(fake_desktop_view),
+        theme_changed: options.live_theme.then_some(fake_theme_changed),
         desktop_interactive: options.passive_desktop.then_some(fake_desktop_interactive),
         compositor_changed: options.compositor.then_some(fake_compositor_changed),
         command: options.command.then_some(fake_command),
@@ -592,8 +638,10 @@ fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
         context_view: None,
         control_center_view: options.control_center.then_some(fake_view),
         filename: "libfake.so".to_owned(),
-        settings_schema: options.live_settings.then_some(fake_settings_schema),
-        config_changed: options.live_settings.then_some(fake_config_changed),
+        settings_schema: (options.live_settings || options.runner_favorites)
+            .then_some(fake_settings_schema),
+        config_changed: (options.live_settings || options.runner_favorites)
+            .then_some(fake_config_changed),
         _lib: Arc::new(current_library()),
         model: fake_model_fn,
         update: fake_update,
@@ -617,6 +665,14 @@ fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
         toast_view: options.toast.then_some(fake_toast_view),
         runner_query: options.runner.then_some(fake_runner_query),
         runner_entries: options.runner.then_some(fake_runner_entries),
+        runner_prefixes: options
+            .runner_prefix
+            .map(|_| fake_runner_prefixes as oxibar_plugin_api::RunnerPrefixesFn),
+        runner_status: None,
+        runner_cancel: (options.runner_prefix.is_some() || options.runner_favorites)
+            .then_some(fake_runner_cancel),
+        runner_favorite: options.runner_favorites.then_some(fake_runner_favorite),
+        config_validate: None,
     }
 }
 
@@ -636,6 +692,18 @@ unsafe extern "Rust" fn fake_model_fn(
     _global_config: Table,
 ) -> (PluginModel, Option<Task<PluginMsg>>) {
     (fake_model(None), None)
+}
+
+unsafe extern "Rust" fn fake_theme_changed(
+    model: PluginModel,
+    theme: Arc<oxiced::theme::snapshot::ThemeSnapshot>,
+) -> Result<(), String> {
+    let mut model = model.write().map_err(|error| error.to_string())?;
+    model
+        .downcast_mut::<FakePluginModel>()
+        .ok_or("wrong theme model")?
+        .theme = Some(theme);
+    Ok(())
 }
 
 unsafe extern "Rust" fn fake_modal_closed(model: PluginModel) -> Option<Task<PluginMsg>> {
@@ -739,13 +807,22 @@ unsafe extern "Rust" fn fake_compositor_changed(
 }
 
 unsafe extern "Rust" fn fake_settings_schema() -> Vec<oxibar_plugin_api::SettingDescriptor> {
-    vec![oxibar_plugin_api::SettingDescriptor::new(
-        "custom.value",
-        "Custom value",
-        oxibar_plugin_api::SettingKind::Integer { min: 0, max: 100 },
-        Some(toml::Value::Integer(1)),
-        oxibar_plugin_api::ApplyMode::Live,
-    )]
+    vec![
+        oxibar_plugin_api::SettingDescriptor::new(
+            "custom.value",
+            "Custom value",
+            oxibar_plugin_api::SettingKind::Integer { min: 0, max: 100 },
+            Some(toml::Value::Integer(1)),
+            oxibar_plugin_api::ApplyMode::Live,
+        ),
+        oxibar_plugin_api::SettingDescriptor::new(
+            "custom.favorites",
+            "Favorites",
+            oxibar_plugin_api::SettingKind::TextList,
+            Some(toml::Value::Array(Vec::new())),
+            oxibar_plugin_api::ApplyMode::Live,
+        ),
+    ]
 }
 
 unsafe extern "Rust" fn fake_config_changed(
@@ -756,6 +833,16 @@ unsafe extern "Rust" fn fake_config_changed(
         if let Some(value) = crate::config::store::get_path(&config, "custom.value") {
             model.seen.push(format!("config:{value}"));
         }
+        model.favorites = crate::config::store::get_path(&config, "custom.favorites")
+            .and_then(toml::Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(toml::Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
     });
     None
 }
@@ -766,6 +853,7 @@ unsafe extern "Rust" fn fake_runner_query(
 ) -> Option<Task<PluginMsg>> {
     oxibar_plugin_api::with_model_write::<FakePluginModel, _>(&model, |model| {
         model.seen.push(format!("query:{query}"));
+        model.runner_active = true;
     });
     None
 }
@@ -774,8 +862,11 @@ unsafe extern "Rust" fn fake_runner_entries(
     model: PluginModel,
 ) -> Vec<oxibar_plugin_api::RunnerEntry> {
     oxibar_plugin_api::with_model_read::<FakePluginModel, _>(&model, |model| {
+        if !model.runner_active {
+            return Vec::new();
+        }
         vec![oxibar_plugin_api::RunnerEntry {
-            index: 42,
+            index: model.runner_index.unwrap_or(42),
             score: model.runner_score,
             title: "Fake result".to_owned(),
             description: String::new(),
@@ -783,6 +874,46 @@ unsafe extern "Rust" fn fake_runner_entries(
         }]
     })
     .unwrap_or_default()
+}
+
+unsafe extern "Rust" fn fake_runner_prefixes(model: PluginModel) -> Vec<String> {
+    oxibar_plugin_api::with_model_read::<FakePluginModel, _>(&model, |state| {
+        state.runner_prefix.iter().cloned().collect()
+    })
+    .unwrap_or_default()
+}
+
+unsafe extern "Rust" fn fake_runner_cancel(model: PluginModel) {
+    oxibar_plugin_api::with_model_write::<FakePluginModel, _>(&model, |state| {
+        state.runner_active = false;
+        state.seen.push("runner canceled".into());
+    });
+}
+
+unsafe extern "Rust" fn fake_runner_favorite(
+    model: PluginModel,
+    index: usize,
+) -> Option<oxibar_plugin_api::RunnerFavorite> {
+    oxibar_plugin_api::with_model_read::<FakePluginModel, _>(&model, |state| {
+        if index != state.runner_index.unwrap_or(42) {
+            return None;
+        }
+        let key = format!("result:{index}");
+        let active = state.favorites.contains(&key);
+        let mut values = state.favorites.clone();
+        if active {
+            values.retain(|value| value != &key);
+        } else {
+            values.push(key);
+        }
+        Some(oxibar_plugin_api::RunnerFavorite {
+            path: "custom.favorites".into(),
+            values,
+            active,
+        })
+    })
+    .ok()
+    .flatten()
 }
 
 unsafe extern "Rust" fn fake_errors(model: PluginModel) -> Vec<String> {

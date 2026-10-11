@@ -29,6 +29,20 @@
   document and must ignore unrelated changes and retain restart-only running values.
 - Add shared controls/styles to `crates/oxiced` and use the workspace dependency;
   do not restore per-plugin git/path forks of that library.
+- Deliver immutable theme snapshots explicitly through the optional hook. Use
+  font-aware shared text/input/picker helpers; retain glyph fonts for icons. Do
+  not mutate unsynchronized palettes, and bypass animation builders for reduced
+  motion or zero duration. Upload font bytes before changing the active family.
+- Runner jobs use bounded latest-only workers, cooperative cancellation and
+  generation guards. Capture immutable provider/local action identity in rendered
+  activation messages; keep logical favorite keys separate from action contents.
+- Persist versioned usage in private XDG state only after loading existing counts.
+  Invalid state must not be silently overwritten. Clipboard content/identities
+  must not enter persistent ranking state or historical intent caches.
+- Pure configuration validators may run off the UI thread; keep their library
+  owner alive and validate before adopting or writing a candidate.
+- Missing filesystem roots watch an existing parent nonrecursively. Re-register
+  actual roots on creation without adding an entire home-directory recursive watch.
 - Register every surface before creation; route view/events by its known ID and
   kind. Never infer that an unknown window is a bar. Surface tasks must use explicit
   target IDs for geometry/input updates.

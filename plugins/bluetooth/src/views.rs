@@ -1,8 +1,9 @@
 use iced::{
     Alignment, Element, Length,
-    widget::{Column, Row, Space, mouse_area, scrollable, text},
+    widget::{Column, Row, Space, mouse_area, scrollable},
 };
 use oxibar_plugin_api::PluginMsg;
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{
     theme::theme_impl::OXITHEME,
     widgets::{oxi_picklist, oxi_plugin, oxi_text_input, oxi_toggler},

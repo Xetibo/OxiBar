@@ -1,8 +1,9 @@
 use iced::{
     Alignment, Element, Length,
-    widget::{Column, Row, Space, container, scrollable, text, text_editor},
+    widget::{Column, Row, Space, container, scrollable, text_editor},
 };
 use oxibar_plugin_api::{SettingDescriptor, SettingKind};
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{
     theme::theme_impl::OXITHEME,
     widgets::{oxi_picklist, oxi_plugin, oxi_text_input, oxi_toggler},
@@ -107,6 +108,7 @@ impl OxiBar {
                     .push(text("GUI overrides").size(OXITHEME.font_lg).style(oxi_plugin::text_primary))
                     .push(text("Sparse TOML preserves unknown plugin settings. Your base / Nix configuration stays read-only.").size(OXITHEME.font_md).style(oxi_plugin::text_muted))
                     .push(text_editor(&self.settings.editor)
+                        .font(oxiced::theme::snapshot::current_font())
                         .height(Length::Fixed(layout::SETTINGS_EDITOR_HEIGHT))
                         .size(OXITHEME.font_md)
                         .padding(OXITHEME.padding_lg)

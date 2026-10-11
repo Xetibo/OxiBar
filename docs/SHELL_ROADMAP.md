@@ -22,7 +22,7 @@ per-monitor widget editing. Its implementation stack is not a dependency.
 milestone 3 and milestone 4's control-center/native services/OSDs. Settings/control-center
 surfaces use spacious Android-inspired grouping
 with the existing oxiced theme. Milestone 5's dock and persistent desktop widgets
-are implemented. Live themes/providers and the release gate remain next.
+and milestone 6's live themes/providers are implemented. The release gate is next.
 Shared `oxiced` now lives in this workspace.
 
 ## Starting Point
@@ -37,8 +37,8 @@ Shared `oxiced` now lives in this workspace.
 - Nix builds host and plugin packages from one pinned workspace dependency cache.
 - Configuration uses immutable, source-aware snapshots and a serialized override
   store. The initial settings UI applies host geometry/layout and supported plugin
-  fields live. Fonts, lifecycle and legacy timers remain restart-only; `OXITHEME`
-  is still process-local static state, including inside each dynamic library.
+  fields live. Immutable theme snapshots apply palette/font/density/motion live;
+  legacy bar font, lifecycle and backend timers retain restart classification.
 
 ## Configuration Contract: GUI Overrides Nix
 
@@ -415,7 +415,7 @@ input through; Clock/Stats pause their one owned stream when no consumer remains
 Private compositor checks passed exact launch/window activation, two-instance
 editing, restart/hotplug, unknown fields, stale edits and hidden-view ownership.
 
-### 6. Unified Theme and Launcher Providers — P2
+### 6. Unified Theme and Launcher Providers — Implemented
 
 **Depends on:** milestones 2–5 and context-aware plugin views.
 
@@ -434,6 +434,14 @@ editing, restart/hotplug, unknown fields, stale edits and hidden-view ownership.
 **Acceptance:** all upgraded surfaces change theme coherently without restart;
 provider selection always routes one stable local action; query generations,
 index updates and cancellation cannot execute a different displayed item.
+
+Explicit immutable snapshots, live palette/font/density/presets/reduced motion and
+legacy fallback are implemented. Applications adds localized actions, inherited
+icons, filesystem updates and private usage/favorite ranking. Tools adds every
+planned provider, including opt-in ephemeral native clipboard history. Prefixes,
+captured immutable actions, pure validators and latest-only workers are verified
+in source and isolated packaged GUI checks. Optional wallpaper-derived colors
+remain an extension; the SDK/packaging/presentation-time gate follows.
 
 ### 7. Packaging, Plugin SDK and Release Gate — P2
 
@@ -474,8 +482,8 @@ not substitutes for presentation-time measurements.
 All five steps are implemented and verified. Registry/read-only output geometry,
 control-center composition, native Audio/BlueZ/System services and OSDs are also
 implemented. User authorized completing every remaining roadmap step, committing
-after each. Dock/desktop instances are now implemented and verified. Next: live
-themes/providers, then the SDK/packaging/performance gate, with inventory/focus
+after each. Dock/desktop instances and live themes/providers are implemented and
+verified. Next: the SDK/packaging/performance gate, with inventory/focus
 refinements alongside.
 
 ## UX References

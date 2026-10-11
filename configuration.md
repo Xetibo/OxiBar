@@ -257,7 +257,11 @@ Load `libapplications.so` in `plugins = [...]` for desktop application search.
 It is packaged as `oxibar-applications` and included in the Home Manager module's
 default plugins. If you supply a custom plugin package list, include it there.
 No separate OxiRun executable or legacy OxiRun library is needed. Other plugins
-can opt into search through the shared API's optional runner hooks.
+can opt into search through the shared API's optional runner hooks. `libtools.so`
+(`oxibar-tools`, also in the default Home Manager set) adds the other providers.
+The longest advertised prefix selects a provider scope; unprefixed searches may
+combine providers. The footer lists prefixes and status, and stars toggle favorites
+through sparse GUI overrides. Activations retain the displayed provider/local ID.
 
 ```toml
 plugins = ["libapplications.so", "libclock.so"]
@@ -293,13 +297,66 @@ refresh_seconds = 300
 | `terminal` | string | `"kitty"` | Terminal command prefix, including any needed execution flags, for `Terminal=true` entries. Parsed as arguments; no implicit shell evaluation. |
 | `max_entries` | integer (`> 0`) | `7` | Provider result limit, capped at `50`. Increase alongside the host limit for more application results. |
 | `refresh_seconds` | integer (`> 0`) | `300` | Background index refresh interval; opening/querying never scans the filesystem. |
+| `prefix` | string | `"a "` | Application-only prefix, including its trailing space; live. |
+| `locale` | string | `""` | Live desktop-entry locale; empty uses `LC_ALL`, `LC_MESSAGES`, then `LANG`. |
+| `icon_theme` | string | `"hicolor"` | Live icon theme with inherited parents and hicolor fallback. |
+| `favorites` | string array | `[]` | Live desktop/action IDs; normally changed with result stars. |
 
 The provider searches desktop entry names, categories, keywords and generic names.
-Empty search displays initial alphabetically ordered applications. XDG user data
+Empty search combines favorites/recent usage with alphabetical fallback. XDG user data
 directories take precedence over system directories, including hidden-entry
 masking. Commands use argument-based process launching and support common desktop
-Exec field codes; icons use hicolor/Adwaita/pixmap lookup or absolute image paths.
-See `docs/TECHNICAL_DEBT.md` for advanced desktop-entry/icon features not yet covered.
+Exec field codes. Localized desktop actions are separate stable choices and are
+excluded from the dock catalog. Icons honor theme inheritance, user precedence,
+pixmaps and absolute paths. Filesystem changes refresh the resident index with
+debouncing; the interval is a fallback. Latest-only index/query workers cancel
+superseded work. See `docs/TECHNICAL_DEBT.md` for remaining desktop-entry coverage.
+
+### `[tools]` — commands, calculator, files, bookmarks and clipboard
+
+| Prefix | Provider | Action |
+| --- | --- | --- |
+| `> ` | PATH command | Parse quoted arguments; execute directly, optionally in a terminal. |
+| `= ` | Calculator | Evaluate bounded arithmetic/functions and copy the result. |
+| `/ ` | Files | Search cached configured roots and open the exact UTF-8 path. |
+| `@ ` | Bookmarks | Open a configured URL through the argument-based opener. |
+| `! ` | Named actions | Execute the configured argument vector and working directory. |
+| `: ` | Clipboard history | Copy a frozen history item; capture must be enabled. |
+
+Calculator copy works with history disabled. Clipboard capture is opt-in, in memory
+only, limited to UTF-8 text up to 16 KiB each and 512 KiB total. Disabling it clears
+history immediately; nothing is persisted in usage/favorites. Native data-control
+prefers ext-data-control with wlr compatibility. Unsupported compositors show a
+diagnostic while commands/files/bookmarks remain usable.
+
+```toml
+[tools]
+max_entries = 7
+terminal = "kitty"
+opener = "xdg-open"
+command_terminal = true
+file_roots = ["~/Documents", "~/Downloads"]
+file_limit = 20000
+favorites = []
+clipboard_enabled = false
+clipboard_limit = 50
+refresh_seconds = 300
+bookmarks = [{ id = "docs", name = "Documentation", url = "https://docs.rs/iced/" }]
+actions = [{ id = "notes", name = "Notes", command = "editor '/home/me/Notes/file with spaces.txt'", terminal = false }]
+```
+
+Result limits are `1..50`, file limits `1..100000`, clipboard count `1..100` and
+fallback refresh `1..3600` seconds. Only refresh interval requires restart; other
+preferences apply live. Bookmark/action IDs are unique ASCII letters/digits/`-_.`
+(1–128 characters). Bookmark schemes are `http`, `https`, `file` or `mailto`;
+actions may set `directory`. Commands use quoted argument lists with no implicit
+shell evaluation; explicitly name a shell if shell syntax is intended.
+
+Usage counts live in `$XDG_STATE_HOME/oxibar/{applications,tools}-usage.toml`
+(default `~/.local/state/oxibar`), with owner-only atomic writes. Initial state loads
+before local counts are saved; unsupported/corrupt state is diagnosed and retained.
+Stars save only the corresponding `applications.favorites` or `tools.favorites`
+override. Query/title/clipboard text is omitted from `oxibar status` diagnostics.
 
 ### `[ipc]` — command socket
 
@@ -407,6 +464,45 @@ The version-1 action request uses `provider`, `action` and `args`:
 {"version":1,"command":"action","provider":"System","action":"brightness","args":["+5"]}
 ```
 
+## Live theme preferences
+
+The default remains the existing oxiced seed palette (including a configured
+oxiced theme file). Host and upgraded libraries receive one immutable snapshot;
+older providers without a theme hook keep their fallback. Theme changes do not
+restart services or discard plugin state.
+
+| `[theme]` key | Default | Bounds / behavior |
+| --- | --- | --- |
+| `preset` | `"current"` | `current`, `compact` or `roomy`; preserves colors, adjusts spacing. |
+| `font` | `""` | Live family name; empty inherits the startup bar family. |
+| `density` | `1.0` | `0.75..1.5`, multiplies the preset spacing. |
+| `font_scale` | `1.0` | `0.75..1.5`, scales theme font tokens. |
+| `reduced_motion` | `false` | Render final layout directly when true. |
+| `animation_ms` | `150` | `0..1000`; zero also bypasses animation. |
+| `radius` | inherited | Optional `0..128`; reset reveals the seed radius. |
+
+`[theme.palette]` accepts declared color roles as `RRGGBB`/`RRGGBBAA`, optionally
+prefixed by `#`. The Theme settings page lists all roles with source/reset controls.
+Font files are resolved/read with bounds and uploaded before the family switches;
+late font work cannot overwrite newer preferences. Glyph icons keep their icon font.
+`bar.font`/`bar.font_file` remain legacy startup settings; use `theme.font` for live
+changes. Explicit plugin-specific font sizes remain their own settings.
+
+```toml
+[theme]
+preset = "current"
+font = ""
+density = 1.0
+font_scale = 1.0
+reduced_motion = false
+animation_ms = 150
+```
+
+Compatibility handles retain at most 128 distinct immutable palette/font values
+per library. Revision/motion-only changes reuse values; exhausting the budget is
+diagnosed before another value is adopted. `oxibar status` reports theme revision,
+active family/loading, upgraded providers and hook failures.
+
 ## GUI settings and overrides
 
 Open from the settings bar control, launcher/control-center footer, or:
@@ -418,7 +514,7 @@ oxibar settings close
 ```
 
 Pages cover Appearance, Bar/Layout, Launcher, Plugins, Advanced, Monitors,
-Control Center, Dock and Desktop widgets. Search spans all declared settings. Fields show effective value,
+Control Center, Dock, Desktop widgets and Theme. Search spans all declared settings. Fields show effective value,
 base/default value, source
 and application mode. Text/number drafts save with Enter/Apply; switch/pick-list
 changes save immediately. Reset removes the GUI override and reveals the current
@@ -428,7 +524,8 @@ unknown plugin fields.
 Forms use spacious themed cards, normal-sized actions and switches. Desktop
 widths use category navigation on the left; narrow widths use a category picker.
 
-Keyboard controls: Ctrl+F focuses search, Alt+1 through Alt+9 selects pages,
+Keyboard controls: Ctrl+F focuses search, Alt+1 through Alt+9 selects the first nine
+pages and Alt+0 selects Theme,
 Tab/Shift+Tab traverses text fields, Enter applies a field, and Escape closes the
 settings surface. Settings access remains available when the launcher is disabled.
 
@@ -456,8 +553,9 @@ height then reveals 34. Unoverridden fields follow the regenerated base.
   enablement/order, OSD preferences, output selection/profiles, inventory interval,
   application-provider terminal and result limit, clock text size/bold/calendar
   command, notification default timeout, preferred backlight and locker preferences.
-  Dock geometry/content and desktop layout/input preferences also update live.
-- **Restart required:** font loading, plugin enable/disable/order, instance/control
+  Dock geometry/content, desktop layout/input, theme preferences and supported runner
+  prefix/locale/icon/favorite/Tools settings also update live.
+- **Restart required:** legacy bar font, plugin enable/disable/order, instance/control
   endpoint/startup policy, audio backend selection, Bluetooth discovery/pairing
   limits, System backlight root/fallback interval/session selection, existing plugin
   poll timers and clock format granularity.
@@ -535,7 +633,7 @@ internal `calendar_open` flag and opens a popup calendar.
 | `format`       | string          | `"%H:%M"` | `chrono` strftime spec. See <https://docs.rs/chrono/latest/chrono/format/strftime/index.html>. Invalid specs are caught at render time and fall back to RFC3339 with a `tracing::warn!`. |
 | `tick_seconds` | integer (`> 0`) | `60`      | Real-clock polling interval. Seconds formats still display simulated per-second ticks between polls. Timer changes require restart. |
 | `font_size`    | number (`> 0`)  | `14.0`    | Time-label font size in iced units. Accepts integers or floats.                                                                                                                          |
-| `bold`         | bool            | `false`   | When `true`, the time label is rendered with a bold font weight. Falls back to a sans-serif family when bold is enabled.                                                                 |
+| `bold`         | bool            | `false`   | Render the time label with bold weight in the current theme family. |
 | `calendar_command` | string | _unset_ | Shell command run when clicking a calendar day. Supports `{date}`, `{year}`, `{month}`, `{day}` placeholders, e.g. `gnome-calendar --date {date}`. |
 | `calendar_app` | string | _unset_ | Convenience integration. `"thunderbird"` maps to `thunderbird --calendar`; Thunderbird does not provide reliable date-focused CLI navigation, so use `calendar_command` for custom behavior. |
 

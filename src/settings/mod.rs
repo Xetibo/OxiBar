@@ -25,10 +25,11 @@ pub enum Category {
     ControlCenter,
     Dock,
     Desktop,
+    Theme,
 }
 
 impl Category {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Appearance,
         Self::Bar,
         Self::Launcher,
@@ -38,6 +39,7 @@ impl Category {
         Self::ControlCenter,
         Self::Dock,
         Self::Desktop,
+        Self::Theme,
     ];
 
     fn label(self) -> &'static str {
@@ -51,6 +53,7 @@ impl Category {
             Self::ControlCenter => "Control center",
             Self::Dock => "Dock",
             Self::Desktop => "Desktop widgets",
+            Self::Theme => "Theme",
         }
     }
 
@@ -65,6 +68,7 @@ impl Category {
             Self::ControlCenter => "Quick controls from your running plugins.",
             Self::Dock => "Pinned applications and running windows.",
             Self::Desktop => "Place independent widget instances on your displays.",
+            Self::Theme => "Live palette, typography, spacing and motion from oxiced.",
         }
     }
 
@@ -91,6 +95,7 @@ impl Category {
                     "osd.",
                     "dock.",
                     "desktop.",
+                    "theme.",
                 ]
                 .iter()
                 .any(|prefix| path.starts_with(prefix))
@@ -103,6 +108,7 @@ impl Category {
             Self::ControlCenter => path.starts_with("control_center."),
             Self::Dock => path.starts_with("dock."),
             Self::Desktop => path.starts_with("desktop."),
+            Self::Theme => path.starts_with("theme."),
         }
     }
 }
@@ -195,7 +201,10 @@ impl SettingsUi {
 
 pub(crate) fn edit_value(value: Option<&Value>, kind: &SettingKind) -> String {
     match (value, kind) {
-        (Some(Value::String(value)), SettingKind::Text | SettingKind::Arguments) => value.clone(),
+        (
+            Some(Value::String(value)),
+            SettingKind::Text | SettingKind::Color | SettingKind::Arguments,
+        ) => value.clone(),
         (Some(value), _) => value.to_string(),
         _ => String::new(),
     }
@@ -205,7 +214,10 @@ pub(crate) fn draft_value(
     field: &oxibar_plugin_api::SettingDescriptor,
     value: &str,
 ) -> Result<Value, String> {
-    let value = if matches!(field.kind, SettingKind::Text | SettingKind::Arguments) {
+    let value = if matches!(
+        field.kind,
+        SettingKind::Text | SettingKind::Color | SettingKind::Arguments
+    ) {
         Value::String(value.to_owned())
     } else {
         crate::ipc::parse_value(value)?
@@ -234,7 +246,7 @@ pub(crate) fn key_event(
         Key::Character(key) if modifiers.alt() => key
             .parse::<usize>()
             .ok()
-            .and_then(|index| index.checked_sub(1))
+            .map(|index| if index == 0 { 9 } else { index - 1 })
             .and_then(|index| Category::ALL.get(index))
             .map(|category| Message::SettingsCategory(id, *category)),
         _ => None,

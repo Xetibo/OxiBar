@@ -390,6 +390,9 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
             Restart,
         ),
     ]
+    .into_iter()
+    .chain(crate::theme::schema())
+    .collect()
 }
 
 pub fn defaults(schema: &[SettingDescriptor]) -> Result<Table, String> {
@@ -416,6 +419,7 @@ pub fn validate(config: &Table, schema: &[SettingDescriptor]) -> Result<(), Stri
         "monitor",
         "dock",
         "desktop",
+        "theme",
     ] {
         if config.get(section).is_some_and(|value| !value.is_table()) {
             return Err(format!("{section}: expected a table"));
@@ -449,6 +453,8 @@ pub fn validate(config: &Table, schema: &[SettingDescriptor]) -> Result<(), Stri
     }
     super::bars::validate_profiles(config, schema)?;
     super::desktop::widgets(config)?;
+    let theme = oxiced::theme::snapshot::ThemeSnapshot::from_config(config, 0)?;
+    oxiced::theme::snapshot::check_capacity(&theme)?;
     Ok(())
 }
 
@@ -456,6 +462,9 @@ pub fn validate_value(field: &SettingDescriptor, value: &Value) -> Result<(), St
     let valid = match &field.kind {
         SettingKind::Boolean => value.is_bool(),
         SettingKind::Text => value.is_str(),
+        SettingKind::Color => value
+            .as_str()
+            .is_some_and(|value| oxiced::theme::snapshot::parse_color(value).is_ok()),
         SettingKind::Arguments => value.as_str().is_some_and(|value| {
             shell_words::split(value).is_ok_and(|arguments| !arguments.is_empty())
         }),

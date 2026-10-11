@@ -69,6 +69,7 @@ where
     M: Clone,
 {
     iced::widget::text_input(placeholder, value)
+        .font(crate::theme::snapshot::current_font())
         .padding(OXITHEME.padding_lg)
         .on_input(on_text_changed)
         .style(text_input_style)

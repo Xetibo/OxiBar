@@ -3,10 +3,11 @@ use std::time::Instant;
 use iced::{
     Alignment, Element, Length, event,
     keyboard::{self, Key, key::Named},
-    widget::{Column, Row, Space, container, image, scrollable, svg, text},
+    widget::{Column, Row, Space, container, image, scrollable, svg},
 };
 use iced_layershell::reexport::IcedId;
 use oxibar_plugin_api::RunnerEntry;
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{
     theme::theme_impl::OXITHEME,
     widgets::{oxi_plugin, oxi_text_input},
@@ -28,12 +29,15 @@ pub enum Action {
     MoveFocus(bool),
     Launch(usize),
     LaunchFocused,
+    Activate(String, usize),
+    Favorite(String, usize),
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Entry {
     pub(crate) plugin_id: String,
     pub(crate) result: RunnerEntry,
+    pub(crate) favorite: Option<bool>,
 }
 
 pub(crate) struct Launcher {
@@ -45,6 +49,8 @@ pub(crate) struct Launcher {
     pub(crate) size: (u32, u32),
     pub(crate) open_started_at: Option<Instant>,
     max_entries: usize,
+    statuses: Vec<(String, oxibar_plugin_api::RunnerStatus)>,
+    prefixes: Vec<String>,
 }
 
 impl Launcher {
@@ -66,6 +72,8 @@ impl Launcher {
             query: String::new(),
             entries: Vec::new(),
             focused: 0,
+            statuses: Vec::new(),
+            prefixes: Vec::new(),
             size: layout::launcher_size_from_config(config),
             max_entries: table
                 .and_then(|table| table.get("max_entries"))
@@ -77,13 +85,76 @@ impl Launcher {
         }
     }
 
+    pub(crate) fn accepts(
+        &self,
+        plugins: &PluginMap,
+        funcs: &crate::plugins::PluginFuncs,
+        model: &oxibar_plugin_api::PluginModel,
+    ) -> bool {
+        let selected = plugins
+            .values()
+            .flat_map(|(model, funcs)| {
+                funcs
+                    .runner_prefixes
+                    .map(|prefixes| unsafe { prefixes(model.clone()) })
+                    .unwrap_or_default()
+            })
+            .filter(|prefix| !prefix.is_empty() && self.query.starts_with(prefix))
+            .max_by_key(String::len);
+        selected.is_none_or(|selected| {
+            funcs
+                .runner_prefixes
+                .is_some_and(|prefixes| unsafe { prefixes(model.clone()) }.contains(&selected))
+        })
+    }
+
     pub(crate) fn refresh(&mut self, plugins: &PluginMap) {
+        self.prefixes = plugins
+            .iter()
+            .filter_map(|(name, (model, funcs))| {
+                funcs.runner_prefixes.map(|prefixes| {
+                    format!(
+                        "{name}: {}",
+                        unsafe { prefixes(model.clone()) }
+                            .into_iter()
+                            .take(16)
+                            .collect::<Vec<_>>()
+                            .join(" · ")
+                    )
+                })
+            })
+            .collect();
         let selected = self
             .entries
             .get(self.focused)
             .map(|entry| (entry.plugin_id.clone(), entry.result.index));
+        self.statuses = plugins
+            .iter()
+            .filter(|(_, (model, funcs))| {
+                funcs.runner_query.is_some() && self.accepts(plugins, funcs, model)
+            })
+            .map(|(name, (model, funcs))| {
+                (
+                    name.clone(),
+                    funcs
+                        .runner_status
+                        .map(|status| unsafe { status(model.clone()) })
+                        .unwrap_or(oxibar_plugin_api::RunnerStatus {
+                            available: true,
+                            indexing: false,
+                            message: None,
+                        }),
+                )
+            })
+            .collect();
         self.entries = plugins
             .iter()
+            .filter(|(_, (model, funcs))| {
+                self.accepts(plugins, funcs, model)
+                    && funcs
+                        .runner_status
+                        .is_none_or(|status| unsafe { status(model.clone()) }.available)
+            })
             .flat_map(|(plugin_id, (model, funcs))| {
                 // A provider needs both hooks so every displayed result can be queried.
                 match (funcs.runner_query, funcs.runner_entries) {
@@ -91,6 +162,12 @@ impl Launcher {
                         .into_iter()
                         .map(|result| Entry {
                             plugin_id: plugin_id.clone(),
+                            favorite: funcs
+                                .runner_favorite
+                                .and_then(|favorite| unsafe {
+                                    favorite(model.clone(), result.index)
+                                })
+                                .map(|favorite| favorite.active),
                             result,
                         })
                         .collect(),
@@ -118,13 +195,25 @@ impl Launcher {
     }
 
     pub(crate) fn view(&self) -> Element<'_, Message> {
-        let search = oxi_text_input::text_input("Find applications", &self.query, |query| {
-            Message::Launcher(Action::Query(query))
-        })
+        let search = oxi_text_input::text_input(
+            "Find apps, commands, files or actions",
+            &self.query,
+            |query| Message::Launcher(Action::Query(query)),
+        )
         .id(SEARCH_ID)
         .size(OXITHEME.font_md)
         .padding(OXITHEME.padding_md)
-        .on_submit(Message::Launcher(Action::LaunchFocused));
+        .on_submit(
+            self.entries
+                .get(self.focused)
+                .map(|entry| {
+                    Message::Launcher(Action::Activate(
+                        entry.plugin_id.clone(),
+                        entry.result.index,
+                    ))
+                })
+                .unwrap_or(Message::Ignore),
+        );
         let mut results = Column::new()
             .spacing(OXITHEME.padding_xs)
             .width(Length::Fill);
@@ -167,23 +256,50 @@ impl Launcher {
                 .spacing(OXITHEME.padding_md)
                 .align_y(Alignment::Center);
             let selected = self.focused == index;
-            results = results.push(
-                oxi_plugin::selectable_row(content, selected)
-                    .on_press(Message::Launcher(Action::Launch(index)))
-                    .width(Length::Fill)
-                    .padding(OXITHEME.padding_sm),
-            );
+            let mut row = Row::new()
+                .spacing(OXITHEME.padding_sm)
+                .align_y(Alignment::Center)
+                .push(
+                    oxi_plugin::selectable_row(content, selected)
+                        .on_press(Message::Launcher(Action::Activate(
+                            entry.plugin_id.clone(),
+                            entry.result.index,
+                        )))
+                        .width(Length::Fill)
+                        .padding(OXITHEME.padding_sm),
+                );
+            if let Some(active) = entry.favorite {
+                row = row.push(
+                    oxi_plugin::bar_button(
+                        text(if active { "★" } else { "☆" }).size(OXITHEME.font_lg),
+                    )
+                    .on_press(Message::Launcher(Action::Favorite(
+                        entry.plugin_id.clone(),
+                        entry.result.index,
+                    ))),
+                );
+            }
+            results = results.push(row);
         }
         if self.entries.is_empty() {
             results = results.push(
-                text(if self.query.is_empty() {
-                    "No applications available"
+                text(if self.statuses.iter().any(|(_, status)| status.indexing) {
+                    "Indexing…"
                 } else {
-                    "No matching applications"
+                    "No matching results"
                 })
                 .size(OXITHEME.font_md)
                 .style(oxi_plugin::text_muted),
             );
+        }
+        for (provider, status) in &self.statuses {
+            if let Some(message) = &status.message {
+                results = results.push(
+                    text(format!("{provider}: {message}"))
+                        .size(OXITHEME.font_sm)
+                        .style(oxi_plugin::text_muted),
+                );
+            }
         }
         let footer = Row::new()
             .push(
@@ -205,6 +321,11 @@ impl Launcher {
             Column::new()
                 .push(search)
                 .push(scrollable(results).height(Length::Fill))
+                .push(
+                    text(self.prefixes.join("   "))
+                        .size(OXITHEME.font_sm)
+                        .style(oxi_plugin::text_muted),
+                )
                 .push(footer)
                 .spacing(OXITHEME.padding_md)
                 .padding(OXITHEME.padding_lg)
@@ -265,6 +386,7 @@ mod tests {
                 description: String::new(),
                 icon: None,
             },
+            favorite: None,
         }
     }
 

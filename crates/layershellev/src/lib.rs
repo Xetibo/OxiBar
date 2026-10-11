@@ -134,8 +134,9 @@ use waycrate_xkbkeycode::xkb_keyboard::RepeatInfo;
 
 use wayland_client::protocol::wl_surface;
 use wayland_client::{
+    ConnectError, Connection, Dispatch, DispatchError, EventQueue, Proxy, QueueHandle, WEnum,
     delegate_noop,
-    globals::{registry_queue_init, BindError, GlobalError, GlobalList, GlobalListContents},
+    globals::{BindError, GlobalError, GlobalList, GlobalListContents, registry_queue_init},
     protocol::{
         wl_buffer::WlBuffer,
         wl_callback::{Event as WlCallbackEvent, WlCallback},
@@ -152,7 +153,6 @@ use wayland_client::{
         wl_surface::WlSurface,
         wl_touch::{self, WlTouch},
     },
-    ConnectError, Connection, Dispatch, DispatchError, EventQueue, Proxy, QueueHandle, WEnum,
 };
 
 use wayland_cursor::{CursorImageBuffer, CursorTheme};
@@ -211,9 +211,9 @@ use wayland_protocols::xdg::decoration::zv1::client::{
 
 pub use calloop;
 use calloop::{
+    Error as CallLoopError, EventLoop, LoopHandle, RegistrationToken,
     channel::{self, Channel},
     timer::{TimeoutAction, Timer},
-    Error as CallLoopError, EventLoop, LoopHandle, RegistrationToken,
 };
 use calloop_wayland_source::WaylandSource;
 use std::collections::HashMap;
@@ -262,6 +262,7 @@ pub mod reexport {
     }
     pub mod wayland_client {
         pub use wayland_client::{
+            Connection, QueueHandle, WEnum,
             globals::GlobalList,
             protocol::{
                 wl_compositor::WlCompositor,
@@ -270,7 +271,6 @@ pub mod reexport {
                 wl_region::WlRegion,
                 wl_seat::WlSeat,
             },
-            Connection, QueueHandle, WEnum,
         };
     }
     pub mod wp_cursor_shape_device_v1 {
@@ -1651,42 +1651,41 @@ impl<T: 'static> Dispatch<wl_seat::WlSeat, ()> for WindowState<T> {
             capabilities: WEnum::Value(capabilities),
         } = event
         {
-            let mut keyboard_installing = true;
+            let keyboard_installing = capabilities.contains(wl_seat::Capability::Keyboard)
+                && state.keyboard_state.is_none();
             if capabilities.contains(wl_seat::Capability::Keyboard) {
-                if state.keyboard_state.is_none() {
+                if keyboard_installing {
                     state.keyboard_state = Some(KeyboardState::new(seat.get_keyboard(qh, ())));
-                } else {
-                    keyboard_installing = false;
-                    let keyboard = state.keyboard_state.take().unwrap();
-                    state.keyboard_state = Some(keyboard.update(seat, qh, ()));
-                    if let Some(surface_id) = state.keyboard_surface_id() {
-                        state
-                            .message
-                            .push((Some(surface_id), DispatchMessageInner::Unfocus));
-                    }
                 }
+            } else if let Some(mut keyboard) = state.keyboard_state.take() {
+                if let Some(token) = keyboard.repeat_token.take() {
+                    state.to_remove_tokens.push(token);
+                }
+                state.message.push((
+                    state.keyboard_surface_id(),
+                    DispatchMessageInner::ModifiersChanged(keyboard::ModifiersState::empty()),
+                ));
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
                 if state.pointer.is_none() {
                     state.pointer = Some(seat.get_pointer(qh, ()));
-                } else {
-                    let pointer = state.pointer.take().unwrap();
-                    if pointer.version() >= 3 {
-                        pointer.release();
-                    }
-                    state.pointer = Some(seat.get_pointer(qh, ()));
+                }
+            } else if let Some(pointer) = state.pointer.take() {
+                if pointer.version() >= 3 {
+                    pointer.release();
+                }
+                if let Some((_, id)) = state.active_surfaces.remove(&None) {
+                    state.message.push((id, DispatchMessageInner::MouseLeave));
                 }
             }
             if capabilities.contains(wl_seat::Capability::Touch) {
                 if state.touch.is_none() {
                     state.touch = Some(seat.get_touch(qh, ()));
-                } else {
-                    let touch = state.touch.take().unwrap();
-                    if touch.version() >= 3 {
-                        touch.release();
-                    }
-                    state.touch = Some(seat.get_touch(qh, ()));
                 }
+            } else if let Some(touch) = state.touch.take()
+                && touch.version() >= 3
+            {
+                touch.release();
             }
             if keyboard_installing {
                 let text_input = state
@@ -1694,7 +1693,9 @@ impl<T: 'static> Dispatch<wl_seat::WlSeat, ()> for WindowState<T> {
                     .as_ref()
                     .map(|manager| manager.get_text_input(seat, qh, TextInputData::default()));
                 state.text_input = text_input;
-            } else if let Some(text_input) = state.text_input.take() {
+            } else if !capabilities.contains(wl_seat::Capability::Keyboard)
+                && let Some(text_input) = state.text_input.take()
+            {
                 text_input.destroy();
             }
         }
@@ -1704,13 +1705,17 @@ impl<T: 'static> Dispatch<wl_seat::WlSeat, ()> for WindowState<T> {
 impl<T> Dispatch<wl_keyboard::WlKeyboard, ()> for WindowState<T> {
     fn event(
         state: &mut Self,
-        _wl_keyboard: &wl_keyboard::WlKeyboard,
+        wl_keyboard: &wl_keyboard::WlKeyboard,
         event: <wl_keyboard::WlKeyboard as Proxy>::Event,
         _data: &(),
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        if state.keyboard_state.is_none() {
+        if state
+            .keyboard_state
+            .as_ref()
+            .is_none_or(|keyboard| keyboard.keyboard != *wl_keyboard)
+        {
             return;
         }
 
@@ -2562,13 +2567,13 @@ impl<T> Dispatch<WlCallback, (id::Id, PresentAvailableState)> for WindowState<T>
 
 delegate_noop!(@<T> WindowState<T>: ignore WlCompositor); // WlCompositor is need to create a surface
 delegate_noop!(@<T> WindowState<T>: ignore WlOutput); // output is need to place layer_shell, although here
-                                                      // it is not used
+// it is not used
 delegate_noop!(@<T> WindowState<T>: ignore WlShm); // shm is used to create buffer pool
 delegate_noop!(@<T> WindowState<T>: ignore WlShmPool); // so it is pool, created by wl_shm
 delegate_noop!(@<T> WindowState<T>: ignore WlBuffer); // buffer show the picture
 delegate_noop!(@<T> WindowState<T>: ignore WlRegion); // region is used to modify input region
 delegate_noop!(@<T> WindowState<T>: ignore ZwlrLayerShellV1); // it is similar with xdg_toplevel, also the
-                                                              // ext-session-shell
+// ext-session-shell
 
 delegate_noop!(@<T> WindowState<T>: ignore WpCursorShapeManagerV1);
 delegate_noop!(@<T> WindowState<T>: ignore WpCursorShapeDeviceV1);
@@ -2626,7 +2631,7 @@ impl<T: 'static> WindowState<T> {
 
         let shm = globals.bind::<WlShm, _, _>(&qh, 1..=1, ())?;
         self.shm = Some(shm);
-        self.seat = Some(globals.bind::<WlSeat, _, _>(&qh, 1..=1, ())?);
+        self.seat = Some(globals.bind::<WlSeat, _, _>(&qh, 1..=9, ())?);
 
         let wmbase = globals.bind::<XdgWmBase, _, _>(&qh, 2..=6, ())?;
         self.wmbase = Some(wmbase);
@@ -2637,10 +2642,10 @@ impl<T: 'static> WindowState<T> {
         let viewporter = globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()).ok();
 
         let _ = connection.display().get_registry(&qh, ()); // so if you want WlOutput, you need to
-                                                            // register this
+        // register this
 
         let xdg_output_manager = globals.bind::<ZxdgOutputManagerV1, _, _>(&qh, 1..=3, ())?; // bind
-                                                                                             // xdg_output_manager
+        // xdg_output_manager
 
         let decoration_manager = globals
             .bind::<ZxdgDecorationManagerV1, _, _>(&qh, 1..=1, ())
@@ -2666,12 +2671,12 @@ impl<T: 'static> WindowState<T> {
                 .push((output_display.clone(), ZxdgOutputInfo::new(zxdgoutput)));
         }
         event_queue.blocking_dispatch(&mut self)?; // then make a dispatch
-                                                   // so it is the same way, to get surface detach to protocol, first get the shell, like wmbase
-                                                   // or layer_shell or session-shell, then get `surface` from the wl_surface you get before, and
-                                                   // set it
-                                                   // finally thing to remember is to commit the surface, make the shell to init.
-                                                   //let (init_w, init_h) = self.size;
-                                                   // this example is ok for both xdg_surface and layer_shell
+        // so it is the same way, to get surface detach to protocol, first get the shell, like wmbase
+        // or layer_shell or session-shell, then get `surface` from the wl_surface you get before, and
+        // set it
+        // finally thing to remember is to commit the surface, make the shell to init.
+        //let (init_w, init_h) = self.size;
+        // this example is ok for both xdg_surface and layer_shell
         if self.is_background() {
             let background_surface = wmcompositer.create_surface(&qh, ());
             if self.events_transparent {

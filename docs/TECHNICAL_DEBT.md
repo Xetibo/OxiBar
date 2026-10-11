@@ -18,23 +18,29 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ## Runtime Debt
 
-### Static Theme and Remaining Restart-only Settings
+### Theme Compatibility and Remaining Restart-only Settings
 
-- Status: settings foundation resolved; theme/lifecycle extensions remain planned.
-- Current state: source-aware snapshots, sparse GUI overrides, atomic persistence,
-  filesystem reload and optional plugin config hooks are implemented. Fonts,
-  plugin lifecycle and existing poll timers remain restart-only; `OXITHEME` is
-  independently static in host/plugin libraries.
-- Target fix: cancellable plugin lifecycle and immutable theme snapshots as
-  sequenced in `SHELL_ROADMAP.md`. Add live hooks to further bundled settings as
-  their timer/backend ownership supports them.
+- Status: live immutable snapshots and bundled theme hooks implemented.
+- Palette/font/density/motion preferences apply live; legacy `bar.font`, plugin
+  lifecycle and existing backend timers keep explicit restart classification.
+  Old providers without the optional hook retain their seed palette.
+- Compatibility field access interns at most 128 immutable palette/font values
+  per library; exhausting that budget requires restart rather than unbounded leaks.
+  Wallpaper-derived colors remain an optional extension.
+- Further live timer hooks depend on owned resource lifecycles; the release SDK
+  gate documents those rules rather than attempting unsafe dylib unloading.
 
 ### Launcher Index and Desktop-entry Coverage
 
-- Status: accepted initial limitations.
-- Current state: application/icon indexing runs off the UI thread at startup and every configured refresh interval; reopening does not scan. The provider supports XDG precedence, hidden-entry masking, normal Exec fields, terminal commands and desktop visibility filters, but default-language names, hicolor/Adwaita/pixmap icon lookup, and Exec launching remain the supported subset.
-- Gaps: locale-aware names, icon-theme inheritance, DBusActivatable-only applications, desktop actions, persistent/mtime-based caches and filesystem-driven refresh are not implemented. Search results discard stale generations but old computations are not coalesced/cancelled; large configured result lists do not automatically scroll the keyboard selection into view.
-- Target fix: extend the resident provider and overlay navigation incrementally; do not reintroduce per-invocation scans or full application-vector cloning per query.
+- Status: localized fields/actions, inherited icons, filesystem refresh, usage/
+  favorites and coalesced cancellable searches implemented.
+- Remaining gaps: DBusActivatable-only entries and a persistent mtime index cache.
+  Large configured result lists do not yet scroll keyboard selection automatically.
+  Tools' file/command candidates skip non-UTF8 paths rather than lossy retargeting.
+- Clipboard text is bounded, opt-in and ephemeral; non-text/oversized selections
+  are not captured. Compositors without data-control keep other Tools providers
+  usable but cannot provide native clipboard copy/history.
+- Preserve shared indexes and stable immutable actions when extending coverage.
 
 ### Native System Backend Migration
 
@@ -97,6 +103,10 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   surface. Creating a non-interactive OSD redirected typing from existing settings.
 - The local patch separates compositor keyboard Enter/Leave from pointer/creation
   state. Packaged checks prove typing and applying settings through an OSD.
+- Repeated seat capabilities retain resources rather than rebinding/synthesizing
+  unfocus; removed devices release resources and retired keyboard events are ignored.
+  Private provider typing/copy/reopen checks passed with virtual-device startup
+  delays in the fixture, without changing the user's input devices.
 - Follow-up: upstream the correction and evaluate a released replacement before
   removing the local dependency; startup connection error propagation remains separate.
 

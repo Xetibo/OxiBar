@@ -15,6 +15,8 @@ use crate::layout::{
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    ThemeFontLoaded(String, Result<crate::font::FontData, String>),
+    ThemeFontReady(String, Result<String, String>),
     OverlayPointer(IcedId, Option<iced::Point>),
     OverlayPress(IcedId),
     Dock(crate::dock::Action),

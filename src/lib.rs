@@ -20,5 +20,6 @@ pub mod single_instance;
 pub mod surfaces;
 #[doc(hidden)]
 pub mod test_support;
+pub mod theme;
 
 pub(crate) use messages::{Message, map_plugin_message};

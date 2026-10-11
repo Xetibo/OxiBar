@@ -8,7 +8,7 @@ use crate::utils::{
     file::get_theme_toml,
 };
 
-pub static OXITHEME: Lazy<ComputedOxiTheme> = Lazy::new(|| {
+pub(crate) static LEGACY_THEME: Lazy<ComputedOxiTheme> = Lazy::new(|| {
     let default_theme = default_theme();
     let theme_str_opt = get_theme_toml();
     if theme_str_opt.is_err() {
@@ -23,8 +23,13 @@ pub static OXITHEME: Lazy<ComputedOxiTheme> = Lazy::new(|| {
     ComputedOxiTheme::from(theme)
 });
 
+pub static OXITHEME: super::snapshot::ThemeHandle = super::snapshot::ThemeHandle;
+
 pub fn get_derived_iced_theme() -> Theme {
-    let theme = &OXITHEME;
+    derived_theme(&OXITHEME)
+}
+
+pub fn derived_theme(theme: &ComputedOxiTheme) -> Theme {
     let palette = Palette {
         background: theme.mantle,
         text: theme.text,
@@ -245,6 +250,7 @@ impl From<OxiTheme> for ComputedOxiTheme {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub struct ComputedOxiTheme {
     pub base: Color,

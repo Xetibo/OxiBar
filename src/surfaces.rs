@@ -6,6 +6,7 @@ use iced::{
 use iced_anim::{AnimationBuilder, transition::Easing};
 use iced_layershell::reexport::IcedId;
 use oxiced::theme::theme_impl::OXITHEME;
+use oxiced::widgets::oxi_plugin;
 
 use crate::{
     app::OxiBar,
@@ -301,6 +302,15 @@ impl OxiBar {
             .map(|plugin_id| self.popup_input_metrics(plugin_id).height as f32)
             .unwrap_or(target);
         let has_detached_overlay = input_target > target;
+        let motion = oxiced::theme::snapshot::current_snapshot();
+        if motion.reduced_motion || motion.animation_ms == 0 {
+            let height = if target > 0.0 { input_target } else { 0.0 };
+            return Container::new(self.popup_row(id, target, height))
+                .width(Length::Fill)
+                .height(height.max(1.0))
+                .clip(!has_detached_overlay)
+                .into();
+        }
         AnimationBuilder::new(target, move |height| {
             let input_height = if has_detached_overlay && height > 0.0 {
                 input_target
@@ -313,7 +323,11 @@ impl OxiBar {
                 .clip(!has_detached_overlay)
                 .into()
         })
-        .animation(Easing::EASE_OUT.quick().reversible(true))
+        .animation(
+            Easing::EASE_OUT
+                .with_duration(motion.duration())
+                .reversible(true),
+        )
         .animates_layout(true)
         .into()
     }
@@ -448,7 +462,7 @@ impl OxiBar {
                 if name.eq_ignore_ascii_case("settings") {
                     return vec![
                         oxiced::widgets::oxi_plugin::bar_button(
-                            iced::widget::text("Settings").size(OXITHEME.font_md),
+                            oxi_plugin::text("Settings").size(OXITHEME.font_md),
                         )
                         .on_press(Message::Settings(crate::settings::Action::Open))
                         .into(),
@@ -458,7 +472,7 @@ impl OxiBar {
                     return if self.launcher.enabled {
                         vec![
                             oxiced::widgets::oxi_plugin::bar_button(
-                                iced::widget::text("Search").size(OXITHEME.font_md),
+                                oxi_plugin::text("Search").size(OXITHEME.font_md),
                             )
                             .on_press(Message::Launcher(crate::launcher::Action::Toggle))
                             .into(),
@@ -471,7 +485,7 @@ impl OxiBar {
                     return if self.config.snapshot.host.control_center_enabled {
                         vec![
                             oxiced::widgets::oxi_plugin::bar_button(
-                                iced::widget::text("Controls").size(OXITHEME.font_md),
+                                oxi_plugin::text("Controls").size(OXITHEME.font_md),
                             )
                             .on_press(Message::ControlCenter(
                                 crate::control_center::Action::Toggle,

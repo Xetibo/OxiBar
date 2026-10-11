@@ -1,5 +1,68 @@
 # Decisions
 
+## 2026-10-11 — Live Immutable Themes and Expanded Launcher Providers
+
+- Completed milestone 6 after `2ed9892` (dock/widgets). User authorization remains
+  all remaining steps with a commit after each; continue into the SDK/packaging/
+  presentation-time release gate after this commit. Preserve staged deletion of
+  `result`; no push, activation or delegation was requested.
+- Host and every bundled provider accept explicit immutable theme snapshots. The
+  seed palette remains exactly compatible; synchronized library-local handles and
+  a 128-value immutable palette/font pool keep old field references valid without
+  repeated-revision leaks. Legacy providers without the hook keep their fallback.
+- Theme palette/font/preset/density/scale/motion/radius are source-aware live fields.
+  Font lookup/read is bounded, bytes upload before canonical-family switching and
+  late requests cannot overwrite newer palette/family. Shared ordinary text/inputs/
+  pickers inherit the family, icons keep glyph fonts, reduced/zero motion bypasses
+  animation builders. Legacy bar font and backend timers remain restart-only.
+- Applications gained localized names/keywords/actions, inherited/cycle-safe icon
+  lookup, filesystem refresh and private usage/favorite ranking. Action rows retain
+  their own stable IDs and stay out of the shared dock catalog. Two latest-only
+  workers replace per-query thread spawning; scopes and generations cancel stale work.
+- Tools supplies every planned command/calculator/file/bookmark/named-action/clipboard
+  provider. Immutable action content participates in local identity; favorites have
+  separate logical keys. PATH/opener/actions are argument lists, never implicit shell
+  evaluation. Non-UTF8 candidates are skipped rather than opened through lossy paths.
+- One native clipboard owner prefers ext-data-control with wlr compatibility,
+  wakeable polling, bounded FDs/queues/text/deadlines and owned cancel/join. Capture
+  defaults off; calculator copy works independently. Opt-out clears synchronously;
+  capture/selection epochs block stale reads and IDs remain monotonic across reconnect.
+  Clipboard text is absent from persisted ranking state and historical identity keys.
+- SDK workers keep one running/one latest pending job; shared filesystem ownership
+  watches missing parents nonrecursively and recovers newly created roots. Usage
+  state is versioned/private/atomic, loads before local save, merges unsaved counts
+  once and retains corrupt formats. Favorite writes stay sparse config transactions.
+- Root uses longest advertised prefixes, displays status/guide/stars and captures
+  provider/local identity in rendered rows and input submission. Pure validators
+  pin provider libraries while running before reload/candidate adoption and writes.
+  Status exposes opaque result identities, not queries/titles/clipboard text.
+- Source review fixed seat capability churn in the local 0.17.1 backend: unchanged
+  devices are retained, removed ones released, stale keyboard events ignored and
+  compositor Enter/Leave remains authoritative. Virtual keyboard fixtures still
+  require binding delay before key events; the exact origin of earlier duplicate
+  proxy/modifier timing was not claimed as proved.
+- Verification passed 236 workspace tests/doctests, strict full-workspace Clippy,
+  Nix host/Applications/Tools/Clock and private modern-preferred/forced-wlr clipboard
+  integration. Real isolated provider GUI passed calculator copy, opt-in history,
+  files/bookmarks/PATH/named actions, literal `$(not-a-shell)` arguments, French
+  desktop actions, star overrides, filesystem refresh/stable IDs, private usage,
+  invalid URL rejection, immutable base, opt-out and restart. Theme GUI separately
+  passed density 1.2, palette/alpha/font/scale/zero-motion, all four upgraded providers,
+  invalid edits, persisted restart and reset. Screenshots are private.
+- Latest verified packages: host `fib14ar2c7i0rizqsxv8laawy7fdc31x`, Applications
+  `r83ms2jabac13n8zm84kz3sahqf1dhfy`, Tools `jhm00yalvwqz855r31izfy3bwwc7zqxv`,
+  Clock `8h086jmpwvsb5a2lqkdq6qhzyp7w07fx`. Temporary helpers are
+  `/tmp/opencode/oxibar-theme-smoke.py` and `oxibar-providers-smoke.py`, under the
+  isolated pinned compositor/bus setup. Their config/data/state/clipboard/processes
+  were owned fixtures; real desktop, hardware and user services stayed untouched.
+- A single earlier test command accidentally built into existing workspace target;
+  it was not cleaned or deleted. Subsequent checks use only agent-owned
+  `/tmp/opencode/oxibar-target`, debug=0/incremental=0, filtered source and serial Nix
+  builds. The backend post-patch source has a separate input to preserve cache reuse.
+- Next: reproducible SDK example/lifecycle/catalog, opt-in HM startup/keybinds,
+  native detached application handoff, repository smoke tooling and named-reference
+  first-presented-frame/query/idle/wakeup/RSS/worker release measurements.
+
 ## 2026-10-10 — Shared Dock and Persistent Desktop Widgets
 
 - Completed milestone 5 after `bd8c9bc` (System/OSDs). User explicitly authorized

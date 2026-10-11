@@ -41,6 +41,7 @@ use crate::config::{get_allowed_plugins, get_oxirun_dir};
 /// alive via the `Arc` so that the raw fn pointers remain valid for the
 /// lifetime of this struct.
 pub struct PluginFuncs {
+    pub theme_changed: Option<oxibar_plugin_api::ThemeChangedFn>,
     pub subscription_policy: Option<oxibar_plugin_api::SubscriptionPolicyFn>,
     pub dock_entries: Option<oxibar_plugin_api::DockEntriesFn>,
     pub desktop_view: Option<oxibar_plugin_api::DesktopViewFn>,
@@ -70,6 +71,11 @@ pub struct PluginFuncs {
     pub toast_view: Option<ToastViewFn>,
     pub runner_query: Option<RunnerQueryFn>,
     pub runner_entries: Option<RunnerEntriesFn>,
+    pub runner_prefixes: Option<oxibar_plugin_api::RunnerPrefixesFn>,
+    pub runner_status: Option<oxibar_plugin_api::RunnerStatusFn>,
+    pub runner_cancel: Option<oxibar_plugin_api::RunnerCancelFn>,
+    pub runner_favorite: Option<oxibar_plugin_api::RunnerFavoriteFn>,
+    pub config_validate: Option<oxibar_plugin_api::ConfigValidateFn>,
 }
 
 impl std::fmt::Debug for PluginFuncs {
@@ -201,8 +207,14 @@ unsafe fn load_one(
             subscription_policy: unsafe { resolve_optional(&lib, "subscription_policy") },
             dock_entries: unsafe { resolve_optional(&lib, "dock_entries") },
             desktop_view: unsafe { resolve_optional(&lib, "desktop_view") },
+            theme_changed: unsafe { resolve_optional(&lib, "theme_changed") },
             desktop_interactive: unsafe { resolve_optional(&lib, "desktop_interactive") },
             compositor_changed: unsafe { resolve_optional(&lib, "compositor_changed") },
+            runner_prefixes: unsafe { resolve_optional(&lib, "runner_prefixes") },
+            runner_status: unsafe { resolve_optional(&lib, "runner_status") },
+            runner_cancel: unsafe { resolve_optional(&lib, "runner_cancel") },
+            runner_favorite: unsafe { resolve_optional(&lib, "runner_favorite") },
+            config_validate: unsafe { resolve_optional(&lib, "config_validate") },
             command: unsafe { resolve_optional(&lib, "command") },
             osd_view: unsafe { resolve_optional(&lib, "osd_view") },
             context_view,

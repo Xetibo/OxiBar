@@ -12,9 +12,10 @@ use std::{
 use iced::{
     Alignment, Background, Border, Color, ContentFit, Element, Length, Shadow, Theme,
     futures::channel::mpsc,
-    widget::{Column, Row, Space, button, column, container, image, mouse_area, row, text},
+    widget::{Column, Row, Space, button, column, container, image, mouse_area, row},
 };
 use oxibar_plugin_api::{PluginMsg, toml::Table};
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{
     theme::theme_impl::OXITHEME,
     widgets::{

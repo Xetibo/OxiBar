@@ -66,6 +66,7 @@ where
     M: Clone,
 {
     PickList::new(options, selected, on_selected)
+        .font(crate::theme::snapshot::current_font())
         .padding(OXITHEME.padding_lg)
         .style(picklist_style)
         .menu_style(menu_style)

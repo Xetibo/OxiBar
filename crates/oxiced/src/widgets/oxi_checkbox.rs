@@ -75,6 +75,7 @@ pub fn checkbox<'a, M>(
     user_on_toggle: impl Fn(bool) -> M + 'a,
 ) -> Checkbox<'a, M> {
     iced::widget::checkbox(is_checked)
+        .font(crate::theme::snapshot::current_font())
         .label(label.into())
         .size(25)
         .spacing(OXITHEME.padding_lg)

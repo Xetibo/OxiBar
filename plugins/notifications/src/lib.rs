@@ -139,6 +139,8 @@ impl Model {
     }
 }
 
+oxibar_plugin_api::export_theme_changed!();
+
 #[unsafe(no_mangle)]
 pub extern "Rust" fn abi_version() -> u32 {
     ABI_VERSION

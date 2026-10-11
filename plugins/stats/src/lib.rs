@@ -1,6 +1,6 @@
 use iced::{
     Element, Task,
-    widget::{Column, Row, Space, text},
+    widget::{Column, Row, Space},
 };
 use oxibar_plugin_api::{
     ABI_VERSION, ApplyMode, PluginModel, PluginMsg, PluginStream, PluginViewContext,
@@ -8,6 +8,7 @@ use oxibar_plugin_api::{
     toml::{Table, Value},
     with_model_read, with_model_write,
 };
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_plugin};
 use std::{
     io::Read,
@@ -114,6 +115,8 @@ fn parse(cpu: &str, memory: &str, uptime: &str, previous: &Snapshot) -> Result<S
         uptime,
     })
 }
+oxibar_plugin_api::export_theme_changed!();
+
 #[unsafe(no_mangle)]
 pub extern "Rust" fn abi_version() -> u32 {
     ABI_VERSION

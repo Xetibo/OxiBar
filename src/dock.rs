@@ -4,9 +4,10 @@ use crate::{
 };
 use iced::{
     Element, Length, Task,
-    widget::{Column, Row, container, image, text, tooltip},
+    widget::{Column, Row, container, image, tooltip},
 };
 use iced_layershell::reexport::IcedId;
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_plugin};
 use std::{
     collections::{BTreeMap, BTreeSet},

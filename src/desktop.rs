@@ -7,9 +7,10 @@ use crate::{
 };
 use iced::{
     Element, Length, Point, Task,
-    widget::{Column, Row, Space, Stack, container, text},
+    widget::{Column, Row, Space, Stack, container},
 };
 use iced_layershell::reexport::IcedId;
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{
     theme::theme_impl::OXITHEME,
     widgets::{oxi_drag_handle::drag_handle, oxi_picklist, oxi_plugin},

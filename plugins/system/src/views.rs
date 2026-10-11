@@ -1,8 +1,9 @@
 use iced::{
     Element, Length,
-    widget::{Column, Row, slider, text},
+    widget::{Column, Row, slider},
 };
 use oxibar_plugin_api::PluginMsg;
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{
     theme::theme_impl::OXITHEME,
     widgets::{oxi_picklist, oxi_plugin},

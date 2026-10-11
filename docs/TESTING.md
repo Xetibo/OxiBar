@@ -25,7 +25,10 @@
 - `notifications`: markup stripping, notification action selection, notification timeout config, notification add/replace/remove/clear state transitions, DND toast suppression, toast-only expiry, hover/focus/draft expiry preservation, toast keyboard opt-in requests, panel rendering, and error draining.
 - `tray`: StatusNotifier address normalization, tray label fallback, DBusMenu label cleanup, item/hover/context-menu state update, dynamic popup metrics, popup/action rendering, and error draining.
 - `workspaces`: active workspace state update, empty launch behavior, view construction, and error draining without requiring Hyprland.
-- Runner: XDG desktop-entry precedence/hidden masking, command argument expansion, terminal/keyword parsing, empty-query and bounded matching, stale query rejection, worker execution without Tokio, timer cancellation, global ranking/local indexes, exact-provider activation, retained bar-plugin state, duplicate-activation prevention and window-scoped keyboard handling.
+- Runner: XDG precedence/hidden masking, localized fields/actions, inherited/cyclic
+  icon themes, argument expansion, stable catalogs and bounded ranked matching;
+  latest-running/pending cancellation, scope reactivation, metadata load/save races,
+  private versioned state, exact-provider activation and stale displayed identities.
 - IPC: command validation, configured socket path, a real command/acknowledgement round trip and stale-socket recovery.
 - Settings: sparse merge/reset/source behavior, explicit equal-to-base intent,
   readonly Nix symlink regeneration, unknown-field preservation, private atomic
@@ -55,6 +58,15 @@
   hide/add/remove/output assignment, passive-input overrides and visible ownership.
 - Clock/Stats: bounded proc parsing and immediate owned-timer resume without a host
   reactor. Modal tests also cover actual-bound outside dismissal and cleanup once.
+- Themes: exact legacy seed, immutable/exact-Arc delivery, bounded interning without
+  revision growth, alpha/preset/density/motion validation, live source/reset, retained
+  startup font and late uploaded-font guards.
+- Tools: bounded calculator parsing, all provider prefixes, quoted argument vectors,
+  bookmark/action validation, immutable edited actions, opt-out history clearing,
+  no clipboard text in identity/usage state and actual failed copy outcomes.
+- Provider validation: pinned library lifetime, rejection before adoption/writes,
+  longest-prefix cancellation and sparse live favorite changes. Filesystem tests
+  cover nonrecursive missing parents, created roots and prompt owned watcher drop.
 
 ## Expected Commands
 
@@ -142,6 +154,43 @@ its library, demo targets and doctests. Focused checks use:
 
 - `nix develop -c cargo test -p oxiced`
 - `nix develop -c cargo clippy -p oxiced --all-targets`
+
+## Live Theme and Expanded Provider Runtime Verification
+
+Use private XDG config/data/state, immutable base symlink, distinct lock/socket and
+a private compositor/bus. Theme checks change a real GUI density field, then palette,
+font, scale and reduced/zero motion; verify all loaded upgraded providers receive the
+same revision, font upload completes, invalid edits retain state and restart/reset
+preserves GUI-over-Nix semantics. Inspect settings, widgets, controls and launcher
+without publishing screenshots that may reveal desktop content.
+
+The native clipboard test is opt-in and must run against an owned compositor:
+
+```sh
+OXIBAR_TEST_PRIVATE_WAYLAND=1 cargo test -p tools private_wayland -- --ignored
+```
+
+The tested isolated fixture injected its private parent socket and compared a
+modern-preferred producer with a forced wlr consumer. It proved copy/history bounds,
+opt-out/current recapture, monotonic identities, duplicate subscription isolation,
+resume and owned shutdown without a host reactor. It never read the real clipboard.
+
+Packaged launcher checks exercise actual typed prefixes and Enter: calculator copy
+while history is disabled, opt-in history/paste, PATH arguments, named actions with
+literal shell-looking text, private files/URL opener, French main/action names,
+star persistence, filesystem refresh before the fallback timer and stable old IDs.
+Validate no clipboard content in private state, reject invalid URL records before
+write, retain the immutable base, clear on opt-out and restart. Virtual keyboard
+fixtures wait for device binding before modifiers/keys and for actual layer
+retirement before reopening; input screenshots alone are not action proof.
+
+These runs passed: 236 workspace tests/doctests, strict Clippy, Nix host/Applications/
+Tools/Clock packages, the private native clipboard integration and the full isolated
+provider GUI. The earlier theme GUI passed coherent snapshots, real density editing,
+canonical live font, invalid-input retention and restart/reset across four upgraded
+providers. The backend capability patch retains devices on unchanged capabilities
+and ignores retired keyboard proxies. First-presentation release measures remain
+milestone 7, rather than being inferred from layer configuration or sleeps.
 
 ## Settings Runtime Verification
 

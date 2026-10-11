@@ -1,5 +1,18 @@
 # Decisions
 
+## Immutable live snapshots (2026-10-11)
+
+- Preserve exact seed colors and derived states; make palette/font/density/motion
+  changes explicit snapshots delivered by the host to upgraded consumers.
+- A synchronized immutable intern pool keeps existing `OXITHEME` field access safe
+  without mutating previously borrowed tokens. Bound distinct palette/font values
+  to 128; reuse values for metadata/revision-only changes.
+- Ordinary text and shared inputs/pickers inherit the live family, while icons keep
+  their glyph font. Upload font bytes before switching family and bypass reduced/
+  zero-duration animations. Legacy consumers retain fallback behavior.
+- Workspace/unit checks and private packaged host/provider GUI verified exact seed,
+  shared revisions, font/density/colors, invalid-input retention and restart/reset.
+
 ## Spacious surface controls (2026-10-10)
 
 - Add normal-sized flat surface buttons, badges and a directly theme-styled Iced

@@ -17,6 +17,7 @@ self: {
     oxibar-notifications
     oxibar-system
     oxibar-stats
+    oxibar-tools
     oxibar-tray
     oxibar-workspaces
   ];

@@ -51,6 +51,7 @@ use crate::theme::theme_impl::OXITHEME;
 
 pub fn toggler<'a, M>(enabled: bool) -> widget::Toggler<'a, M> {
     widget::toggler(enabled)
+        .font(crate::theme::snapshot::current_font())
         .size(OXITHEME.font_lg + OXITHEME.padding_sm)
         .spacing(OXITHEME.padding_lg)
         .text_size(OXITHEME.font_md)

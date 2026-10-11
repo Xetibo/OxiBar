@@ -117,9 +117,12 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "applications"
 version = "0.1.0"
 dependencies = [
+ "async-io",
  "fuzzy-matcher",
  "iced",
+ "notify",
  "oxibar-plugin-api",
+ "rustix 1.1.4",
  "shell-words",
  "xdg",
 ]
@@ -3304,7 +3307,11 @@ dependencies = [
 name = "oxibar-plugin-api"
 version = "0.1.0"
 dependencies = [
+ "async-io",
  "iced",
+ "notify",
+ "oxiced",
+ "rustix 1.1.4",
  "toml",
 ]
 
@@ -4583,6 +4590,23 @@ name = "toml_writer"
 version = "1.1.1+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
+
+[[package]]
+name = "tools"
+version = "0.1.0"
+dependencies = [
+ "async-io",
+ "iced",
+ "iced_runtime",
+ "notify",
+ "oxibar-plugin-api",
+ "oxiced",
+ "rustix 1.1.4",
+ "shell-words",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+]
 
 [[package]]
 name = "tracing"

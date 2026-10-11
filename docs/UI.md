@@ -5,6 +5,12 @@
 ## Rules
 
 - Use `oxiced::theme::theme_impl::OXITHEME` for colors and theme-derived styling.
+- `OXITHEME` is the safe compatibility handle for the explicitly delivered
+  immutable snapshot. Keep the existing seed palette as default; live preferences
+  change shared tokens rather than introducing a second palette.
+- Use `oxi_plugin::text` and shared font-aware inputs/pickers for ordinary text.
+  Glyph icons retain their icon font. Reduced motion and zero animation duration
+  render final layout directly.
 - Prefer shared `oxiced` widgets when available.
 - Use `oxiced::widgets::oxi_plugin::bar_button` for standard plugin bar controls.
 - Use `oxiced::widgets::oxi_plugin` text role helpers before adding local text style closures.
@@ -24,6 +30,10 @@
 - Detached popup overlays may request a larger transparent input region than their visible popup body through `popup_metrics(model)` or metadata; keep visible chrome compact and use the extra region only for overlay hit-testing.
 - Do not introduce arbitrary palettes or random RGB colors. If `oxiced` cannot express a needed style, track the exception in `docs/TECHNICAL_DEBT.md`.
 - Search/task overlays take exclusive keyboard focus only while visible. Scope navigation to the overlay window; Escape and activation dismiss the overlay rather than terminate the daemon. Selected rows must differ from hover, and long result lists must scroll.
+- Show provider prefixes, indexing/unavailable status and separate favorite actions.
+  A row or input submission captures its displayed provider/local identity; a later
+  result reorder must not change what that activation executes. Clipboard history
+  is explicitly opt-in and clears when disabled; calculator copy does not need it.
 - Settings fields display their effective value, base/default value, source and
   live/surface/restart classification, with individual reset actions. Invalid edits
   remain visible without losing the running configuration. Continuous text edits
@@ -76,7 +86,8 @@
   and spans its selected output width unless common/profile width overrides it.
 - Popup, modal, panel, settings, control-center and OSD host surfaces use `OXITHEME.mantle`.
 - Notification panel host surface remains on the bar output; toast host surfaces target the active monitor independently.
-- Popup open/close animation uses quick `Easing::EASE_OUT` timing to align with notification-center layer opening.
+- Popup open/close animation uses theme-controlled `Easing::EASE_OUT` duration,
+  with a direct final-layout path for reduced motion or zero duration.
 - Plugins request host surfaces through `HOST_REQUEST_TOGGLE_POPUP`, `HOST_REQUEST_OPEN_MODAL`, `HOST_REQUEST_CLOSE_MODAL`, and `HOST_REQUEST_TOGGLE_PANEL`.
 - Control-center providers optionally export `control_center_view`; the host also
   supports existing popup/panel views. `HOST_REQUEST_TOGGLE_CONTROL_CENTER` opens

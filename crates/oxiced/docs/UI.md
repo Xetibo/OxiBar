@@ -1,6 +1,11 @@
 # UI Guidelines
 
 - Use `OXITHEME` for colors, radius, padding, and text sizes.
+- Install explicit immutable `ThemeSnapshot` values; the synchronized compatibility
+  handle retains bounded immutable palette/font references. Preserve the seed as
+  default rather than silently choosing a new palette.
+- `oxi_plugin::text` and shared inputs/pickers use the current font. Icon glyphs
+  retain their explicit family; reduced/zero motion bypasses animation builders.
 - Prefer small reusable helpers over copy-pasted local styles.
 - Button helpers should expose active, hovered, pressed, and disabled states.
 - Shared helpers should avoid application-specific names unless they are intentionally reusable patterns.

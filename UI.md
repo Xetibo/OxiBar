@@ -6,6 +6,8 @@ This file is the styling contract for Oxibar plugins and shell surfaces. New plu
 
 - All components must adhere to the `oxiced` theme. This is mandatory for bar items, popup content, panels, modals, cards, buttons, inputs, sliders, picklists, icons, text, and empty states.
 - Use `oxiced::theme::theme_impl::OXITHEME` for colors, radius defaults, and derived iced theme behavior.
+- Upgraded libraries receive immutable snapshots explicitly. The safe `OXITHEME`
+  handle exposes their current tokens; legacy fallback preserves the existing seed.
 - Use shared `oxiced` widgets when available: `oxi_button`, `oxi_text_input`, `oxi_picklist`, `oxi_slider`, `oxi_toggler`, and `oxi_plugin` surface helpers.
 - Do not use raw numeric literals for spacing, padding, margins, border radii, or font sizes. Use `OXITHEME` tokens, `oxi_plugin` constants/helpers, or a named local constant for plugin-specific geometry.
 - Do not introduce plugin-local palettes, random RGB values, or one-off control styles unless the shared theme cannot express the state.
@@ -16,7 +18,8 @@ This file is the styling contract for Oxibar plugins and shell surfaces. New plu
 
 - Each bar spans its selected output width unless common/profile `width` overrides it. Its background uses `OXITHEME.mantle` unless its effective `transparent = true` is set.
 - Popup, panel, and modal host surfaces use `OXITHEME.mantle`. Plugin content should not repaint the full surface with another base color.
-- Popup open/close animation uses quick `Easing::EASE_OUT` timing to align with notification-center layer opening.
+- Popup open/close uses theme-controlled `Easing::EASE_OUT` duration. Reduced motion
+  and zero duration return final content directly, without a zero-time animation.
 - Popups are compact overlays. Keep content inside `Length::Fill`, with body padding based on `OXITHEME.padding_md`/`padding_lg` and vertical spacing from `OXITHEME.padding_sm`.
 - Plugins with model-dependent popup content should export `popup_metrics(model)` and cap long content at the host max height with scrolling.
 - Panels are full-height side surfaces. Use `OXITHEME.padding_md`, top-level spacing from `OXITHEME.padding_md`, and scrolling for long lists.
@@ -64,7 +67,9 @@ This file is the styling contract for Oxibar plugins and shell surfaces. New plu
 - Primary row text: `OXITHEME.font_md`, color `OXITHEME.text`.
 - Secondary/detail text: `OXITHEME.font_sm`, color `OXITHEME.text_muted`.
 - Empty states: `OXITHEME.font_md`, color `OXITHEME.text_muted` unless the empty state is the only popup content, where `OXITHEME.primary` is acceptable.
-- Plugins should inherit the bar font. If a plugin needs explicit weight, resolve `[bar] font` first and then set only the weight.
+- Ordinary text uses `oxi_plugin::text` and font-aware shared inputs/pickers. Use
+  the current snapshot font before overriding weight; glyph icons keep their font.
+  The empty live family inherits the startup bar font.
 - Use semibold only for compact identity controls such as workspace pills.
 - Spacious settings/control-center typography uses `font_xxl`/`text` for page
   titles, `font_xl` for group headings, `font_lg` for field/tile labels and

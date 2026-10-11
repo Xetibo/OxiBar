@@ -26,7 +26,7 @@ use iced::{
     border::Radius,
     font::Weight,
     futures::Stream,
-    widget::{Column, Row, button, container, text, tooltip},
+    widget::{Column, Row, button, container, tooltip},
 };
 use oxibar_plugin_api::{
     ABI_VERSION, HOST_REQUEST_TOGGLE_POPUP, PluginMetadata, PluginModel, PluginMsg, PluginStream,
@@ -34,6 +34,7 @@ use oxibar_plugin_api::{
 };
 use oxiced::theme::theme_impl::OXITHEME;
 use oxiced::widgets::oxi_plugin;
+use oxiced::widgets::oxi_plugin::text;
 
 mod caldav;
 
@@ -326,6 +327,8 @@ fn msg(m: Message) -> PluginMsg {
 
 // ---------------- Plugin ABI ----------------
 
+oxibar_plugin_api::export_theme_changed!();
+
 #[unsafe(no_mangle)]
 pub extern "Rust" fn abi_version() -> u32 {
     ABI_VERSION
@@ -463,7 +466,7 @@ pub extern "Rust" fn view(
         let label_text = if model.bold && model.font_family.is_none() {
             label_text.font(Font {
                 weight: Weight::Bold,
-                ..Font::DEFAULT
+                ..oxiced::theme::snapshot::current_font()
             })
         } else {
             label_text

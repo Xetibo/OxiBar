@@ -13,7 +13,8 @@ members = [
 	"plugins/network",
 	"plugins/notifications",
 	"plugins/system",
-	"plugins/stats",
+    "plugins/stats",
+    "plugins/tools",
 	"plugins/tray",
 	"plugins/workspaces",
 ]

@@ -1,8 +1,9 @@
 use iced::{
     Alignment, Element, Length, Task,
-    widget::{Column, Row, Space, container, scrollable, text},
+    widget::{Column, Row, Space, container, scrollable},
 };
 use iced_layershell::reexport::IcedId;
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_plugin};
 
 use crate::{

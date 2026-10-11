@@ -1,13 +1,11 @@
 //! Workspace controls consume the host's single compositor event broker.
-use iced::{
-    Element, Task,
-    widget::{Row, text},
-};
+use iced::{Element, Task, widget::Row};
 use oxibar_plugin_api::{
     ABI_VERSION, CompositorSnapshot, HOST_REQUEST_WORKSPACE_PREFIX, PluginModel, PluginMsg,
     PluginStream, PluginViewContext, drain_model_errors, plugin_model, toml::Table,
     with_model_read, with_model_write,
 };
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_plugin};
 use std::sync::Arc;
 
@@ -20,6 +18,8 @@ struct Model {
 enum Message {
     Activate(i64),
 }
+
+oxibar_plugin_api::export_theme_changed!();
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn abi_version() -> u32 {

@@ -7,14 +7,15 @@ use iced::{
     Alignment, Background, Border, Color, Element, Length, Shadow, Task,
     futures::Stream,
     stream,
-    widget::{Column, Container, Row, Space, button, scrollable, text},
+    widget::{Column, Container, Row, Space, button, scrollable},
 };
-use iced_anim::{AnimationBuilder, Motion};
+use iced_anim::{AnimationBuilder, transition::Easing};
 use oxibar_plugin_api::{
     ABI_VERSION, HOST_REQUEST_CLOSE_MODAL, HOST_REQUEST_OPEN_MODAL, HOST_REQUEST_TOGGLE_POPUP,
     PluginMetadata, PluginModel, PluginMsg, PluginStream, drain_model_errors, plugin_model,
     toml::Table, with_model_read, with_model_write,
 };
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{
     theme::theme_impl::OXITHEME,
     widgets::{
@@ -119,6 +120,8 @@ enum Message {
 fn msg(m: Message) -> PluginMsg {
     Arc::new(m)
 }
+
+oxibar_plugin_api::export_theme_changed!();
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn abi_version() -> u32 {
@@ -748,7 +751,7 @@ fn animated_network_row(
         OXITHEME.mantle_hover
     };
 
-    AnimationBuilder::new(bg, move |bg| {
+    let build = move |bg| -> Element<'static, PluginMsg> {
         Container::new(build())
             .style(move |_| iced::widget::container::Style {
                 background: Some(Background::Color(bg)),
@@ -763,9 +766,15 @@ fn animated_network_row(
             .padding(OXITHEME.padding_xs)
             .width(Length::Fill)
             .into()
-    })
-    .animation(Motion::SMOOTH)
-    .into()
+    };
+    let motion = oxiced::theme::snapshot::current_snapshot();
+    if motion.reduced_motion || motion.animation_ms == 0 {
+        build(bg)
+    } else {
+        AnimationBuilder::new(bg, build)
+            .animation(Easing::EASE_OUT.with_duration(motion.duration()))
+            .into()
+    }
 }
 
 trait MouseAreaExt {

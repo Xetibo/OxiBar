@@ -1,7 +1,6 @@
-use std::{sync::mpsc, thread, time::Duration};
+use std::thread;
 
-use iced::futures::channel::{mpsc::Sender, oneshot};
-use oxibar_plugin_api::PluginMsg;
+use iced::futures::channel::oneshot;
 
 struct Worker(Option<thread::JoinHandle<()>>);
 
@@ -31,43 +30,6 @@ pub(crate) async fn run<T: Send + 'static>(
         .map_err(|_| "application worker stopped without a result".to_owned())
 }
 
-pub(crate) struct RefreshTimer {
-    cancel: mpsc::Sender<()>,
-    _worker: Worker,
-}
-
-impl RefreshTimer {
-    pub(crate) fn new(
-        interval: Duration,
-        mut output: Sender<PluginMsg>,
-        message: impl Fn() -> PluginMsg + Send + 'static,
-    ) -> Self {
-        let (cancel, receiver) = mpsc::channel();
-        let worker = thread::spawn(move || {
-            while matches!(
-                receiver.recv_timeout(interval),
-                Err(mpsc::RecvTimeoutError::Timeout)
-            ) {
-                if let Err(error) = output.try_send(message())
-                    && error.is_disconnected()
-                {
-                    break;
-                }
-            }
-        });
-        Self {
-            cancel,
-            _worker: Worker(Some(worker)),
-        }
-    }
-}
-
-impl Drop for RefreshTimer {
-    fn drop(&mut self) {
-        let _ = self.cancel.send(());
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,14 +37,5 @@ mod tests {
     #[test]
     fn work_runs_without_a_tokio_reactor() {
         assert_eq!(iced::futures::executor::block_on(run(|| 42)).unwrap(), 42);
-    }
-
-    #[test]
-    fn dropping_timer_cancels_long_wait_and_joins_worker() {
-        let (sender, _receiver) = iced::futures::channel::mpsc::channel(1);
-        let timer = RefreshTimer::new(Duration::from_secs(60), sender, || {
-            std::sync::Arc::new("refresh")
-        });
-        drop(timer);
     }
 }

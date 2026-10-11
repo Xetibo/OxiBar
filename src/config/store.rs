@@ -106,6 +106,14 @@ pub struct ConfigStore {
     observed: Option<Inputs>,
     pub error: Option<String>,
     persistent: bool,
+    validators: Vec<ConfigValidator>,
+}
+
+#[derive(Debug)]
+struct ConfigValidator {
+    name: String,
+    callback: oxibar_plugin_api::ConfigValidateFn,
+    _library: Arc<libloading::Library>,
 }
 
 impl ConfigStore {
@@ -119,6 +127,7 @@ impl ConfigStore {
             observed: None,
             error: None,
             persistent: true,
+            validators: Vec::new(),
         };
         if let Err(error) = fs::create_dir_all(&store.directory)
             .map_err(|error| error.to_string())
@@ -143,7 +152,40 @@ impl ConfigStore {
             observed: Some(Inputs::default()),
             error: None,
             persistent: false,
+            validators: Vec::new(),
         }
+    }
+
+    pub fn register_validator(
+        &mut self,
+        name: String,
+        callback: oxibar_plugin_api::ConfigValidateFn,
+        library: Arc<libloading::Library>,
+    ) -> Result<(), String> {
+        if !self
+            .validators
+            .iter()
+            .any(|validator| validator.name == name)
+        {
+            self.validators.push(ConfigValidator {
+                name,
+                callback,
+                _library: library,
+            });
+        }
+        let result = self.validate_plugins(&self.snapshot.effective);
+        if let Err(error) = &result {
+            self.error = Some(error.clone());
+        }
+        result
+    }
+
+    fn validate_plugins(&self, effective: &Table) -> Result<(), String> {
+        for validator in &self.validators {
+            unsafe { (validator.callback)(effective.clone()) }
+                .map_err(|error| format!("{}: {error}", validator.name))?;
+        }
+        Ok(())
     }
 
     pub fn register_schema(&mut self, fields: Vec<SettingDescriptor>) -> Result<(), String> {
@@ -192,6 +234,7 @@ impl ConfigStore {
             self.snapshot.schema.clone(),
             self.snapshot.revision + 1,
         )?;
+        self.validate_plugins(&snapshot.effective)?;
         self.snapshot = Arc::new(snapshot);
         self.observed = Some(inputs);
         Ok(true)
@@ -236,6 +279,7 @@ impl ConfigStore {
             self.snapshot.schema.clone(),
             self.snapshot.revision + 1,
         )?;
+        self.validate_plugins(&candidate.effective)?;
         if candidate.overrides == self.snapshot.overrides {
             return Ok(self.snapshot());
         }

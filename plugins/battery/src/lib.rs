@@ -7,12 +7,13 @@ use iced::{
     Alignment, Background, Border, Color, Element, Length, Shadow, Task,
     futures::Stream,
     stream,
-    widget::{Column, Row, container, text, tooltip},
+    widget::{Column, Row, container, tooltip},
 };
 use oxibar_plugin_api::{
     ABI_VERSION, PluginAvailability, PluginModel, PluginMsg, PluginStream, drain_model_errors,
     plugin_model, toml::Table, with_model_read, with_model_write,
 };
+use oxiced::widgets::oxi_plugin::text;
 use oxiced::{
     theme::theme_impl::OXITHEME,
     widgets::{oxi_plugin, oxi_plugin::text_muted, oxi_plugin::text_primary},
@@ -72,6 +73,8 @@ enum Message {
 fn msg(m: Message) -> PluginMsg {
     Arc::new(m)
 }
+
+oxibar_plugin_api::export_theme_changed!();
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn abi_version() -> u32 {
