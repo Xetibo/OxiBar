@@ -4,7 +4,7 @@ use crate::{
 };
 use iced::{
     Element, Length, Task,
-    widget::{Column, Row, container, image, tooltip},
+    widget::{Row, container, tooltip},
 };
 use iced_layershell::reexport::IcedId;
 use oxiced::widgets::oxi_plugin::text;
@@ -32,7 +32,6 @@ pub(crate) struct Item {
     pub title: String,
     pub icon: Option<PathBuf>,
     pub action: Option<Action>,
-    pub running: usize,
     pub focused: bool,
 }
 
@@ -56,14 +55,58 @@ fn normalized(value: &str) -> String {
 }
 
 fn matches(entry: &oxibar_plugin_api::DockEntry, class: &str) -> bool {
+    match_score(entry, class) > 0
+}
+fn match_score(entry: &oxibar_plugin_api::DockEntry, class: &str) -> u8 {
     let class = normalized(class);
-    !class.is_empty()
-        && [&entry.desktop_id, &entry.window_class, &entry.executable]
-            .iter()
-            .any(|value| {
-                let value = normalized(value);
-                value == class || value.rsplit('.').next() == Some(class.as_str())
-            })
+    if class.is_empty() {
+        return 0;
+    }
+    let compact = |value: &str| {
+        value
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    let score = |value: &str, exact: u8, suffix: u8| {
+        let value = normalized(value);
+        if value.is_empty() {
+            0
+        } else if value == class {
+            exact
+        } else if value.rsplit('.').next() == class.rsplit('.').next()
+            || compact(&value) == compact(&class)
+        {
+            suffix
+        } else {
+            0
+        }
+    };
+    [
+        score(&entry.window_class, 100, 85),
+        score(&entry.desktop_id, 90, 75),
+        score(&entry.title, 70, 65),
+        if !entry
+            .window_class
+            .to_ascii_lowercase()
+            .starts_with("steam_app_")
+        {
+            score(
+                std::path::Path::new(&entry.executable)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&entry.executable),
+                30,
+                20,
+            )
+        } else {
+            0
+        },
+    ]
+    .into_iter()
+    .max()
+    .unwrap_or(0)
 }
 
 impl OxiBar {
@@ -179,7 +222,6 @@ impl OxiBar {
                         title: format!("{desktop_id} — unavailable"),
                         icon: None,
                         action: None,
-                        running: 0,
                         focused: false,
                     });
                 }
@@ -204,7 +246,12 @@ impl OxiBar {
                     let entry = catalog
                         .iter()
                         .flat_map(|(_, entries)| entries.iter())
-                        .find(|entry| matches(entry, &window.class));
+                        .filter_map(|entry| {
+                            let score = match_score(entry, &window.class);
+                            (score > 0).then_some((score, entry))
+                        })
+                        .max_by_key(|(score, entry)| (*score, entry.icon.is_some()))
+                        .map(|(_, entry)| entry);
                     items.push(item_for(
                         entry.map_or_else(
                             || {
@@ -223,21 +270,21 @@ impl OxiBar {
                 }
             }
             let item_width = config.icon_size + 2 * OXITHEME.padding_sm as u32;
+            let gap = OXITHEME.padding_sm as u32;
             items.truncate(
-                ((width.saturating_sub(2 * config.margin + 2 * OXITHEME.padding_md as u32))
-                    / item_width.max(1))
+                ((width.saturating_sub(2 * config.margin + 2 * OXITHEME.padding_md as u32) + gap)
+                    / (item_width + gap).max(1))
                 .min(64) as usize,
             );
             if items.is_empty() {
                 continue;
             }
             let size = (
-                (items.len() as u32 * item_width + 2 * OXITHEME.padding_md as u32)
+                (items.len() as u32 * item_width
+                    + (items.len() as u32 - 1) * gap
+                    + 2 * OXITHEME.padding_md as u32)
                     .min(width.max(1)),
-                config.icon_size
-                    + 2 * OXITHEME.padding_sm as u32
-                    + 2 * OXITHEME.padding_md as u32
-                    + (OXITHEME.font_sm * 1.5).ceil() as u32,
+                config.icon_size + 2 * OXITHEME.padding_sm as u32 + 2 * OXITHEME.padding_md as u32,
             );
             let bar_offset = self
                 .shell
@@ -349,6 +396,7 @@ impl OxiBar {
             }
         };
         let mut tasks = vec![
+            self.close_overview(),
             task,
             self.close_settings(),
             self.close_launcher(),
@@ -371,46 +419,20 @@ impl OxiBar {
         else {
             return iced::widget::Space::new().into();
         };
-        let mut row = Row::new().spacing(0).align_y(iced::Alignment::Center);
+        let mut row = Row::new()
+            .spacing(OXITHEME.padding_sm)
+            .align_y(iced::Alignment::Center);
         for item in &instance.items {
-            let icon: Element<'_, Message> = item.icon.as_ref().map_or_else(
-                || {
-                    text(item.title.chars().next().unwrap_or('•').to_string())
-                        .size(OXITHEME.font_xl)
-                        .style(oxi_plugin::text_primary)
-                        .into()
-                },
-                |path| {
-                    image(path.clone())
-                        .width(instance.config.icon_size)
-                        .height(instance.config.icon_size)
-                        .into()
-                },
-            );
-            let marker = if item.focused {
-                "━"
-            } else if item.running > 0 {
-                "•"
-            } else {
-                " "
-            };
-            let body = Column::new()
-                .push(
-                    container(icon)
-                        .width(instance.config.icon_size)
-                        .height(instance.config.icon_size)
-                        .center_x(Length::Fill)
-                        .center_y(Length::Fill),
-                )
-                .push(
-                    text(marker)
-                        .size(OXITHEME.font_sm)
-                        .style(oxi_plugin::text_accent),
-                )
-                .align_x(iced::Alignment::Center);
+            let icon =
+                oxi_plugin::application_icon(item.icon.as_deref(), instance.config.icon_size);
+            let body = container(icon)
+                .width(instance.config.icon_size)
+                .height(instance.config.icon_size)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill);
             let button = iced::widget::button(body)
                 .padding(OXITHEME.padding_sm)
-                .style(oxi_plugin::selectable_row_style(item.focused));
+                .style(oxi_plugin::accent_selection_style(item.focused));
             let button = if let Some(action) = &item.action {
                 button.on_press(Message::Dock(action.clone()))
             } else {
@@ -463,7 +485,41 @@ fn item_for(
                 pid: window.pid,
             })
             .or(launch),
-        running: windows.len(),
         focused: windows.iter().any(|window| window.focused),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn desktop_class_and_game_identity_rank_above_shared_executables() {
+        let entry = oxibar_plugin_api::DockEntry {
+            index: 0,
+            desktop_id: "org.mozilla.Firefox.desktop".into(),
+            title: "Firefox".into(),
+            icon: None,
+            window_class: "firefox".into(),
+            executable: "/private/bin/firefox".into(),
+        };
+        assert!(matches(&entry, "org.mozilla.firefox"));
+        assert!(!matches(&entry, "unrelated"));
+        let mut alternate_class = entry.clone();
+        alternate_class.window_class = "Firefox-nightly".into();
+        alternate_class.desktop_id = "nightly.desktop".into();
+        alternate_class.title = "Nightly".into();
+        assert_eq!(match_score(&alternate_class, "firefox"), 30);
+        assert!(match_score(&entry, "firefox") > match_score(&alternate_class, "firefox"));
+        let mut game = entry.clone();
+        game.desktop_id = "game.desktop".into();
+        game.window_class = "steam_app_435150".into();
+        game.executable = "steam".into();
+        let mut client = entry;
+        client.desktop_id = "steam.desktop".into();
+        client.window_class = "steam".into();
+        client.executable = "steam".into();
+        assert!(!matches(&game, "Steam"));
+        assert!(match_score(&game, "steam_app_435150") > match_score(&client, "steam_app_435150"));
+        assert!(match_score(&client, "Steam") > match_score(&game, "Steam"));
     }
 }

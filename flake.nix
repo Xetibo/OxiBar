@@ -120,7 +120,12 @@
         packages = let
           craneLib = inputs.crane.mkLib pkgs;
           lockFile = ./Cargo.lock;
-          src = craneLib.cleanCargoSource ./.;
+          src = pkgs.lib.cleanSourceWith {
+            src = ./.;
+            filter = path: type:
+              craneLib.filterCargoSources path type
+              || builtins.match ".*/src/overview/protocols/[^/]+\\.xml" path != null;
+          };
           layershellevSource = builtins.path {
             path = ./crates/layershellev/src;
             name = "oxibar-layershellev-source";
@@ -172,6 +177,7 @@
         in rec {
           oxibar = pkgs.callPackage ./nix/default.nix {
             inherit inputs craneLib src cargoVendorDir cargoArtifacts lockFile;
+            applicationsPlugin = oxibar-applications;
           };
           oxibar-audio = pluginPackage "audio";
           oxibar-applications = pluginPackage "applications";

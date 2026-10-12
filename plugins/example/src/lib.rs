@@ -200,6 +200,26 @@ fn body(model: &Model, instance: Option<&str>) -> Element<'static, PluginMsg> {
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn bar_view(
+    model: PluginModel,
+    _: PluginViewContext,
+    show_labels: bool,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    if show_labels {
+        return view(model);
+    }
+    with_model_read::<Model, _>(&model, |_| {
+        vec![
+            oxi_plugin::bar_button(oxi_plugin::icon(oxi_plugin::ShellIcon::Application))
+                .on_press(
+                    Arc::new(oxibar_plugin_api::HOST_REQUEST_TOGGLE_POPUP.to_owned()) as PluginMsg,
+                )
+                .into(),
+        ]
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn popup_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {

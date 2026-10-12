@@ -35,24 +35,25 @@ fn title(value: &str) -> String {
     }
 }
 
-pub fn bar(model: &Model) -> Element<'static, PluginMsg> {
+pub fn bar(model: &Model, show_labels: bool) -> Element<'static, PluginMsg> {
     let value = model
         .snapshot
         .backlight(&model.preferred)
         .map(|device| format!("{}%", device.percent()))
         .unwrap_or_else(|| "System".to_owned());
+    let mut row = Row::new().push(oxi_plugin::icon(oxi_plugin::ShellIcon::Brightness));
+    if show_labels {
+        row = row.push(label(value));
+    }
     oxi_plugin::bar_button(
-        Row::new()
-            .push(text("󰃠").size(OXITHEME.font_lg))
-            .push(label(value))
-            .spacing(OXITHEME.padding_sm)
+        row.spacing(OXITHEME.padding_sm)
             .align_y(iced::Alignment::Center),
     )
     .on_press(plugin_message(Message::TogglePopup))
     .into()
 }
 
-pub fn controls(model: &Model) -> Element<'static, PluginMsg> {
+pub fn controls(model: &Model, include_session: bool) -> Element<'static, PluginMsg> {
     let mut body = Column::new()
         .spacing(OXITHEME.padding_xl)
         .width(Length::Fill);
@@ -130,46 +131,48 @@ pub fn controls(model: &Model) -> Element<'static, PluginMsg> {
     }
     body = body.push(oxi_plugin::settings_card(profiles));
 
-    let mut session = Column::new().spacing(OXITHEME.padding_lg).push(
-        text("Session")
-            .size(OXITHEME.font_lg)
-            .style(oxi_plugin::text_primary),
-    );
-    let busy = model.pending.contains_key(&Domain::Session);
-    let lock = model.lock_enabled && model.locker.is_some() && !busy;
-    session = session.push(action("Lock", lock.then_some(Message::Lock), true));
-    if model.lock_enabled && model.locker.is_none() {
-        session = session.push(label("Set system.lock_command to your dedicated locker."));
-    }
-    for action_kind in [
-        SessionAction::Suspend,
-        SessionAction::Hibernate,
-        SessionAction::Logout,
-        SessionAction::Reboot,
-        SessionAction::PowerOff,
-    ] {
-        let allowed = model.snapshot.can(action_kind) && !busy;
-        let mut row = Row::new()
-            .spacing(OXITHEME.padding_lg)
-            .align_y(iced::Alignment::Center)
-            .push(action(
-                action_kind.label(),
-                allowed.then_some(Message::Request(action_kind)),
-                false,
-            ));
-        if model.snapshot.capabilities.get(&action_kind) == Some(&Capability::Challenge) {
-            row = row.push(
-                text("Authentication required")
-                    .size(OXITHEME.font_md)
-                    .style(oxi_plugin::text_muted),
-            );
+    if include_session {
+        let mut session = Column::new().spacing(OXITHEME.padding_lg).push(
+            text("Session")
+                .size(OXITHEME.font_lg)
+                .style(oxi_plugin::text_primary),
+        );
+        let busy = model.pending.contains_key(&Domain::Session);
+        let lock = model.lock_enabled && model.locker.is_some() && !busy;
+        session = session.push(action("Lock", lock.then_some(Message::Lock), true));
+        if model.lock_enabled && model.locker.is_none() {
+            session = session.push(label("Set system.lock_command to your dedicated locker."));
         }
-        session = session.push(row);
+        for action_kind in [
+            SessionAction::Suspend,
+            SessionAction::Hibernate,
+            SessionAction::Logout,
+            SessionAction::Reboot,
+            SessionAction::PowerOff,
+        ] {
+            let allowed = model.snapshot.can(action_kind) && !busy;
+            let mut row = Row::new()
+                .spacing(OXITHEME.padding_lg)
+                .align_y(iced::Alignment::Center)
+                .push(action(
+                    action_kind.label(),
+                    allowed.then_some(Message::Request(action_kind)),
+                    false,
+                ));
+            if model.snapshot.capabilities.get(&action_kind) == Some(&Capability::Challenge) {
+                row = row.push(
+                    text("Authentication required")
+                        .size(OXITHEME.font_md)
+                        .style(oxi_plugin::text_muted),
+                );
+            }
+            session = session.push(row);
+        }
+        if let Some(error) = &model.snapshot.session_error {
+            session = session.push(label(error.clone()));
+        }
+        body = body.push(oxi_plugin::settings_card(session));
     }
-    if let Some(error) = &model.snapshot.session_error {
-        session = session.push(label(error.clone()));
-    }
-    body = body.push(oxi_plugin::settings_card(session));
     if !model.pending.is_empty() {
         body = body.push(label("Applying system preference…"));
     }

@@ -18,12 +18,18 @@ Use `crate-type = ["dylib"]`, depend on `oxibar-plugin-api`, and use its iced,
 toml and model/message types. Add the package to the flake's `pluginPackage`
 exports so it shares Crane artifacts with the host. Install the resulting
 `libexample.so` under `$XDG_CONFIG_HOME/oxibar/plugins/`.
+That user directory takes precedence over colon-separated `OXIBAR_PLUGIN_DIR`
+fallback directories. The Nix host supplies its pinned Applications library as a
+fallback; only explicitly enabled filenames are initialized.
 
 `oxibar plugins` and Settings → Plugins show installed names, ABI, capabilities,
 load diagnostics and enablement. Inspection reads symbols without initializing a
 model or starting a subscription. Home Manager's `extraPlugins` installs disabled
 catalog entries; `config.plugins` installs and enables libraries in the Nix base.
-GUI changes write only the sparse `plugins` override and take effect on restart.
+GUI changes write sparse plugin selections and take effect live. The launcher
+defaults switch manages `launcher.default_plugins` for Applications/Tools; the host
+loads its deduplicated union with ordinary `plugins`, without initializing every
+installed library.
 
 ## Required exports
 
@@ -53,6 +59,7 @@ Exact signatures are API aliases; missing hooks keep legacy fallbacks.
 | Exports | Ownership / fallback |
 | --- | --- |
 | `availability`, `metadata`, `popup_metrics` | Load gate and static/dynamic popup geometry; cached native services may remain loaded while offline |
+| `bar_view` | `(model, PluginViewContext, show_labels)`; output-local label preference, preferred over `view_with_context` and `view` |
 | `view_with_context` | Stable bar instance/output context; falls back to `view` |
 | `popup_view`, `modal_view`, `panel_view`, `toast_view` | Inner content only; host owns windows, chrome, output and routing |
 | `modal_closed` | Idempotent, nonblocking cancellation exactly once per retired modal; late cleanup tasks remain valid |
@@ -65,15 +72,24 @@ Exact signatures are API aliases; missing hooks keep legacy fallbacks.
 | `runner_query`, `runner_entries`, `runner_cancel` | Latest-only cancellable search; stable opaque provider-local IDs |
 | `runner_prefixes`, `runner_status`, `runner_favorite` | Longest-prefix routing, cached health/indexing, and one validated TextList override |
 | `command`, `osd_view` | Actual completion outcome plus ordinary model message; host-owned source-scoped OSD |
+| `session_menu` | Cached `Vec<SessionMenuEntry>` action/label/description/enabled data; host filters configured choices and delegates through `command` |
 | `subscription_policy` | `Always` by default; `WhenVisible` pauses the owned stream when its last consumer disappears |
+
+`BarViewFn` is additive at ABI 6. `PluginViewContext` and existing export signatures
+remain unchanged. Use the supplied `show_labels` value when constructing that
+view, rather than mutating a shared model: two outputs may choose different label
+preferences. Keep the required `view` export for hosts without this optional hook.
 
 ## Tasks, streams and code lifetime
 
 The host retains successfully initialized libraries until process exit. It does not hot-unload
 plugins: Rust trait-object messages, task futures and cached widget callbacks can
-outlive program state during executor shutdown. Models can still drop normally;
-their owned resources must be cleaned up. Enabling/disabling libraries requires
-restart. Configuration validators also retain a library reference while their
+outlive program state during executor shutdown. Live disable retains the existing
+model for re-enable, closes consumers and cancels host-owned subscriptions. Pending
+model updates/cleanup can finish, but disabled-provider host requests are ignored.
+Re-enable reapplies current config/theme/compositor snapshots without another model.
+Replacing initialized library code requires restart. Models can drop at shutdown;
+their owned resources must be cleaned up. Configuration validators retain a library reference while their
 background transaction may execute.
 
 Use owned streams and worker guards. Drop must cancel waits, wake blocked owners
@@ -119,6 +135,15 @@ serialized toast requests. SDK-defined `Any` identities can differ between build
 graphs; plugin-local message types are for that plugin's `update` function.
 Task modals keep protocol state until completion; closing cancels only the active
 operation. The host handles scoped Escape/Tab and outside-click dismissal.
+
+Host control-center and inbox views normally share an attached bar
+dropdown. Bar children report
+real layout bounds; the host owns anchoring, scrolling, input and keyboard policy.
+Notification `popup_view` may reuse its shared inbox while optional standalone panel
+mode remains supported. Session owns a centered host overlay with large action
+tiles; its provider still keeps enumeration cheap and cached. Power/logout commands
+retain ordinary task confirmation and backend policy. The host captures output
+context before retiring the menu and handing off to the native confirmation.
 
 `RunnerEntry.index` identifies an immutable displayed action, not a vector slot.
 Retain an identity through index reorder; allocate a new identity if its target

@@ -13,6 +13,10 @@ pub(super) fn active_output_name() -> Option<String> {
 }
 
 pub(super) fn inventory() -> Result<OutputSnapshot, String> {
+    parse_inventory(&request("j/monitors all")?)
+}
+
+fn request(command: &str) -> Result<Vec<u8>, String> {
     let signature = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
         .map_err(|_| "Not a Hyprland session".to_owned())?;
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
@@ -27,7 +31,7 @@ pub(super) fn inventory() -> Result<OutputSnapshot, String> {
         .set_write_timeout(Some(Duration::from_millis(500)))
         .map_err(|error| error.to_string())?;
     socket
-        .write_all(b"j/monitors all")
+        .write_all(command.as_bytes())
         .map_err(|error| error.to_string())?;
     let mut bytes = Vec::new();
     socket
@@ -37,7 +41,122 @@ pub(super) fn inventory() -> Result<OutputSnapshot, String> {
     if bytes.len() > 2 * 1024 * 1024 {
         return Err("Monitor response too large".to_owned());
     }
-    parse_inventory(&bytes)
+    Ok(bytes)
+}
+
+pub(super) struct Control {
+    lua: bool,
+}
+impl Control {
+    pub fn new() -> Result<Self, String> {
+        let version: serde_json::Value =
+            serde_json::from_slice(&request("j/version")?).map_err(|error| error.to_string())?;
+        let tag = version
+            .get("tag")
+            .or_else(|| version.get("version"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let mut parts = tag.trim_start_matches('v').split('.');
+        let major = parts
+            .next()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(0);
+        let minor = parts
+            .next()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(0);
+        Ok(Self {
+            lua: major > 0 || minor >= 56,
+        })
+    }
+}
+impl super::controller::Backend for Control {
+    fn inventory(&mut self) -> Result<OutputSnapshot, String> {
+        inventory()
+    }
+    fn label(&self) -> &str {
+        "Hyprland monitor configuration"
+    }
+    fn apply(&mut self, config: &[super::configuration::DisplayConfig]) -> Result<(), String> {
+        super::configuration::validate(config)?;
+        // Enable viable outputs before disabling old ones, including during rollback.
+        for output in config
+            .iter()
+            .filter(|output| output.enabled)
+            .chain(config.iter().filter(|output| !output.enabled))
+        {
+            let command = if self.lua {
+                let fields = if output.enabled {
+                    format!(
+                        "mode=\"{}x{}@{:.3}\",position=\"{}x{}\",scale=\"{}\",transform={},vrr={}",
+                        output.mode.width,
+                        output.mode.height,
+                        output.mode.refresh_hz,
+                        output.position.0,
+                        output.position.1,
+                        output.scale,
+                        output.transform,
+                        u8::from(output.vrr.unwrap_or(false))
+                    )
+                } else {
+                    "disabled=true".into()
+                };
+                format!(
+                    "eval hl.monitor({{output={}, {fields}}})",
+                    serde_json::to_string(&output.name).expect("connector string")
+                )
+            } else if output.enabled {
+                format!(
+                    "keyword monitor {},{}x{}@{:.3},{}x{},{},transform,{},vrr,{}",
+                    output.name,
+                    output.mode.width,
+                    output.mode.height,
+                    output.mode.refresh_hz,
+                    output.position.0,
+                    output.position.1,
+                    output.scale,
+                    output.transform,
+                    u8::from(output.vrr.unwrap_or(false))
+                )
+            } else {
+                format!("keyword monitor {},disable", output.name)
+            };
+            let response = request(&command)?;
+            let response = String::from_utf8_lossy(&response);
+            if response.trim() != "ok"
+                && !serde_json::from_str::<serde_json::Value>(&response)
+                    .ok()
+                    .is_some_and(|value| {
+                        value.get("ok").and_then(serde_json::Value::as_bool) == Some(true)
+                    })
+            {
+                return Err(format!("{}: {response}", output.name));
+            }
+        }
+        // Hyprland applies monitor rules asynchronously after the IPC acknowledgement.
+        for _ in 0..20 {
+            let current = inventory()?;
+            if config.iter().all(|desired| {
+                current
+                    .outputs
+                    .iter()
+                    .find(|output| output.name == desired.name)
+                    .is_some_and(|output| {
+                        !desired.enabled && !output.enabled
+                            || desired.enabled
+                                && output.enabled
+                                && output.physical_size == (desired.mode.width, desired.mode.height)
+                                && (output.scale - desired.scale).abs() < 0.01
+                                && output.transform == desired.transform
+                                && output.position == desired.position
+                    })
+            }) {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Err("The compositor did not settle on the requested display layout".into())
+    }
 }
 
 pub(super) fn parse_inventory(bytes: &[u8]) -> Result<OutputSnapshot, String> {

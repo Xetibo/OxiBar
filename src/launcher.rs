@@ -1,8 +1,7 @@
 use std::time::Instant;
 
 use iced::{
-    Alignment, Element, Length, event,
-    keyboard::{self, Key, key::Named},
+    Alignment, Element, Length,
     widget::{Column, Row, Space, container, image, scrollable, svg},
 };
 use iced_layershell::reexport::IcedId;
@@ -205,7 +204,7 @@ impl Launcher {
         };
     }
 
-    pub(crate) fn view(&self) -> Element<'_, Message> {
+    pub(crate) fn view(&self, hints: String) -> Element<'_, Message> {
         let search = oxi_text_input::text_input(
             "Find apps, commands, files or actions",
             &self.query,
@@ -213,18 +212,7 @@ impl Launcher {
         )
         .id(SEARCH_ID)
         .size(OXITHEME.font_md)
-        .padding(OXITHEME.padding_md)
-        .on_submit(
-            self.entries
-                .get(self.focused)
-                .map(|entry| {
-                    Message::Launcher(Action::Activate(
-                        entry.plugin_id.clone(),
-                        entry.result.index,
-                    ))
-                })
-                .unwrap_or(Message::Ignore),
-        );
+        .padding(OXITHEME.padding_md);
         let mut results = Column::new()
             .spacing(OXITHEME.padding_xs)
             .width(Length::Fill);
@@ -292,15 +280,18 @@ impl Launcher {
             }
             results = results.push(row);
         }
-        if self.entries.is_empty() {
+        if self.entries.is_empty() && self.statuses.iter().any(|(_, status)| status.indexing) {
             results = results.push(
-                text(if self.statuses.iter().any(|(_, status)| status.indexing) {
-                    "Indexing…"
-                } else {
-                    "No matching results"
-                })
-                .size(OXITHEME.font_md)
-                .style(oxi_plugin::text_muted),
+                text("Indexing…")
+                    .size(OXITHEME.font_md)
+                    .style(oxi_plugin::text_muted),
+            );
+        }
+        if self.statuses.is_empty() {
+            results = results.push(
+                text("No launcher provider is active. Enable Applications in Settings → Launcher.")
+                    .size(OXITHEME.font_md)
+                    .style(oxi_plugin::text_muted),
             );
         }
         for (provider, status) in &self.statuses {
@@ -314,7 +305,7 @@ impl Launcher {
         }
         let footer = Row::new()
             .push(
-                text("↑/↓ or Tab: select · Enter: launch · Esc: close")
+                text(hints)
                     .size(OXITHEME.font_sm)
                     .style(oxi_plugin::text_muted),
             )
@@ -361,26 +352,6 @@ fn rank_entries(entries: &mut Vec<Entry>, max_entries: usize) {
             .then_with(|| first.result.index.cmp(&second.result.index))
     });
     entries.truncate(max_entries);
-}
-
-pub(crate) fn key_event(event: iced::Event, status: event::Status, id: IcedId) -> Option<Message> {
-    let iced::Event::Keyboard(keyboard::Event::KeyPressed {
-        key: Key::Named(key),
-        modifiers,
-        ..
-    }) = event
-    else {
-        return None;
-    };
-    let action = match key {
-        Named::Escape => Action::Close,
-        Named::ArrowUp => Action::MoveFocus(false),
-        Named::ArrowDown => Action::MoveFocus(true),
-        Named::Tab => Action::MoveFocus(!modifiers.shift()),
-        Named::Enter if status == event::Status::Ignored => Action::LaunchFocused,
-        _ => return None,
-    };
-    Some(Message::LauncherKey(id, action))
 }
 
 #[cfg(test)]

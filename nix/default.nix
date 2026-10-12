@@ -22,6 +22,7 @@
   fontconfig,
   xdg-utils,
   adwaita-fonts,
+  applicationsPlugin,
   ...
 }: let
   cargoToml = builtins.fromTOML (builtins.readFile ../Cargo.toml);
@@ -90,6 +91,7 @@ in
 
     preCheck = ''
       export XDG_CONFIG_HOME="$TMPDIR/xdg-config"
+      export LD_LIBRARY_PATH="${runtimeLibPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
       mkdir -p "$XDG_CONFIG_HOME"
     '';
 
@@ -101,6 +103,7 @@ in
       wrapProgram "$out/bin/oxibar" \
         --prefix PATH : "${lib.makeBinPath [fontconfig xdg-utils]}" \
         --set FONTCONFIG_FILE "${fontsConf}" \
+        --set-default OXIBAR_PLUGIN_DIR "${applicationsPlugin}/lib" \
         --set VK_ICD_FILENAMES "${vkIcdFiles}"
     '';
 

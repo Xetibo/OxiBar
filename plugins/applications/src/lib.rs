@@ -279,7 +279,16 @@ pub extern "Rust" fn update(model: PluginModel, message: PluginMsg) -> Option<Ta
             model.refreshing = false;
             match entries {
                 Ok(entries) => {
-                    model.health = None;
+                    model.health = entries.is_empty().then(|| {
+                        format!(
+                            "No visible .desktop applications found. Data directories: {}",
+                            system::data_dirs()
+                                .iter()
+                                .map(|path| path.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    });
                     let mut entries = (**entries).clone();
                     for entry in &mut entries {
                         entry.id = *model
@@ -440,7 +449,7 @@ pub extern "Rust" fn settings_schema() -> Vec<oxibar_plugin_api::SettingDescript
             "applications.icon_theme",
             "Icon theme",
             SettingKind::Text,
-            Some(Value::String("hicolor".to_owned())),
+            Some(Value::String("auto".to_owned())),
             ApplyMode::Live,
         ),
         SettingDescriptor::new(

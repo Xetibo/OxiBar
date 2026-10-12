@@ -1,0 +1,18 @@
+{
+  "compositor": "sway version 1.11",
+  "presentation_clock": 1,
+  "first_open_presented_ms": 31.359486,
+  "warm_presented_ms": {
+    "median": 4.4100205,
+    "p95": 4.939352,
+    "max": 30.049195
+  },
+  "status_during_sync_ms": 3.849148,
+  "private_caldav_delay_seconds": 2,
+  "first_open_did_not_wait_for_sync": true,
+  "gates": {
+    "first_open_under_50ms": true,
+    "warm_p95_under_50ms": true,
+    "status_under_50ms": true
+  }
+}

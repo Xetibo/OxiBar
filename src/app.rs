@@ -15,7 +15,6 @@ use oxibar_plugin_api::{
 use oxiced::{theme::theme_impl::get_derived_iced_theme, widgets::oxi_layer::layer_theme};
 #[cfg(test)]
 use toml::Table;
-use tracing::error;
 use wayland_client::{
     Connection, Dispatch, QueueHandle,
     globals::{Global, GlobalListContents, registry_queue_init},
@@ -24,14 +23,11 @@ use wayland_client::{
 
 use crate::{
     config::{self, ConfigStore, get_config},
-    control_center::{self, ControlCenter},
+    control_center::ControlCenter,
     font,
     ipc::{self, LauncherCommand},
     launcher::{self, Launcher},
-    layout::{
-        self, BarDimensions, BarSection, DEFAULT_POPUP_SIZE, PopupMetrics, SCALE_FACTOR,
-        TOAST_MARGIN_TOP, TOAST_SPACING,
-    },
+    layout::{self, BarDimensions, BarSection, DEFAULT_POPUP_SIZE, PopupMetrics, SCALE_FACTOR},
     messages::{Message, map_plugin_message},
     plugins::{
         PluginMap, dispatch_launch, dispatch_update, drain_errors, load_plugins,
@@ -236,6 +232,7 @@ fn run_bar(connection: Option<Connection>) -> Result<(), iced_layershell::Error>
 }
 
 pub(crate) struct OxiBar {
+    pub(crate) overview: crate::overview::Overview,
     pub(crate) appearance: crate::theme::ThemeRuntime,
     pub(crate) docks: crate::dock::Docks,
     pub(crate) desktop: crate::desktop::Desktop,
@@ -249,6 +246,7 @@ pub(crate) struct OxiBar {
     pub(crate) control_center: ControlCenter,
     pub(crate) plugin_order: Vec<String>,
     pub(crate) plugin_failures: std::collections::BTreeMap<String, String>,
+    pub(crate) plugin_runtime: crate::plugins::PluginRuntime,
     pub(crate) launcher: Launcher,
     pub(crate) theme: Theme,
     pub(crate) plugins: PluginMap,
@@ -373,6 +371,7 @@ impl OxiBar {
         let launcher = Launcher::new(config);
         let appearance = crate::theme::ThemeRuntime::new(config, runtime.snapshot.revision, true);
         let mut bar = Self {
+            overview: crate::overview::Overview::default(),
             appearance,
             docks: crate::dock::Docks::default(),
             desktop: crate::desktop::Desktop::default(),
@@ -386,6 +385,7 @@ impl OxiBar {
             control_center: ControlCenter::default(),
             plugin_order: loaded.order,
             plugin_failures: loaded.failures,
+            plugin_runtime: crate::plugins::PluginRuntime::default(),
             launcher,
             plugins: loaded.plugins,
             theme: get_derived_iced_theme(),
@@ -409,6 +409,15 @@ impl OxiBar {
         tasks.push(bar.reconcile_bars());
         tasks.push(bar.reconcile_docks());
         tasks.push(bar.reconcile_desktop());
+        if crate::config::store::get_path(&bar.config.snapshot.effective, "monitor.apply_on_start")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(true)
+            && crate::config::store::get_path(&bar.config.snapshot.effective, "monitor.profiles")
+                .and_then(toml::Value::as_array)
+                .is_some_and(|profiles| !profiles.is_empty())
+        {
+            tasks.push(bar.update_monitors(crate::monitor::runtime::Action::ApplySaved));
+        }
         (bar, Task::batch(tasks))
     }
 
@@ -418,18 +427,111 @@ impl OxiBar {
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::PluginsLoaded(outcome) => self.plugins_loaded(&outcome),
+            Message::PluginEmission(name, message) => {
+                let message = crate::messages::translate_plugin_message(name.clone(), message);
+                if self.plugins.contains_key(&name) {
+                    self.update(message)
+                } else if let Message::PluginSubMsg(_, message) = message {
+                    self.resident_plugin_update(&name, message)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::ShortcutKey(id, key, modifiers, status) => self
+                .shortcut(id, key, modifiers, status)
+                .map(|message| self.update(message))
+                .unwrap_or_else(Task::none),
+            Message::Overview(action) => self.update_overview(action),
+            Message::OverviewBounds(id, target, bounds) => self.overview_bounds(id, target, bounds),
+            Message::OverviewPointer(id, position) => self.overview_pointer(id, position),
+            Message::OverviewPress(id) => self.overview_press(id),
+            Message::OverviewKey(id, action) => {
+                if self.overview.surfaces.iter().any(|(output, surface)| {
+                    surface.id == id && Some(output) == self.overview.active.as_ref()
+                }) {
+                    self.update_overview(action)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::OverviewSnapshot(generation, snapshot) => {
+                self.overview_snapshot(generation, snapshot)
+            }
+            Message::OverviewRetirementTimeout(generation) => {
+                self.overview_retirement_timeout(generation)
+            }
+            Message::OverviewActivated(generation, result) => {
+                if generation != self.overview.generation {
+                    return Task::none();
+                }
+                self.compositor_action_error = result.err();
+                self.close_overview()
+            }
+            Message::DropdownEscape(id) => {
+                if self.popup_open && self.shell.popup_bar == Some(id) {
+                    self.close_bar_dropdown()
+                } else if self.panel_window_id == Some(id) {
+                    self.close_panel()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::BarAnchor {
+                id,
+                key,
+                provider,
+                bounds,
+                pressed,
+            } => self.bar_anchor(id, key, provider, bounds, pressed),
             Message::ThemeFontLoaded(requested, result) => {
                 self.theme_font_loaded(requested, result)
             }
             Message::ThemeFontReady(requested, result) => self.theme_font_ready(requested, result),
             Message::OverlayPointer(id, position) => {
+                let position = position.filter(|point| point.x.is_finite() && point.y.is_finite());
                 if let Some(record) = self.shell.registry.get_mut(id) {
-                    record.pointer =
-                        position.filter(|point| point.x.is_finite() && point.y.is_finite());
+                    record.pointer = position;
+                }
+                if position.is_some() {
+                    self.bar_pointer(id, position)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::OverlayLeave(id) => {
+                if let Some(record) = self.shell.registry.get_mut(id) {
+                    record.pointer = None;
+                }
+                self.bar_pointer(id, None)
+            }
+            Message::OverlayPress(id) => self.overlay_press(id),
+            Message::CloseBarDropdown => self.close_bar_dropdown(),
+            Message::SettingsDragRelease(id) => {
+                if self.settings.window_id == Some(id) {
+                    self.settings.widget_drag = None;
                 }
                 Task::none()
             }
-            Message::OverlayPress(id) => self.overlay_press(id),
+            Message::Session(action) => self.update_session_menu(action),
+            Message::SessionKey(id, action) => {
+                if self.shell.session_window == Some(id) {
+                    self.update_session_menu(action)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::LocalCommandFinished {
+                provider,
+                source,
+                outcome,
+            } => {
+                self.shell.session_error = outcome.result.err();
+                self.update(Message::PluginTask(
+                    source,
+                    Box::new(map_plugin_message(provider, outcome.message)),
+                ))
+            }
             Message::CompositorChanged(result) => self.compositor_changed(result),
             Message::CompositorActionDone(result) => {
                 if let Err(error) = &result {
@@ -485,6 +587,12 @@ impl OxiBar {
             }
             Message::Exit => std::process::exit(0),
             Message::OutputsChanged(result) => self.outputs_changed(result),
+            Message::Monitor(action) => self.update_monitors(action),
+            Message::MonitorsLoaded(result) => self.monitors_loaded(result),
+            Message::MonitorsPreviewed(result) => self.monitors_previewed(result),
+            Message::MonitorsReverted(result) => self.monitors_reverted(result),
+            Message::MonitorsSaved(result) => self.monitors_saved(result),
+            Message::MonitorsExpired(event) => self.monitors_expired(event),
             Message::SurfaceClosed(id) => self.surface_closed(id),
             Message::ModalEscape(id) => {
                 if self.modal_window_id == Some(id) {
@@ -586,6 +694,8 @@ impl OxiBar {
             Message::SetPopupInputRegion { .. }
             | Message::Ignore
             | Message::OpenOsdLayer(_, _)
+            | Message::OpenOverviewLayer(_, _, _)
+            | Message::OpenSessionLayer(_, _)
             | Message::OpenDockLayer(_, _, _, _, _)
             | Message::OpenDesktopLayer(_, _, _, _)
             | Message::SetLayerAnchor(_, _)
@@ -620,6 +730,9 @@ impl OxiBar {
                 Task::none()
             }
             Message::SetPopupOpen(open) => {
+                if !open {
+                    return self.close_bar_dropdown();
+                }
                 self.popup_open = open;
                 Task::none()
             }
@@ -641,8 +754,7 @@ impl OxiBar {
             }
             Message::PluginSubMsg(plugin_id, msg) => {
                 let Some((model, funcs)) = self.plugins.get(&plugin_id) else {
-                    error!("message for unknown plugin `{plugin_id}`");
-                    return Task::none();
+                    return self.resident_plugin_update(&plugin_id, msg);
                 };
                 let task = dispatch_update(funcs, model.clone(), msg);
                 let refresh_dock = funcs.dock_entries.is_some();
@@ -723,10 +835,12 @@ impl OxiBar {
                 let input_region = self.current_input_region_task();
                 let query = self.query_runner_plugins();
                 Task::batch([
+                    self.close_overview(),
                     close_modal,
                     close_panel,
                     close_settings,
                     close_control_center,
+                    self.close_bar_dropdown(),
                     close_editor,
                     input_region,
                     query,
@@ -963,11 +1077,31 @@ impl OxiBar {
     }
 
     fn toggle_plugin_popup(&mut self, plugin_id: String) -> Task<Message> {
+        if plugin_id.eq_ignore_ascii_case("Clock")
+            && self.config.snapshot.host.control_center_enabled
+            && self.config.snapshot.host.menus.controls_dropdown
+            && self.config.snapshot.host.menus.attach_to_clock
+            && let Some(bar) = self.dropdown_bar()
+        {
+            return if self.control_center.attached_to == Some(bar)
+                && self
+                    .control_center
+                    .selected
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(&plugin_id))
+            {
+                self.close_bar_dropdown()
+            } else {
+                self.open_attached_controls(bar, Some(plugin_id))
+            };
+        }
         let Some((_model, funcs)) = self.plugins.get(&plugin_id) else {
             tracing::warn!(plugin = plugin_id, "unknown plugin requested popup");
             return Task::none();
         };
-        if funcs.popup_view.is_none() {
+        if funcs.popup_view.is_none()
+            && !(plugin_id.eq_ignore_ascii_case("Notifications") && funcs.panel_view.is_some())
+        {
             tracing::warn!(
                 plugin = plugin_id,
                 "plugin requested popup but has no popup_view"
@@ -975,15 +1109,36 @@ impl OxiBar {
             return Task::none();
         }
 
-        self.shell.popup_bar = self.shell.active_bar.or(self.bar_window_id);
-        if self.popup_open && self.popup_plugin.as_deref() == Some(plugin_id.as_str()) {
-            self.popup_open = false;
-            self.current_input_region_task()
-        } else {
-            self.popup_plugin = Some(plugin_id);
-            self.popup_open = true;
-            self.current_input_region_task()
+        let Some(bar) = self.dropdown_bar() else {
+            return Task::none();
+        };
+        if self.popup_open
+            && self.shell.popup_bar == Some(bar)
+            && self.popup_plugin.as_deref() == Some(plugin_id.as_str())
+        {
+            return self.close_bar_dropdown();
         }
+        let notifications = plugin_id.eq_ignore_ascii_case("Notifications");
+        let dismiss = Task::batch([
+            self.close_control_center(),
+            self.close_bar_dropdown(),
+            self.close_panel(),
+        ]);
+        self.shell.popup_bar = Some(bar);
+        self.popup_plugin = Some(plugin_id);
+        self.popup_open = true;
+        dismiss.chain(Task::batch([
+            self.current_input_region_task(),
+            if notifications {
+                self.close_all_toasts()
+            } else {
+                Task::none()
+            },
+            Task::done(Message::SetToastKeyboardInteractivity(
+                bar,
+                KeyboardInteractivity::Exclusive,
+            )),
+        ]))
     }
 
     fn open_plugin_modal(&mut self, plugin_id: String) -> Task<Message> {
@@ -1025,6 +1180,7 @@ impl OxiBar {
         self.modal_window_id = Some(id);
         Task::batch([
             close_existing,
+            self.close_bar_dropdown(),
             Task::done(Message::OnOutput(
                 output,
                 Box::new(Message::OpenModalLayer(id)),
@@ -1033,6 +1189,12 @@ impl OxiBar {
     }
 
     fn toggle_plugin_panel(&mut self, plugin_id: String) -> Task<Message> {
+        if plugin_id.eq_ignore_ascii_case("Notifications")
+            && self.config.snapshot.host.menus.notifications_dropdown
+            && self.dropdown_bar().is_some()
+        {
+            return self.toggle_plugin_popup(plugin_id);
+        }
         let Some((_model, funcs)) = self.plugins.get(&plugin_id) else {
             tracing::warn!(plugin = plugin_id, "unknown plugin requested panel");
             return Task::none();
@@ -1145,6 +1307,7 @@ impl OxiBar {
 
     fn show_plugin_toast(&mut self, plugin_id: String, request: HostToastRequest) -> Task<Message> {
         if self.panel_plugin.is_some()
+            || (self.popup_open && self.popup_plugin.as_deref() == Some(plugin_id.as_str()))
             || (self.control_center.window_id.is_some()
                 && self.control_center.selected.as_deref() == Some(plugin_id.as_str()))
         {
@@ -1207,13 +1370,17 @@ impl OxiBar {
                 window_id,
                 request.width,
                 request.height,
-                TOAST_MARGIN_TOP,
+                self.config
+                    .snapshot
+                    .host
+                    .toasts
+                    .placement(self.config.snapshot.host.toasts.margin as i32),
             )),
         ))
         .chain(Task::batch(self.toast_layout_tasks()))
     }
 
-    fn close_plugin_toast(&mut self, plugin_id: &str, toast_id: &str) -> Task<Message> {
+    pub(crate) fn close_plugin_toast(&mut self, plugin_id: &str, toast_id: &str) -> Task<Message> {
         let Some(index) = self
             .toasts
             .iter()
@@ -1255,10 +1422,11 @@ impl OxiBar {
                 Task::done(Message::CloseToastLayer(toast.window_id))
             })
             .collect::<Vec<_>>();
-        Task::batch(tasks)
+        Task::batch(tasks).chain(Task::batch(self.toast_layout_tasks()))
     }
 
-    fn toast_layout_tasks(&self) -> Vec<Task<Message>> {
+    pub(crate) fn toast_layout_tasks(&self) -> Vec<Task<Message>> {
+        let config = &self.config.snapshot.host.toasts;
         let mut offsets = std::collections::BTreeMap::<Option<String>, i32>::new();
         let mut tasks = Vec::with_capacity(self.toasts.len());
 
@@ -1268,12 +1436,54 @@ impl OxiBar {
                 .registry
                 .get(toast.window_id)
                 .and_then(|record| record.output.clone());
-            let top = offsets.entry(output).or_insert(TOAST_MARGIN_TOP);
-            tasks.push(Task::done(Message::MoveToastLayer(toast.window_id, *top)));
-            *top += toast.height as i32 + TOAST_SPACING;
+            let offset = offsets.entry(output).or_insert(config.margin as i32);
+            let placement = config.placement(*offset);
+            tasks.extend([
+                Task::done(Message::MoveToastLayer(toast.window_id, placement)),
+                Task::done(Message::SetLayerMargin(toast.window_id, placement.margin)),
+            ]);
+            *offset = offset
+                .saturating_add(toast.height as i32)
+                .saturating_add(config.spacing as i32);
+        }
+        for (output, instance) in &self.osds.instances {
+            if instance.is_music_toast() {
+                let offset = offsets.get(output).copied().unwrap_or(config.margin as i32);
+                let mut osd = self.config.snapshot.host.osd.clone();
+                osd.placement = Some(config.placement(offset));
+                tasks.extend([
+                    Task::done(Message::ConfigureOsdLayer(instance.id, osd)),
+                    Task::done(Message::SetLayerMargin(
+                        instance.id,
+                        config.placement(offset).margin,
+                    )),
+                ]);
+            }
         }
 
         tasks
+    }
+
+    pub(crate) fn music_toast_placement(
+        &self,
+        output: &Option<String>,
+    ) -> config::toasts::Placement {
+        let config = &self.config.snapshot.host.toasts;
+        let offset = self
+            .toasts
+            .iter()
+            .filter(|toast| {
+                self.shell
+                    .registry
+                    .get(toast.window_id)
+                    .is_some_and(|record| &record.output == output)
+            })
+            .fold(config.margin as i32, |offset, toast| {
+                offset
+                    .saturating_add(toast.height as i32)
+                    .saturating_add(config.spacing as i32)
+            });
+        config.placement(offset)
     }
 
     fn theme(&self, _: IcedId) -> Theme {
@@ -1293,11 +1503,21 @@ impl OxiBar {
             refresh,
             crate::monitor::watch_inventory,
         ));
-        subs.push(event::listen_with(settings::key_event));
+        subs.push(event::listen_with(crate::shortcuts::event));
+        if let Some(client) = &self.overview.client {
+            subs.push(Subscription::run_with(
+                (self.overview.generation, client.clone()),
+                crate::overview::subscription,
+            ));
+            subs.push(event::listen_with(crate::overview::mouse_event));
+        }
         if self.settings.window_id.is_some()
             || self.launcher.window_id.is_some()
             || self.control_center.window_id.is_some()
             || self.modal_window_id.is_some()
+            || self.shell.session_window.is_some()
+            || self.popup_open
+            || self.shell.bars.values().any(|bar| bar.config.auto_hide)
         {
             subs.push(event::listen_with(crate::surfaces::overlay_mouse_event));
         }
@@ -1305,8 +1525,6 @@ impl OxiBar {
         if self.desktop.draft.is_some() {
             subs.push(event::listen_with(crate::desktop::event));
         }
-        subs.push(event::listen_with(control_center::key_event));
-        subs.push(event::listen_with(crate::surfaces::modal_key_event));
         subs.push(Subscription::run_with(
             self.config.endpoint.clone(),
             ipc::listen_endpoint,
@@ -1317,8 +1535,11 @@ impl OxiBar {
                 config::watch_changes,
             ));
         }
-        if self.launcher.enabled {
-            subs.push(event::listen_with(launcher::key_event));
+        if let Some(controller) = &self.settings.monitors.controller {
+            subs.push(Subscription::run_with(
+                controller.clone(),
+                crate::monitor::runtime::events,
+            ));
         }
         subs.extend(
             self.plugins
@@ -1343,14 +1564,44 @@ impl OxiBar {
     }
 
     pub(crate) fn popup_metrics(&self, plugin_id: &str) -> PopupMetrics {
+        let menu_size = match plugin_id {
+            "@control-center" => Some(self.config.snapshot.host.control_center_size),
+            "@session" => Some((400, 540)),
+            _ if plugin_id.eq_ignore_ascii_case("Notifications")
+                && self.config.snapshot.host.menus.notifications_dropdown =>
+            {
+                Some(self.config.snapshot.host.menus.notification_size)
+            }
+            _ => None,
+        };
+        if let Some((width, height)) = menu_size {
+            if let Some(bar) = self.shell.popup_bar.and_then(|id| self.shell.bar(id)) {
+                return PopupMetrics::new((
+                    width.min(
+                        bar.size
+                            .width
+                            .saturating_sub(layout::POPUP_CONNECTOR_PADDING)
+                            .max(1),
+                    ),
+                    height.min(bar.config.popup_height),
+                ));
+            }
+            return PopupMetrics::new((width, height));
+        }
         let dynamic = self.plugin_popup_metrics(plugin_id);
-        PopupMetrics::new(self.popup_size(plugin_id, dynamic))
+        let (width, height) = self.popup_size(plugin_id, dynamic);
+        PopupMetrics::new(self.bounded_popup_size(width, height))
     }
 
     pub(crate) fn popup_input_metrics(&self, plugin_id: &str) -> PopupMetrics {
+        if plugin_id.starts_with('@')
+            || (plugin_id.eq_ignore_ascii_case("Notifications")
+                && self.config.snapshot.host.menus.notifications_dropdown)
+        {
+            return self.popup_metrics(plugin_id);
+        }
         let dynamic = self.plugin_popup_metrics(plugin_id);
-        let visible_size = self.popup_size(plugin_id, dynamic);
-        let visible = PopupMetrics::new(visible_size);
+        let visible = self.popup_metrics(plugin_id);
         let (width, height) = dynamic
             .and_then(|metrics| metrics.popup_input_size)
             .or_else(|| {
@@ -1359,7 +1610,26 @@ impl OxiBar {
                     .and_then(|(_, funcs)| funcs.metadata.popup_input_size)
             })
             .unwrap_or((visible.body_width, visible.height));
-        PopupMetrics::new((width.max(visible.body_width), height.max(visible.height)))
+        PopupMetrics::new(
+            self.bounded_popup_size(width.max(visible.body_width), height.max(visible.height)),
+        )
+    }
+
+    fn bounded_popup_size(&self, width: u32, height: u32) -> (u32, u32) {
+        self.shell
+            .popup_bar
+            .and_then(|id| self.shell.bar(id))
+            .map_or((width, height), |bar| {
+                (
+                    width.min(
+                        bar.size
+                            .width
+                            .saturating_sub(layout::POPUP_CONNECTOR_PADDING)
+                            .max(1),
+                    ),
+                    height.min(bar.config.popup_height),
+                )
+            })
     }
 }
 
@@ -1447,6 +1717,7 @@ mod tests {
 
     fn empty_bar() -> OxiBar {
         let mut bar = OxiBar {
+            overview: crate::overview::Overview::default(),
             appearance: crate::theme::ThemeRuntime::new(&Table::new(), 0, false),
             docks: crate::dock::Docks::default(),
             desktop: crate::desktop::Desktop::default(),
@@ -1460,6 +1731,7 @@ mod tests {
             control_center: ControlCenter::default(),
             plugin_order: Vec::new(),
             plugin_failures: std::collections::BTreeMap::new(),
+            plugin_runtime: crate::plugins::PluginRuntime::default(),
             launcher: Launcher::new(&Table::new()),
             theme: Theme::Dark,
             plugins: PluginMap::new(),

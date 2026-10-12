@@ -255,12 +255,35 @@ pub extern "Rust" fn settings_schema() -> Vec<SettingDescriptor> {
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    bar_elements(model, true)
+}
+#[unsafe(no_mangle)]
+pub extern "Rust" fn bar_view(
+    model: PluginModel,
+    _: PluginViewContext,
+    show_labels: bool,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    bar_elements(model, show_labels)
+}
+fn bar_elements(
+    model: PluginModel,
+    show_labels: bool,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
+        let mut row = iced::widget::Row::new().push(oxi_plugin::icon(oxi_plugin::ShellIcon::Stats));
+        if show_labels {
+            row = row.push(
+                text(format!("CPU {}%", model.snapshot.cpu))
+                    .size(OXITHEME.font_md)
+                    .style(oxi_plugin::text_primary),
+            );
+        }
         vec![
-            text(format!("CPU {}%", model.snapshot.cpu))
-                .size(OXITHEME.font_md)
-                .style(oxi_plugin::text_primary)
-                .into(),
+            oxi_plugin::bar_button(
+                row.spacing(OXITHEME.padding_sm)
+                    .align_y(iced::Alignment::Center),
+            )
+            .into(),
         ]
     })
 }

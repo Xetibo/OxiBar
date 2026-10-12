@@ -3293,12 +3293,15 @@ dependencies = [
 name = "oxibar"
 version = "0.1.0"
 dependencies = [
+ "async-io",
+ "bitflags 2.11.1",
  "hyprland",
  "iced",
  "iced_anim",
  "iced_layershell",
  "iced_runtime",
  "libloading",
+ "memmap2",
  "notify",
  "once_cell",
  "oxibar-plugin-api",
@@ -3312,6 +3315,9 @@ dependencies = [
  "tracing-subscriber",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-wlr",
+ "wayland-scanner",
+ "wayland-server",
  "xdg",
 ]
 
@@ -5054,6 +5060,7 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-scanner",
+ "wayland-server",
 ]
 
 [[package]]
@@ -5106,6 +5113,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-scanner",
+ "wayland-server",
 ]
 
 [[package]]
@@ -5117,6 +5125,19 @@ dependencies = [
  "proc-macro2",
  "quick-xml",
  "quote",
+]
+
+[[package]]
+name = "wayland-server"
+version = "0.31.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0dde9c29be0f723a573977de51ee455bf3dfa03652730a74f9dd3b337e374d75"
+dependencies = [
+ "bitflags 2.11.1",
+ "downcast-rs",
+ "rustix 1.1.4",
+ "wayland-backend",
+ "wayland-scanner",
 ]
 
 [[package]]

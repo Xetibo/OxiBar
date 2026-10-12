@@ -62,7 +62,11 @@ lock_path={json.dumps(str(root/"lock"))}
 [ipc]
 socket_path={json.dumps(str(root/"socket"))}
 [control_center]
+presentation="window"
+attach_to_clock=false
 widgets=["Example","Network","Notifications","Clock"]
+[menus]
+notifications_dropdown=false
 [clock]
 calendar_command={json.dumps(shlex.join([sys.executable,str(fixture),'marker',str(root),'calendar','{date}']))}
 [clock.caldav]

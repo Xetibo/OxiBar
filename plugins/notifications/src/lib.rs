@@ -352,6 +352,17 @@ pub extern "Rust" fn view(
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn bar_view(
+    model: PluginModel,
+    _: oxibar_plugin_api::PluginViewContext,
+    show_labels: bool,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| {
+        vec![oxinoti::bar_button_with_label(model.notifications.len(), show_labels).into()]
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn panel_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
@@ -362,6 +373,41 @@ pub extern "Rust" fn panel_view(
             &model.hovered_notifications,
             model.do_not_disturb,
         )]
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn popup_view(
+    model: PluginModel,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| {
+        use oxiced::{
+            theme::theme_impl::OXITHEME,
+            widgets::oxi_plugin::{self, text},
+        };
+        let header = iced::widget::Row::new()
+            .push(text("Notifications").size(OXITHEME.font_lg))
+            .push(iced::widget::Space::new().width(iced::Length::Fill))
+            .push(
+                oxi_plugin::surface_button(text("Close"), false)
+                    .on_press(oxinoti::msg(Event::TogglePanel)),
+            )
+            .align_y(iced::Alignment::Center)
+            .spacing(OXITHEME.padding_md);
+        vec![
+            iced::widget::Column::new()
+                .push(header)
+                .push(oxi_plugin::scroll_panel(oxinoti::control_center_view(
+                    &model.notifications,
+                    &model.reply_texts,
+                    &model.hovered_notifications,
+                    model.do_not_disturb,
+                )))
+                .padding(OXITHEME.padding_lg)
+                .spacing(OXITHEME.padding_lg)
+                .height(iced::Length::Fill)
+                .into(),
+        ]
     })
 }
 

@@ -28,18 +28,18 @@ pub const SCALE_FACTOR: f32 = 1.0;
 pub const WINDOW_MARGINS: (i32, i32, i32, i32) = (0, 0, 0, 0);
 pub const WINDOW_KEYBOARD_MODE: KeyboardInteractivity = KeyboardInteractivity::None;
 pub const DEFAULT_POPUP_SIZE: (u32, u32) = (320, 300);
-pub const LARGE_POPUP_SIZE: (u32, u32) = (460, 420);
+pub const LARGE_POPUP_SIZE: (u32, u32) = (460, 640);
 pub const POPUP_MAX_HEIGHT: u32 = LARGE_POPUP_SIZE.1;
 pub const POPUP_CONNECTOR_PADDING: u32 = 32;
 pub const POPUP_CONNECTOR_HEIGHT: u32 = 0;
 pub const MODAL_SIZE: (u32, u32) = (460, 300);
 pub const DEFAULT_LAUNCHER_SIZE: (u32, u32) = (600, 600);
-pub const DEFAULT_SETTINGS_SIZE: (u32, u32) = (960, 720);
-pub const DEFAULT_CONTROL_CENTER_SIZE: (u32, u32) = (680, 760);
+pub const DEFAULT_SETTINGS_SIZE: (u32, u32) = (1440, 960);
+pub const DEFAULT_CONTROL_CENTER_SIZE: (u32, u32) = (960, 960);
 pub const DEFAULT_OSD_SIZE: (u32, u32) = (360, 128);
 pub const CONTROL_CENTER_SINGLE_COLUMN_WIDTH: u32 = 480;
 pub const SETTINGS_EDITOR_HEIGHT: f32 = 220.0;
-pub const SETTINGS_NAV_WIDTH: f32 = 192.0;
+pub const SETTINGS_NAV_WIDTH: f32 = 288.0;
 pub const SETTINGS_NAV_BREAKPOINT: u32 = 800;
 pub const MAX_HOST_SURFACE_DIMENSION: i64 = 16_384;
 pub const PANEL_WIDTH: u32 = 420;
@@ -134,6 +134,12 @@ pub(crate) fn popup_x(bar_width: u32, section: BarSection, connector_width: u32)
     i32::try_from(x).unwrap_or(i32::MAX)
 }
 
+pub(crate) fn button_popup_x(bar_width: u32, width: u32, button: iced::Rectangle) -> i32 {
+    (button.center_x() - width as f32 / 2.0)
+        .clamp(0.0, bar_width.saturating_sub(width) as f32)
+        .round() as i32
+}
+
 fn positive(value: u32) -> Option<u32> {
     (value > 0).then_some(value)
 }
@@ -184,7 +190,10 @@ mod tests {
     #[test]
     fn layer_settings_request_auto_width_unless_configured() {
         let settings = layer_shell_settings(&Table::new());
-        assert_eq!(settings.layer_settings.size, Some((0, 451)));
+        assert_eq!(
+            settings.layer_settings.size,
+            Some((0, DEFAULT_BAR_HEIGHT + POPUP_MAX_HEIGHT))
+        );
         assert_eq!(settings.layer_settings.exclusive_zone, 31);
         assert_eq!(
             settings.layer_settings.anchor,
@@ -198,7 +207,10 @@ mod tests {
         config.insert("bar".to_owned(), toml::Value::Table(bar));
 
         let settings = layer_shell_settings(&config);
-        assert_eq!(settings.layer_settings.size, Some((1920, 456)));
+        assert_eq!(
+            settings.layer_settings.size,
+            Some((1920, 36 + POPUP_MAX_HEIGHT))
+        );
         assert_eq!(settings.layer_settings.exclusive_zone, 36);
     }
 

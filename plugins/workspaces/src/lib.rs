@@ -118,7 +118,7 @@ fn render(
                 model.snapshot.active_workspaces.get(&workspace.output) == Some(&workspace.id);
             row = row.push(
                 oxi_plugin::bar_button(text(workspace.name.clone()).size(OXITHEME.font_md))
-                    .style(oxi_plugin::selectable_row_style(active))
+                    .style(oxi_plugin::accent_selection_style(active))
                     .on_press(Arc::new(Message::Activate(workspace.id)) as PluginMsg),
             );
         }

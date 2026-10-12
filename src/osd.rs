@@ -17,6 +17,19 @@ pub struct OsdConfig {
     pub bottom: bool,
     pub margin: u32,
     pub timeout_ms: u32,
+    pub placement: Option<crate::config::toasts::Placement>,
+}
+
+impl OsdConfig {
+    pub(crate) fn anchor(&self) -> iced_layershell::reexport::Anchor {
+        self.placement
+            .map(|placement| placement.anchor)
+            .unwrap_or(if self.bottom {
+                iced_layershell::reexport::Anchor::Bottom
+            } else {
+                iced_layershell::reexport::Anchor::Top
+            })
+    }
 }
 
 #[derive(Debug)]
@@ -26,6 +39,13 @@ pub(crate) struct Instance {
     pub topic: String,
     pub generation: u64,
     pub timer: Option<iced::task::Handle>,
+}
+
+impl Instance {
+    pub(crate) fn is_music_toast(&self) -> bool {
+        self.plugin.eq_ignore_ascii_case("Audio")
+            && matches!(self.topic.as_str(), "media" | "media-volume")
+    }
 }
 
 #[derive(Debug)]
@@ -102,12 +122,25 @@ impl OxiBar {
         }
         self.osds.generation = self.osds.generation.wrapping_add(1);
         let generation = self.osds.generation;
+        let mut config = self.config.snapshot.host.osd.clone();
+        if plugin.eq_ignore_ascii_case("Audio")
+            && matches!(request.topic.as_str(), "media" | "media-volume")
+        {
+            config.placement = Some(self.music_toast_placement(&output));
+        }
         let mut tasks = Vec::new();
         let id = if let Some(instance) = self.osds.instances.get_mut(&output) {
             drop(instance.timer.take());
             instance.plugin = plugin;
             instance.topic = request.topic;
             instance.generation = generation;
+            tasks.extend([
+                Task::done(Message::ConfigureOsdLayer(instance.id, config.clone())),
+                Task::done(Message::SetLayerMargin(
+                    instance.id,
+                    crate::messages::osd_margin(&config),
+                )),
+            ]);
             instance.id
         } else {
             let id = IcedId::unique();
@@ -124,10 +157,7 @@ impl OxiBar {
             );
             tasks.push(Task::done(Message::OnOutput(
                 output.clone(),
-                Box::new(Message::OpenOsdLayer(
-                    id,
-                    self.config.snapshot.host.osd.clone(),
-                )),
+                Box::new(Message::OpenOsdLayer(id, config)),
             )));
             id
         };
@@ -192,13 +222,16 @@ impl OxiBar {
             .collect();
         let mut tasks = Vec::new();
         for (output, id) in ids {
+            let mut config = self.config.snapshot.host.osd.clone();
+            if self.osds.instances[&output].is_music_toast() {
+                config.placement = Some(self.music_toast_placement(&output));
+            }
             self.osds.generation = self.osds.generation.wrapping_add(1);
             let generation = self.osds.generation;
             let (task, timer) = self.osd_timer(id, generation);
             let item = self.osds.instances.get_mut(&output).unwrap();
             item.timer = timer;
             item.generation = generation;
-            let config = self.config.snapshot.host.osd.clone();
             tasks.extend([
                 task,
                 Task::done(Message::ConfigureOsdLayer(id, config.clone())),

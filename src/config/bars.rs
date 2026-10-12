@@ -15,7 +15,11 @@ pub enum Position {
 pub struct BarConfig {
     pub width: Option<u32>,
     pub height: u32,
+    pub auto_hide: bool,
+    pub reveal_zone: u32,
+    pub popup_height: u32,
     pub transparent: bool,
+    pub show_labels: bool,
     pub position: Position,
     pub start: Vec<String>,
     pub center: Vec<String>,
@@ -23,6 +27,30 @@ pub struct BarConfig {
 }
 
 impl BarConfig {
+    pub(crate) fn anchor_matches(&self, key: &str, provider: &str) -> bool {
+        let mut parts = key.split(':');
+        let entries = match parts.next() {
+            Some("start") => &self.start,
+            Some("center") => &self.center,
+            Some("end") => &self.end,
+            _ => return false,
+        };
+        let Some(index) = parts.next().and_then(|index| index.parse::<usize>().ok()) else {
+            return false;
+        };
+        if parts
+            .next()
+            .and_then(|part| part.parse::<usize>().ok())
+            .is_none()
+            || parts.next().is_some()
+        {
+            return false;
+        }
+        entries
+            .get(index)
+            .is_some_and(|name| name.eq_ignore_ascii_case(provider))
+    }
+
     pub fn for_output(snapshot: &ConfigSnapshot, output: Option<&str>, order: &[String]) -> Self {
         let global = snapshot
             .effective
@@ -55,7 +83,13 @@ impl BarConfig {
         Self {
             width: host.bar_width,
             height: host.bar_height,
+            auto_hide: host.bar_auto_hide,
+            reveal_zone: host.bar_reveal_zone,
+            popup_height: host
+                .menus
+                .popup_height(host.control_center_enabled, host.control_center_size.1),
             transparent: host.transparent,
+            show_labels: host.bar_show_labels,
             position: if table.get("position").and_then(Value::as_str) == Some("bottom") {
                 Position::Bottom
             } else {
@@ -88,8 +122,11 @@ pub(crate) fn validate_profiles(
         for (key, value) in profile {
             if ![
                 "height",
+                "auto_hide",
+                "reveal_zone",
                 "width",
                 "transparent",
+                "show_labels",
                 "position",
                 "start",
                 "center",

@@ -72,6 +72,7 @@ pub struct ConfigOutcome {
 
 impl OxiBar {
     pub(crate) fn update_settings(&mut self, action: Action) -> Task<Message> {
+        let toggle_page = matches!(&action, Action::TogglePage(_));
         match action {
             Action::Open | Action::Toggle => {
                 if self.settings.window_id.is_some() {
@@ -104,10 +105,12 @@ impl OxiBar {
                     Task::none()
                 };
                 Task::batch([
+                    self.close_overview(),
                     close_launcher,
                     close_modal,
                     close_panel,
                     close_control_center,
+                    self.close_bar_dropdown(),
                     close_editor,
                     self.current_input_region_task(),
                     Task::done(Message::OnOutput(
@@ -122,11 +125,44 @@ impl OxiBar {
             }
             Action::Close => self.close_settings(),
             Action::Category(category) => {
+                self.settings.navigation.select(category.id(), false);
                 self.settings.category = category;
+                self.settings.search.clear();
+                self.settings.widget_drag = None;
+                if category == super::Category::Monitors
+                    && self.settings.monitors.inventory.is_none()
+                {
+                    return self.update_monitors(crate::monitor::runtime::Action::Refresh);
+                }
+                Task::none()
+            }
+            Action::Page(id) | Action::TogglePage(id) => {
+                let Some(category) = self.settings.navigation.select(&id, toggle_page) else {
+                    return Task::none();
+                };
+                self.settings.category = category;
+                self.settings.widget_drag = None;
+                self.settings.search.clear();
+                if category == super::Category::Monitors
+                    && self.settings.monitors.inventory.is_none()
+                {
+                    return self.update_monitors(crate::monitor::runtime::Action::Refresh);
+                }
                 Task::none()
             }
             Action::Search(query) => {
                 self.settings.search = query;
+                Task::none()
+            }
+            Action::NavigationBounds(id, bounds) => {
+                if (self.settings.navigation.find(&id).is_some()
+                    || (id.starts_with('@') && id.len() <= 256))
+                    && [bounds.x, bounds.y, bounds.width, bounds.height]
+                        .into_iter()
+                        .all(f32::is_finite)
+                {
+                    self.settings.navigation_bounds.insert(id, bounds);
+                }
                 Task::none()
             }
             Action::Edit(path, value) if self.config.jobs == 0 => {
@@ -156,10 +192,7 @@ impl OxiBar {
                     .get(&path)
                     .cloned()
                     .unwrap_or_else(|| Draft {
-                        value: edit_value(
-                            get_path(&self.config.snapshot.effective, &path),
-                            &field.kind,
-                        ),
+                        value: edit_value(self.setting_value(&path).as_ref(), &field.kind),
                         revision: self.config.snapshot.revision,
                     });
                 match draft_value(field, &draft.value) {
@@ -228,22 +261,95 @@ impl OxiBar {
                         widgets.swap(index, next);
                     }
                 }),
-            Action::EnablePlugin(filename, enabled) if self.config.jobs == 0 => {
-                let mut files: Vec<_> =
-                    crate::config::get_allowed_plugins(&self.config.snapshot.effective)
+            Action::BeginWidgetDrag {
+                section,
+                index,
+                name,
+                revision,
+            } if self.config.jobs == 0 => {
+                self.settings.widget_drag = Some(super::WidgetDrag {
+                    section,
+                    index,
+                    name,
+                    revision,
+                });
+                Task::none()
+            }
+            Action::DropWidget(section, index) if self.config.jobs == 0 => {
+                self.drop_bar_widget(&section, index)
+            }
+            Action::CancelWidgetDrag => {
+                self.settings.widget_drag = None;
+                Task::none()
+            }
+            Action::EnableDefaultProviders(enabled) if self.config.jobs == 0 => {
+                let mut files: Vec<String> =
+                    get_path(&self.config.snapshot.effective, "launcher.default_plugins")
+                        .and_then(Value::as_array)
                         .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
                         .map(str::to_owned)
                         .collect();
-                if enabled && !files.contains(&filename) {
-                    files.push(filename);
-                } else if !enabled {
-                    files.retain(|file| file != &filename);
+                files
+                    .retain(|name| !crate::config::DEFAULT_RUNNER_PLUGINS.contains(&name.as_str()));
+                if enabled {
+                    files.extend(
+                        crate::config::DEFAULT_RUNNER_PLUGINS
+                            .into_iter()
+                            .map(str::to_owned),
+                    );
                 }
                 self.config_job(
                     Some(Mutation::Set(
-                        "plugins".to_owned(),
+                        "launcher.default_plugins".into(),
                         Value::Array(files.into_iter().map(Value::String).collect()),
                     )),
+                    Some(self.config.snapshot.revision),
+                    None,
+                    None,
+                    false,
+                )
+            }
+            Action::EnablePlugin(filename, enabled) if self.config.jobs == 0 => {
+                let mut files: Vec<_> = get_path(&self.config.snapshot.effective, "plugins")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect();
+                if enabled && !files.contains(&filename) {
+                    files.push(filename.clone());
+                } else if !enabled {
+                    files.retain(|file| file != &filename);
+                }
+                let mut overrides = self.config.snapshot.overrides.clone();
+                let mut defaults: Vec<_> =
+                    get_path(&self.config.snapshot.effective, "launcher.default_plugins")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect();
+                if !enabled {
+                    defaults.retain(|file| file != &filename);
+                }
+                set_path(
+                    &mut overrides,
+                    "plugins",
+                    Value::Array(files.into_iter().map(Value::String).collect()),
+                )
+                .expect("known path");
+                set_path(
+                    &mut overrides,
+                    "launcher.default_plugins",
+                    Value::Array(defaults.into_iter().map(Value::String).collect()),
+                )
+                .expect("known path");
+                self.config_job(
+                    Some(Mutation::Replace(overrides)),
                     Some(self.config.snapshot.revision),
                     None,
                     None,
@@ -277,14 +383,22 @@ impl OxiBar {
     }
 
     pub(crate) fn close_settings(&mut self) -> Task<Message> {
-        self.settings
+        self.settings.widget_drag = None;
+        let revert = if self.settings.monitors.preview.is_some() {
+            self.update_monitors(crate::monitor::runtime::Action::Revert)
+        } else {
+            Task::none()
+        };
+        let close = self
+            .settings
             .window_id
             .take()
             .map(|id| {
                 self.shell.registry.remove(id);
                 Task::done(Message::CloseSettingsLayer(id))
             })
-            .unwrap_or_else(Task::none)
+            .unwrap_or_else(Task::none);
+        Task::batch([revert, close])
     }
 
     fn edit_widgets(
@@ -301,6 +415,52 @@ impl OxiBar {
             "end" => &mut end,
             _ => return Task::none(),
         });
+        self.store_widgets(start, center, end, self.config.snapshot.revision)
+    }
+
+    fn drop_bar_widget(&mut self, section: &str, index: usize) -> Task<Message> {
+        let Some(drag) = self.settings.widget_drag.take() else {
+            return Task::none();
+        };
+        if drag.revision != self.config.snapshot.revision {
+            self.settings.error =
+                Some("Settings changed during drag; drag the widget again.".into());
+            return Task::none();
+        }
+        let mut sections = [
+            self.start_widgets.clone(),
+            self.center_widgets.clone(),
+            self.end_widgets.clone(),
+        ];
+        let locate = |section: &str| {
+            ["start", "center", "end"]
+                .iter()
+                .position(|name| *name == section)
+        };
+        let (Some(from), Some(to)) = (locate(&drag.section), locate(section)) else {
+            return Task::none();
+        };
+        if sections[from].get(drag.index) != Some(&drag.name) || index > sections[to].len() {
+            return Task::none();
+        }
+        let value = sections[from].remove(drag.index);
+        let index = if from == to && index > drag.index {
+            index - 1
+        } else {
+            index
+        };
+        sections[to].insert(index, value);
+        let [start, center, end] = sections;
+        self.store_widgets(start, center, end, drag.revision)
+    }
+
+    fn store_widgets(
+        &mut self,
+        start: Vec<String>,
+        center: Vec<String>,
+        end: Vec<String>,
+        revision: u64,
+    ) -> Task<Message> {
         let mut overrides = self.config.snapshot.overrides.clone();
         for (section, widgets) in [("start", start), ("center", center), ("end", end)] {
             if let Err(error) = set_path(
@@ -314,7 +474,7 @@ impl OxiBar {
         }
         self.config_job(
             Some(Mutation::Replace(overrides)),
-            Some(self.config.snapshot.revision),
+            Some(revision),
             None,
             None,
             false,
@@ -387,6 +547,11 @@ impl OxiBar {
         if outcome.snapshot.revision >= old.revision {
             self.config.snapshot = outcome.snapshot.clone();
             self.config.watch_paths = crate::config::WatchPaths::new(&self.config.directory);
+            if crate::config::get_allowed_plugins(&old.effective)
+                != crate::config::get_allowed_plugins(&outcome.snapshot.effective)
+            {
+                tasks.push(self.reconcile_plugins());
+            }
             if old.effective != outcome.snapshot.effective
                 || old.overrides != outcome.snapshot.overrides
             {
@@ -427,6 +592,13 @@ impl OxiBar {
             self.settings.notice = Some("Configuration saved / reloaded".to_owned());
         }
         self.settings.sync_editor(&self.config.snapshot);
+        self.settings
+            .navigation
+            .reconcile(&self.config.snapshot.schema);
+        self.settings.category = self.settings.navigation.current().category;
+        self.settings
+            .navigation_bounds
+            .retain(|id, _| id.starts_with('@') || self.settings.navigation.find(id).is_some());
         self.refresh_plugin_catalog();
         if let Some(reply) = outcome.reply.as_ref() {
             reply.send(ipc::response(
@@ -455,10 +627,13 @@ impl OxiBar {
         self.launcher.configure(&host);
         self.normalize_control_center_selection();
         tasks.push(self.close_control_center_toasts());
-        if !host.control_center_enabled {
+        if !host.control_center_enabled
+            || old.host.menus.controls_dropdown != host.menus.controls_dropdown
+        {
             tasks.push(self.close_control_center());
         }
         if let Some(id) = self.control_center.window_id
+            && self.control_center.attached_to.is_none()
             && old.host.control_center_size != host.control_center_size
         {
             tasks.push(Task::done(Message::ResizeLayer(
@@ -489,10 +664,31 @@ impl OxiBar {
             )));
         }
         tasks.push(self.reconcile_bars());
+        if old.host.menus.notifications_dropdown != host.menus.notifications_dropdown
+            || !host.menus.session_enabled && self.shell.session_window.is_some()
+        {
+            tasks.push(self.close_bar_dropdown());
+        }
         tasks.push(self.reconcile_docks());
         tasks.push(self.reconcile_desktop());
+        if old.host.overview != host.overview {
+            if !host.overview.enabled {
+                tasks.push(self.close_overview());
+            } else if self.overview.client.is_some()
+                && (old.host.overview.fps != host.overview.fps
+                    || old.host.overview.thumbnail_size != host.overview.thumbnail_size)
+            {
+                tasks.push(self.close_overview());
+                tasks.push(self.update_overview(crate::overview::Action::Open));
+            } else {
+                tasks.push(self.reconcile_overview());
+            }
+        }
         if old.host.osd != host.osd {
             tasks.push(self.apply_osd_config());
+        }
+        if old.host.toasts != host.toasts {
+            tasks.extend(self.toast_layout_tasks());
         }
         tasks.push(self.current_input_region_task());
         Task::batch(tasks)
@@ -544,20 +740,23 @@ impl OxiBar {
                 .into_iter()
                 .map(str::to_owned)
                 .collect();
-        if let Ok(entries) = std::fs::read_dir(self.config.directory.join("plugins")) {
-            files.extend(
-                entries
-                    .flatten()
-                    .filter_map(|entry| entry.file_name().into_string().ok())
-                    .filter(|name| name.ends_with(".so")),
-            );
+        files.extend(["libapplications.so", "libtools.so", "libsystem.so"].map(str::to_owned));
+        let primary = self.config.directory.join("plugins");
+        for directory in crate::plugins::plugin_directories(&primary) {
+            if let Ok(entries) = std::fs::read_dir(directory) {
+                files.extend(
+                    entries
+                        .flatten()
+                        .filter_map(|entry| entry.file_name().into_string().ok())
+                        .filter(|name| name.ends_with(".so")),
+                );
+            }
         }
         self.settings.catalog = files
             .into_iter()
             .map(|filename| {
-                let info = crate::plugins::inspect_library(
-                    &self.config.directory.join("plugins").join(&filename),
-                );
+                let path = crate::plugins::library_path(&primary, &filename);
+                let info = self.plugin_runtime.library_info(&path);
                 let loaded = self
                     .plugins
                     .iter()
@@ -575,12 +774,22 @@ impl OxiBar {
                     state: match (loaded.is_some(), info.error) {
                         (true, Some(error)) => format!("Running · installed library: {error}"),
                         (true, None) => "Running".to_owned(),
+                        (false, Some(_)) if !path.is_file() => {
+                            "Not installed · add this plugin package to your Oxibar installation"
+                                .to_owned()
+                        }
                         (false, Some(error)) => error,
                         (false, None) => self
                             .plugin_failures
                             .get(&filename)
                             .cloned()
-                            .unwrap_or_else(|| "Installed / not running".to_owned()),
+                            .unwrap_or_else(|| {
+                                if self.plugin_runtime.loading {
+                                    "Loading providers…".to_owned()
+                                } else {
+                                    "Installed / disabled".to_owned()
+                                }
+                            }),
                     },
                     abi: info.abi,
                     capabilities: info.capabilities,
@@ -593,10 +802,12 @@ impl OxiBar {
     }
 
     pub(crate) fn status_data(&self) -> serde_json::Value {
-        json!({"launcher_open": self.launcher.window_id.is_some(), "settings_open": self.settings.window_id.is_some(),
+        let mut data = json!({"launcher_open": self.launcher.window_id.is_some(), "settings_open": self.settings.window_id.is_some(),
             "launcher_results": self.launcher.entries.iter().map(|entry| json!({"provider": entry.plugin_id, "id": entry.result.index, "score": entry.result.score, "favorite": entry.favorite})).collect::<Vec<_>>(),
             "launcher_query_revision":self.launcher.query_revision,"launcher_query_us":self.launcher.query_elapsed_us,
             "popup_open":self.popup_open,"popup_provider":self.popup_plugin,
+            "session_open": self.shell.session_window.is_some(),
+            "dropdown": self.shell.popup_bar.filter(|_| self.popup_open).map(|id| { let metrics = self.popup_metrics(self.popup_plugin.as_deref().unwrap_or_default()); serde_json::json!({"output":self.output_for_bar(Some(id)),"x":self.dropdown_x(id,self.popup_plugin.as_deref().unwrap_or_default()),"width":metrics.connector_width,"height":metrics.height}) }),
             "modal_open":self.modal_window_id.is_some(),"modal_provider":self.modal_plugin,"panel_open":self.panel_window_id.is_some(),"panel_provider":self.panel_plugin,"toast_count":self.toasts.len(),
             "compositor_backend":self.compositor.as_ref().map(|snapshot|&snapshot.backend),"compositor_error":self.compositor_error,"compositor_action_error":self.compositor_action_error,
             "docks":self.docks.instances.values().map(|dock|json!({"instance":format!("{:?}",dock.id),"output":dock.output,"width":dock.size.0,"height":dock.size.1,"items":dock.items.len()})).collect::<Vec<_>>(),
@@ -604,15 +815,50 @@ impl OxiBar {
             "osds": self.osds.instances.iter().map(|(output, item)| json!({"instance": format!("{:?}", item.id), "output": output, "provider": item.plugin, "topic": item.topic, "generation": item.generation})).collect::<Vec<_>>(),
             "control_center_open": self.control_center.window_id.is_some(), "control_center_selected": self.control_center.selected, "control_center_widgets": self.control_center_plugins(),
             "restart_required": self.restart_fields(), "loaded_plugins": self.plugins.keys().collect::<Vec<_>>(), "active_subscriptions": self.plugins.iter().filter(|(name, (_, funcs))| self.subscription_enabled(name, funcs)).map(|(name, _)| name).collect::<Vec<_>>(), "config_error": self.settings.error,
-            "theme": {"revision": self.appearance.snapshot.revision, "font": self.appearance.snapshot.font_family, "font_loading": self.appearance.font_loading, "preset": self.appearance.snapshot.preset, "density": self.appearance.snapshot.density, "font_scale": self.appearance.snapshot.font_scale, "reduced_motion": self.appearance.snapshot.reduced_motion, "animation_ms": self.appearance.snapshot.animation_ms, "primary": oxiced::theme::snapshot::color_hex(self.appearance.snapshot.tokens.primary), "mantle": oxiced::theme::snapshot::color_hex(self.appearance.snapshot.tokens.mantle), "failures": self.appearance.failures, "upgraded_plugins": self.plugins.iter().filter(|(_, (_, funcs))| funcs.theme_changed.is_some()).map(|(name, _)| name).collect::<Vec<_>>()},
             "monitor_backend": self.shell.inventory.as_ref().map(|inventory| &inventory.backend), "monitor_error": self.shell.inventory_error,
             "outputs": self.shell.inventory.as_ref().map(|inventory| inventory.outputs.iter().map(|output| output.json()).collect::<Vec<_>>()).unwrap_or_default(),
-            "bars": self.shell.bars.iter().map(|(instance, bar)| json!({"instance": instance, "output": bar.output, "width": bar.size.width, "height": bar.size.height, "position": format!("{:?}", bar.config.position)})).collect::<Vec<_>>()})
+            "bars": self.shell.bars.iter().map(|(instance, bar)| json!({"instance": instance, "output": bar.output, "width": bar.size.width, "height": bar.size.height, "position": format!("{:?}", bar.config.position), "auto_hide":bar.config.auto_hide, "visible":self.bar_is_visible(bar.id)})).collect::<Vec<_>>()});
+        data["control_center_attached"] = json!(self.control_center.attached_to.is_some());
+        data["plugins_loading"] = json!(self.plugin_runtime.loading);
+        data["settings_navigation"] = json!({
+            "page": self.settings.navigation.selected,
+            "expanded": self.settings.navigation.expanded,
+            "rows": self.settings.navigation_bounds.iter().filter(|(_, bounds)| bounds.width > 0.0 && bounds.height > 0.0)
+                .map(|(page, bounds)| json!({"page":page,"x":bounds.x,"y":bounds.y,"width":bounds.width,"height":bounds.height})).collect::<Vec<_>>()
+        });
+        data["overview"] = json!({"open":self.overview.client.is_some(),"active_output":self.overview.active,"selected":self.overview.selected,"backend":self.overview.snapshot.backend,"error":self.overview.snapshot.error,"in_flight":self.overview.snapshot.in_flight,"staging_bytes":self.overview.snapshot.staging_bytes,"thumbnail_bytes":self.overview.snapshot.thumbnail_bytes,"captures":self.overview.snapshot.captures,"windows":self.overview.snapshot.windows.iter().map(|w|json!({"id":w.id,"title":w.title,"app_id":w.app_id,"outputs":w.outputs,"focused":w.focused,"preview":w.image.is_some(),"frames":w.frames,"error":w.error,"activatable":w.activatable})).collect::<Vec<_>>()});
+        data["overview"]["outputs"] = json!(self.overview.surfaces.keys().collect::<Vec<_>>());
+        data["theme"] = json!({"revision": self.appearance.snapshot.revision, "font": self.appearance.snapshot.font_family, "font_loading": self.appearance.font_loading, "preset": self.appearance.snapshot.preset, "density": self.appearance.snapshot.density, "font_scale": self.appearance.snapshot.font_scale, "reduced_motion": self.appearance.snapshot.reduced_motion, "animation_ms": self.appearance.snapshot.animation_ms, "primary": oxiced::theme::snapshot::color_hex(self.appearance.snapshot.tokens.primary), "mantle": oxiced::theme::snapshot::color_hex(self.appearance.snapshot.tokens.mantle), "accent":self.appearance.snapshot.accent.map(oxiced::theme::snapshot::color_hex), "base24":oxiced::theme::base24::SLOTS.iter().zip(self.appearance.snapshot.base24.colors.iter()).map(|(slot,color)|(slot.to_string(),json!(oxiced::theme::snapshot::color_hex(*color)))).collect::<serde_json::Map<_,_>>(), "failures": self.appearance.failures, "upgraded_plugins": self.plugins.iter().filter(|(_, (_, funcs))| funcs.theme_changed.is_some()).map(|(name, _)| name).collect::<Vec<_>>()});
+        data["monitor_editor"] = json!({"busy":self.settings.monitors.busy,"preview":self.settings.monitors.preview,"error":self.settings.monitors.error,"notice":self.settings.monitors.notice,"draft":self.settings.monitors.draft.iter().map(|output|output.value()).collect::<Vec<_>>()});
+        data["monitor_editor"]["diagram"] = self.monitor_diagram_status();
+        data["bar_buttons"] = json!(self.shell.bars.values().flat_map(|bar|bar.anchors.iter().map(move |(key,(provider,bounds))| json!({"output":bar.output,"key":key,"provider":provider,"x":bounds.x,"y":bounds.y,"width":bounds.width,"height":bounds.height}))).collect::<Vec<_>>());
+        data
     }
 
     pub(crate) fn control_request(&mut self, request: ControlRequest) -> Task<Message> {
         let snapshot = &self.config.snapshot;
         match request.command {
+            Command::Overview(command) => {
+                if !snapshot.host.overview.enabled && !matches!(command, WindowCommand::Close) {
+                    request.reply.send(ipc::response(
+                        snapshot.revision,
+                        self.status_data(),
+                        Some("Overview is disabled"),
+                    ));
+                    return Task::none();
+                }
+                let task = self.update_overview(match command {
+                    WindowCommand::Open => crate::overview::Action::Open,
+                    WindowCommand::Close => crate::overview::Action::Close,
+                    WindowCommand::Toggle => crate::overview::Action::Toggle,
+                });
+                request.reply.send(ipc::response(
+                    self.config.snapshot.revision,
+                    self.status_data(),
+                    None,
+                ));
+                task
+            }
             Command::Desktop(action) => {
                 if matches!(action, crate::desktop::Action::Save) {
                     if self.desktop.draft.as_ref().is_none_or(|draft| draft.saving)
@@ -732,6 +978,21 @@ impl OxiBar {
                     self.config.snapshot.revision,
                     self.status_data(),
                     disabled.then_some("Control center disabled in configuration"),
+                ));
+                task
+            }
+            Command::Session(action) => {
+                let disabled = !self.config.snapshot.host.menus.session_enabled
+                    && !matches!(action, WindowCommand::Close);
+                let task = self.update_session_menu(match action {
+                    WindowCommand::Open => crate::session_menu::Action::Open,
+                    WindowCommand::Close => crate::session_menu::Action::Close,
+                    WindowCommand::Toggle => crate::session_menu::Action::Toggle,
+                });
+                request.reply.send(ipc::response(
+                    self.config.snapshot.revision,
+                    self.status_data(),
+                    disabled.then_some("Session menu disabled in configuration"),
                 ));
                 task
             }

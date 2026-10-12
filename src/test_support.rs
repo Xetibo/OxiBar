@@ -32,6 +32,7 @@ pub struct FakePluginOptions {
     pub passive_desktop: bool,
     pub compositor: bool,
     pub command: bool,
+    pub session_menu: bool,
     pub osd: bool,
     pub popup: bool,
     pub modal: bool,
@@ -303,6 +304,7 @@ impl TestHost {
         let settings = crate::settings::SettingsUi::new(&config.snapshot);
         let mut host = Self {
             bar: OxiBar {
+                overview: crate::overview::Overview::default(),
                 appearance: crate::theme::ThemeRuntime::new(
                     &config.snapshot.effective,
                     config.snapshot.revision,
@@ -320,6 +322,7 @@ impl TestHost {
                 control_center: crate::control_center::ControlCenter::default(),
                 plugin_order: order.clone(),
                 plugin_failures: std::collections::BTreeMap::new(),
+                plugin_runtime: crate::plugins::PluginRuntime::default(),
                 launcher: crate::launcher::Launcher::new(&Table::new()),
                 theme: Theme::Dark,
                 plugins: plugin_map,
@@ -375,15 +378,23 @@ impl TestHost {
         action: &str,
         arguments: &[&str],
     ) -> (Vec<Message>, serde_json::Value) {
-        let (reply, receiver) = crate::ipc::Reply::channel();
-        let request = Message::ControlRequest(crate::ipc::ControlRequest {
-            command: crate::ipc::Command::Action {
+        self.request(
+            source,
+            crate::ipc::Command::Action {
                 plugin: plugin.to_owned(),
                 action: action.to_owned(),
                 arguments: arguments.iter().map(|value| (*value).to_owned()).collect(),
             },
-            reply,
-        });
+        )
+    }
+
+    pub fn request(
+        &mut self,
+        source: Option<IcedId>,
+        command: crate::ipc::Command,
+    ) -> (Vec<Message>, serde_json::Value) {
+        let (reply, receiver) = crate::ipc::Reply::channel();
+        let request = Message::ControlRequest(crate::ipc::ControlRequest { command, reply });
         let request = source
             .map(|source| Message::FromSurface(source, Box::new(request.clone())))
             .unwrap_or(request);
@@ -448,6 +459,12 @@ impl TestHost {
     pub fn bar_output(&self, id: iced_layershell::reexport::IcedId) -> Option<String> {
         self.bar.output_for_bar(Some(id))
     }
+    pub fn bar_show_labels(&self, id: IcedId) -> Option<bool> {
+        self.bar.shell.bar(id).map(|bar| bar.config.show_labels)
+    }
+    pub fn bar_visible(&self, id: IcedId) -> bool {
+        self.bar.bar_is_visible(id)
+    }
     pub fn bar_dimensions(
         &self,
         id: iced_layershell::reexport::IcedId,
@@ -468,6 +485,35 @@ impl TestHost {
     }
     pub fn control_center_widgets(&self) -> Vec<String> {
         self.bar.control_center_plugins()
+    }
+    pub fn overview_surfaces(&self) -> Vec<(String, IcedId)> {
+        self.bar
+            .overview
+            .surfaces
+            .iter()
+            .map(|(name, surface)| (name.clone(), surface.id))
+            .collect()
+    }
+    pub fn overview_state(&self) -> (u64, Option<&str>, Option<u64>, bool) {
+        (
+            self.bar.overview.generation,
+            self.bar.overview.active.as_deref(),
+            self.bar.overview.selected,
+            self.bar.overview.client.is_some(),
+        )
+    }
+    pub fn set_overview_windows(
+        &mut self,
+        windows: Vec<crate::overview::capture::Window>,
+    ) -> Vec<Message> {
+        self.drive(Message::OverviewSnapshot(
+            self.bar.overview.generation,
+            crate::overview::capture::Snapshot {
+                backend: "Fixture exact handles".into(),
+                windows,
+                ..Default::default()
+            },
+        ))
     }
     pub fn surface_output(&self, id: IcedId) -> Option<&str> {
         self.bar
@@ -515,6 +561,10 @@ impl TestHost {
 
     pub fn popup_open(&self) -> bool {
         self.bar.popup_open
+    }
+
+    pub fn session_window(&self) -> Option<IcedId> {
+        self.bar.shell.session_window
     }
 
     pub fn modal_plugin(&self) -> Option<&str> {
@@ -600,6 +650,14 @@ pub fn error(value: &str) -> PluginMsg {
 }
 
 pub fn is_host_request(message: &Message, plugin_id: &str, request: &str) -> bool {
+    if let Message::PluginEmission(provider, payload) = message {
+        return provider == plugin_id
+            && is_host_request(
+                &crate::messages::translate_plugin_message(provider.clone(), payload.clone()),
+                plugin_id,
+                request,
+            );
+    }
     matches!(
         (message, request),
         (Message::TogglePluginPopup(id), HOST_REQUEST_TOGGLE_POPUP) if id == plugin_id
@@ -625,6 +683,7 @@ fn fake_model(dynamic_popup_metrics: Option<PluginPopupMetrics>) -> PluginModel 
 
 fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
     PluginFuncs {
+        session_menu: options.session_menu.then_some(fake_session_menu),
         subscription_policy: options
             .visible_subscription
             .then_some(fake_subscription_policy),
@@ -636,6 +695,7 @@ fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
         command: options.command.then_some(fake_command),
         osd_view: options.osd.then_some(fake_osd_view),
         context_view: None,
+        bar_view: None,
         control_center_view: options.control_center.then_some(fake_view),
         filename: "libfake.so".to_owned(),
         settings_schema: (options.live_settings || options.runner_favorites)
@@ -977,6 +1037,10 @@ unsafe extern "Rust" fn fake_command(
     arguments: Vec<String>,
 ) -> Result<Task<oxibar_plugin_api::CommandOutcome>, String> {
     match action.as_str() {
+        "logout" | "reboot" | "power-off" => Ok(Task::done(oxibar_plugin_api::CommandOutcome {
+            message: emit_host_request(OPEN_MODAL),
+            result: Ok(()),
+        })),
         "record" => Ok(Task::done(oxibar_plugin_api::CommandOutcome {
             message: record(&arguments.join(" ")),
             result: Ok(()),
@@ -1006,6 +1070,20 @@ unsafe extern "Rust" fn fake_command(
 unsafe extern "Rust" fn fake_subscription() -> *mut PluginStream {
     let stream = iced::futures::stream::empty::<PluginMsg>();
     Box::into_raw(Box::new(stream)) as *mut PluginStream
+}
+
+unsafe extern "Rust" fn fake_session_menu(
+    _: PluginModel,
+) -> Vec<oxibar_plugin_api::SessionMenuEntry> {
+    [("logout", true), ("reboot", true), ("hibernate", false)]
+        .into_iter()
+        .map(|(action, enabled)| oxibar_plugin_api::SessionMenuEntry {
+            action: action.into(),
+            label: action.into(),
+            description: "Requires confirmation".into(),
+            enabled,
+        })
+        .collect()
 }
 
 unsafe extern "Rust" fn fake_subscription_policy() -> oxibar_plugin_api::SubscriptionPolicy {

@@ -5,6 +5,9 @@
 - Retain initialized native plugin code for process lifetime; deferred trait-object
   destructors, messages and tasks may outlive their original surface. Cancel owned
   streams normally; do not equate code retention with another service or hot unload.
+- Preserve provider identity until host-request dispatch. Disabled models may
+  consume pending data/cleanup results but cannot open surfaces or emit host actions.
+  Serialize live factories and reconcile completed loads against current config.
 - Use owned SDK interval streams instead of detached forever polling threads.
 - Diff filesystem watch path/mode/device/inode identity. Filter parent-watch events
   to the configured root relationship; unrelated logs must not cause reindex loops.
@@ -46,6 +49,10 @@
   font-aware shared text/input/picker helpers; retain glyph fonts for icons. Do
   not mutate unsynchronized palettes, and bypass animation builders for reduced
   motion or zero duration. Upload font bytes before changing the active family.
+- Map Base24 slots to shared semantic roles before explicit role/accent overrides.
+  Partial schemes inherit validated seed values; derive missing Base16 extensions
+  from base colors. Preserve explicit-role metadata and validate automatic text
+  contrast across state backgrounds without rewriting requested accent/scheme colors.
 - Runner jobs use bounded latest-only workers, cooperative cancellation and
   generation guards. Capture immutable provider/local action identity in rendered
   activation messages; keep logical favorite keys separate from action contents.
@@ -61,6 +68,32 @@
   target IDs for geometry/input updates.
 - Normalize output inventory off the UI thread, preserve refresh-rate precision,
   and separate logical output geometry from pixel modes/native buffer scale.
+- Keep drag snapping pure and deterministic over enabled logical display bounds,
+  including fractional scale, rotation and negative positions. Preserve the gesture
+  origin for overlap rollback; exact numeric edits bypass snapping.
+- Display previews belong to a bounded backend owner with a monotonic rollback
+  lease. Save through the revision-checked sparse store before releasing it; stale
+  confirmations and failed writes must not retain an unconfirmed native layout.
+  Use advertised wlr head/mode proxies and serials, never global head state or
+  refresh-rate rounding as identity.
+- Capture actual bar-child bounds and the pressed slot. Use the same clamped
+  placement for popup drawing, input regions and dismissal, and prune stale slots
+  after layout changes. Attached dropdown closure must not remove its owning bar.
+- Bounds-capture widgets need stable logical identity as well as geometry. Invalidate
+  cached rectangles when a same-sized replacement reuses the widget tree.
+- Edge-reveal state belongs to the registered output-local bar. Update content,
+  input region and exclusive zone without recreating the surface or provider models.
+- Output-local label preferences belong in optional per-view context, never in shared
+  provider state. Preserve required exports and existing ABI context layouts.
+- Drag/drop mutations carry source identity and starting revision. Keep keyboard
+  reorder alternatives and preserve unrelated sparse fields when replacing arrays.
+- Draw-only previews never intercept drop input. Custom widget wrappers need unique
+  tree tags and defensive child reconciliation across empty/optional-child views.
+  Avoid vertical `Fill` inside unbounded scroll content, including alignment helpers
+  that silently replace a fixed height with `Fill`.
+- Host keys belong in the validated shortcut schema and central surface-scoped
+  dispatcher. Reject overlapping-context conflicts, preserve text-input capture
+  semantics and derive visible hints from effective bindings.
 - Keep plugin service ownership independent of output/view count. Preserve source
   context for UI-initiated asynchronous work without dropping model updates after
   the originating surface disappears.
@@ -79,6 +112,8 @@
   on SDK struct `Any` identity across independently compiled dependency graphs.
 - Non-interactive surfaces must not alter keyboard ownership. Route keyboard events
   by compositor Enter/Leave, independently of pointer focus or surface creation.
+- Pending keyboard-repeat work must be canceled with its focus/device ownership;
+  revalidate the live keyboard and repeating key before installing a timer.
 - Coalesce transient OSDs per output and abort replaced timers; expiry carries a
   generation. Initial service snapshots are quiet, failed actions do not show success.
 - Scope DBus state/actions to the service's unique-owner epoch. Subscribe before
@@ -90,6 +125,12 @@
 - Keep schema-driven view construction separate from settings state/actions and
   persistence. Use shared oxiced surface buttons, badges and themed switches for
   spacious forms; preserve compact bar controls and the existing theme palette.
+- Give nested settings pages stable route IDs and assign each declared descriptor
+  once. Preserve route/expansion/drafts across live schema changes, fall back to a
+  valid ancestor after removal, and retain existing root shortcut indexes. Keep
+  navigation transitions separate from configuration writes.
+- Keep save/reload feedback in bounded status space and preserve busy widget trees;
+  changing callback availability must not resize controls or the form viewport.
 
 ## Instance and Compositor State
 
@@ -97,6 +138,19 @@
   reinterpret a stale vector position as a new application.
 - Treat native window addresses as reusable handles. Keep incarnation IDs and
   revalidate native identity/PID before delegating activation.
+- Capture and activate through exact native toplevel resources. Bridge protocol
+  identities only through an advertised exact mapping, never title/app-ID matching
+  or a truncated address. Do not rebind an old window after its activation handle closes.
+- Own capture proxies, buffers and deadlines in one visible-only worker. Validate
+  pixel shape/stride/format before allocation, cap aggregate storage/jobs, and gate
+  callbacks by current frame object as well as window identity. Constraints are
+  batched, not ordered; capture completion is protocol-specific, not buffer release.
+- Release all exclusive overview surfaces and wait for their native Closed events
+  before activating a window. Abort completed/canceled retirement deadlines and
+  discard clipped hit bounds rather than retaining an old visible rectangle.
+- Animate reveal bounds independently of full child layout. Calendar/form content
+  must not relayout to each intermediate animation height; external refresh/launch
+  work stays off the UI executor.
 - Persist requested logical geometry, not clamped fallback placement. Keep unknown
   instance fields and starting-revision conflicts intact when saving drafts.
 - Capture drag press coordinates from the actual widget event; a separately queued

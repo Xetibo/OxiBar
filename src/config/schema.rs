@@ -38,6 +38,22 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
             Surface,
         ),
         SettingDescriptor::new(
+            "bar.auto_hide",
+            "Reveal bar near its edge",
+            Boolean,
+            Some(Value::Boolean(false)),
+            Surface,
+        )
+        .description("Hide the bar until the pointer reaches its screen edge. Open dropdowns keep it visible."),
+        SettingDescriptor::new(
+            "bar.reveal_zone",
+            "Pointer reveal distance",
+            Integer { min: 1, max: 128 },
+            Some(Value::Integer(8)),
+            Surface,
+        )
+        .description("Size in pixels of the edge strip that reveals an auto-hidden bar."),
+        SettingDescriptor::new(
             "bar.output_fallback",
             "Fallback when selected outputs disappear",
             Boolean,
@@ -58,6 +74,8 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
             Some(Value::Integer(layout::DEFAULT_BAR_HEIGHT as i64)),
             Surface,
         ),
+        SettingDescriptor::new("monitor.profiles", "Saved display layout", SettingKind::TableList, Some(Value::Array(Vec::new())), Live).description("Confirmed connector modes, scale, rotation and placement. Use the display editor to test changes before saving."),
+        SettingDescriptor::new("monitor.apply_on_start", "Restore saved display layout on startup", Boolean, Some(Value::Boolean(true)), Restart),
         SettingDescriptor::new("bar.width", "Bar width", dimension.clone(), None, Surface)
             .description("Unset follows the output width."),
         SettingDescriptor::new(
@@ -75,6 +93,8 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
             Restart,
         ),
         SettingDescriptor::new("bar.font_file", "Font file", Text, None, Restart),
+        SettingDescriptor::new("bar.show_labels", "Show bar labels", Boolean, Some(Value::Boolean(false)), Live)
+            .description("Show names and status text beside icons. Clock text and workspace numbers always remain visible."),
         SettingDescriptor::new(
             "bar.start",
             "Start widgets",
@@ -110,6 +130,8 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
             Some(Value::Integer(layout::DEFAULT_LAUNCHER_SIZE.0 as i64)),
             Surface,
         ),
+        SettingDescriptor::new("launcher.default_plugins", "Default launcher plugin libraries", TextList, Some(Value::Array(Vec::new())), Live)
+            .description("Installed runner libraries to include alongside the ordinary plugin list."),
         SettingDescriptor::new(
             "launcher.height",
             "Launcher height",
@@ -145,6 +167,16 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
             Some(Value::Integer(layout::DEFAULT_CONTROL_CENTER_SIZE.0 as i64)),
             Surface,
         ),
+        SettingDescriptor::new("control_center.presentation", "Control center presentation", SettingKind::Choice(vec!["dropdown".into(), "window".into()]), Some(Value::String("dropdown".into())), Surface)
+            .description("Open inside the originating bar. A separate window remains available when no bar exists."),
+        SettingDescriptor::new("control_center.attach_to_clock", "Open controls from the clock", Boolean, Some(Value::Boolean(true)), Live)
+            .description("The clock opens its calendar inside the configurable control-center dropdown."),
+        SettingDescriptor::new("menus.notifications_dropdown", "Notifications inside the bar", Boolean, Some(Value::Boolean(true)), Live),
+        SettingDescriptor::new("menus.notification_width", "Notification dropdown width", dimension.clone(), Some(Value::Integer(600)), Surface),
+        SettingDescriptor::new("menus.notification_height", "Notification dropdown height", dimension.clone(), Some(Value::Integer(640)), Surface),
+        SettingDescriptor::new("menus.session_enabled", "Enable session menu", Boolean, Some(Value::Boolean(true)), Live),
+        SettingDescriptor::new("menus.session_actions", "Session menu actions", TextList, Some(Value::Array(["lock", "logout", "suspend", "hibernate", "reboot", "power-off"].into_iter().map(|value| Value::String(value.into())).collect())), Live)
+            .description("Ordered native System actions. Power and logout actions keep their confirmation dialog."),
         SettingDescriptor::new(
             "control_center.height",
             "Control center height",
@@ -235,9 +267,9 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
             "Enabled plugin libraries",
             TextList,
             Some(Value::Array(Vec::new())),
-            Restart,
+            Live,
         )
-        .description("Select installed libraries. Plugin lifecycle changes require a restart."),
+        .description("Select installed libraries. Providers become available immediately; disabled models stay resident until exit."),
         SettingDescriptor::new(
             "instance.allow_multiple_instances",
             "Allow multiple instances",
@@ -392,6 +424,9 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
     ]
     .into_iter()
     .chain(crate::theme::schema())
+    .chain(crate::overview::schema())
+    .chain(crate::shortcuts::schema())
+    .chain(super::toasts::schema())
     .collect()
 }
 
@@ -412,7 +447,9 @@ pub fn validate(config: &Table, schema: &[SettingDescriptor]) -> Result<(), Stri
         "launcher",
         "settings",
         "control_center",
+        "menus",
         "osd",
+        "toasts",
         "startup",
         "instance",
         "ipc",
@@ -420,6 +457,8 @@ pub fn validate(config: &Table, schema: &[SettingDescriptor]) -> Result<(), Stri
         "dock",
         "desktop",
         "theme",
+        "overview",
+        "shortcuts",
     ] {
         if config.get(section).is_some_and(|value| !value.is_table()) {
             return Err(format!("{section}: expected a table"));
@@ -452,7 +491,13 @@ pub fn validate(config: &Table, schema: &[SettingDescriptor]) -> Result<(), Stri
         }
     }
     super::bars::validate_profiles(config, schema)?;
+    crate::monitor::configuration::parse(
+        config
+            .get("monitor")
+            .and_then(|value| value.get("profiles")),
+    )?;
     super::desktop::widgets(config)?;
+    crate::shortcuts::Config::read(config)?;
     let theme = oxiced::theme::snapshot::ThemeSnapshot::from_config(config, 0)?;
     oxiced::theme::snapshot::check_capacity(&theme)?;
     Ok(())
@@ -491,7 +536,11 @@ pub fn validate_value(field: &SettingDescriptor, value: &Value) -> Result<(), St
             field.path, field.kind
         ));
     }
-    if field.path == "plugins"
+    if field.path.starts_with("shortcuts.") {
+        crate::shortcuts::validate_value(value.as_str().expect("validated text"))
+            .map_err(|error| format!("{}: {error}", field.path))?;
+    }
+    if ["plugins", "launcher.default_plugins"].contains(&field.path.as_str())
         && value.as_array().is_some_and(|values| {
             values.iter().any(|value| {
                 let name = value.as_str().unwrap_or_default();
@@ -509,11 +558,18 @@ pub fn validate_value(field: &SettingDescriptor, value: &Value) -> Result<(), St
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostConfig {
+    pub shortcuts: crate::shortcuts::Config,
+    pub overview: crate::overview::Config,
+    pub menus: super::menus::MenusConfig,
     pub dock: super::desktop::DockConfig,
     pub desktop: super::desktop::DesktopConfig,
     pub osd: crate::osd::OsdConfig,
+    pub toasts: super::toasts::ToastConfig,
     pub bar_width: Option<u32>,
     pub bar_height: u32,
+    pub bar_auto_hide: bool,
+    pub bar_reveal_zone: u32,
+    pub bar_show_labels: bool,
     pub transparent: bool,
     pub start: Vec<String>,
     pub center: Vec<String>,
@@ -558,7 +614,10 @@ impl HostConfig {
                 .collect()
         };
         Self {
+            shortcuts: crate::shortcuts::Config::read(table).expect("validated shortcuts"),
+            overview: crate::overview::Config::read(table),
             dock: super::desktop::dock(table),
+            menus: super::menus::MenusConfig::from_validated(table),
             desktop: super::desktop::desktop(table),
             osd: crate::osd::OsdConfig {
                 enabled: boolean("osd.enabled"),
@@ -566,11 +625,16 @@ impl HostConfig {
                 bottom: get_path(table, "osd.position").and_then(Value::as_str) == Some("bottom"),
                 margin: integer("osd.margin"),
                 timeout_ms: integer("osd.timeout_ms"),
+                placement: None,
             },
+            toasts: super::toasts::ToastConfig::from_validated(table),
             bar_width: get_path(table, "bar.width")
                 .and_then(Value::as_integer)
                 .map(|value| value as u32),
             bar_height: integer("bar.height"),
+            bar_auto_hide: boolean("bar.auto_hide"),
+            bar_reveal_zone: integer("bar.reveal_zone"),
+            bar_show_labels: boolean("bar.show_labels"),
             transparent: boolean("bar.transparent"),
             start: list("bar.start"),
             center: list("bar.center"),
@@ -598,6 +662,7 @@ pub(crate) fn fallback_widgets(host: &HostConfig, order: &[String]) -> Vec<Strin
                 .then_some("control-center".to_owned()),
         )
         .chain(std::iter::once("settings".to_owned()))
+        .chain(host.menus.session_enabled.then_some("session".to_owned()))
         .chain(order.iter().cloned())
         .collect()
 }

@@ -1,5 +1,396 @@
 # Decisions
 
+## 2026-10-12 — Native lock/session implementation authorization
+
+- User requested committing the completed shell/UI work, then implementing all
+  phases of `LOCK_SCREEN_SESSION_MANAGER_PLAN.md`, with a verified commit after
+  each phase. Preserve separate locker, authentication and greeter ownership.
+- Exclude generated Python bytecode from source commits and ignore future caches.
+
+## 2026-10-12 — Nested settings, monitor snapping and native auth plan
+
+- User requested consistent or removed control-panel session content, animated
+  expandable settings submenus, ReSet-style monitor snapping, header reset/compact
+  footer, and a Rust/Iced Wayland lock-screen plus kiosk session-manager plan.
+  Earlier work is user-staged; keep it intact. No commit or delegation requested.
+- Choose the allowed removal option for embedded System session actions. Factor
+  `controls(model, include_session)` so the ordinary System popup retains session
+  actions while control-center content shows brightness and power profiles. Keep
+  the dedicated host OxiShut tiles, provider model, confirmations and ABI unchanged.
+- Add pure `src/settings/navigation.rs`: stable route IDs, exhaustive unique field
+  assignment, curated nested pages and dynamically grouped plugin namespaces.
+  Retain Category/root shortcut order. Select branches/children via sidebar, landing
+  cards, breadcrumbs or narrow full-path picker; opening a root folds other roots
+  while remembering nested expansion. Keep drafts and route/expansion on saves,
+  and reconcile a removed provider page to its nearest valid ancestor.
+- Sidebar width is 288; branches use reversible EASE_OUT with the current theme
+  duration and full-child `oxi_reveal` bounds. Reduced/zero motion bypasses the
+  animation builder. Global search spans the schema and structured-editor results
+  route to dedicated pages rather than offering raw duplicate fields.
+- Put Reset all overrides immediately before Reload/Close. Replace the previous
+  multi-line footer with one fixed-height revision/status row and scroll long
+  diagnostics. Move config directory/editor to Advanced/GUI overrides. Busy field
+  trees, provenance and sparse revision-checked persistence remain intact.
+- Add pure logical snapping in `src/monitor/snapping.rs`, informed by local ReSet
+  `ReSet-Plugins/monitors/src/frontend/handlers.rs` and its geometry fixtures.
+  Use 150 logical units, enabled transformed/scaled bounds, deterministic nearest
+  valid axis candidates and overlap rollback to the captured gesture origin.
+  Canvas previews show alignment guides/overlap feedback; exact numeric edits and
+  native Preview/Keep/Revert/controller rollback policy are unchanged.
+- Capture settings page/control and monitor diagram bounds for native diagnostics.
+  During animated layout, cached sidebar bounds can differ from the drawn frame;
+  use actual child-page card bounds for navigation and intermediate/final screenshots
+  to verify motion. Keep temporary devices/compositors and config fixtures owned.
+- Write `docs/LOCK_SCREEN_SESSION_MANAGER_PLAN.md`; no locker/greeter code or new
+  dependency added. Working binaries `oxilock`/`oxisession` share Rust/Iced/oxiced
+  visuals, with separate protocol/PAM and greetd state. Locker requires
+  ext-session-lock-v1 readiness/hotplug/configure/ack/sync and authentication-gated
+  unlock; candidate iced_sessionlock 0.17.1 needs a version/API audit. Greeter uses
+  ordinary fullscreen xdg-shell for Cage and a dedicated Hyprland kiosk wrapper;
+  greetd owns privileged PAM/session identity and starts the user only after kiosk
+  teardown. Gate real seat/VT handoff in an isolated NixOS VM.
+- Full workspace tests/doctests, strict all-targets Clippy and same-graph host/all
+  thirteen DLL builds pass through the pinned filtered Nix shell. Use one link job,
+  stripped root artifacts and only session-target Cargo cleanup under limited disk.
+  The complete isolated two-output Hyprland/Sway GUI flow passes hierarchy, responsive
+  navigation, header reset/footer stability, real edge snapping/overlap restore,
+  native preview/save/rollback and all retained menu/provider/music/reveal checks.
+  Intermediate/final sidebar images show actual motion; evidence stays under
+  `/tmp/opencode/oxibar-nested-settings`.
+
+## 2026-10-12 — Shared toast placement, stable menus and edge reveal
+
+- User requested aligned/configurable music and notification toasts, stable control
+  titles, enough audio height, vertically centered calendar days, flat bar-icon hover,
+  quiet empty launcher searches, Escape for every dropdown, stable settings saves,
+  pointer-revealed bottom bars and compositor commands for launcher/session. Preserve
+  all earlier staged/unstaged work; no commit or delegation requested.
+- Add live `[toasts]` position (six edge/center choices), margin 16 and spacing 12.
+  Notifications stack newest-first per output; Audio `media`/`media-volume` feedback
+  occupies the next slot, aligning the same edge/center. Reuse the existing per-output
+  OSD ID, size, abortable timer and generation policy; device/brightness topics retain
+  ordinary OSD placement. Notification resize/close and live config restack music.
+- Default controls are 960×960 with the same `font_xxl` page title in both modes.
+  Audio popup metadata and host headroom default are 460×640; clamp visible/input
+  metrics to the source output and retain scrolling on smaller outputs. Calendar
+  day text fills its cell before centering. Shared bar hover stays transparent;
+  navigation keeps themed hover. Remove host name tooltips and launcher no-matches
+  copy while retaining informational tooltips and explicit indexing/provider errors.
+- Every ordinary/attached dropdown and optional inbox panel receives exclusive
+  keyboard focus. The central scoped Close binding handles captured Escape and
+  restores normal bar policy without removing its ID. Save/reload feedback reserves
+  fixed footer space; layout drag rows keep the same widget tree while busy.
+- Add live common/profile `bar.auto_hide` (false) and `bar.reveal_zone` (8, 1..128).
+  Keep the native bar/headroom and all models resident; hidden input is only the edge
+  strip, exclusive zone is zero, pointer departure hides content and an owned dropdown
+  pins visibility. Leave events are distinct from Enter; per-output visibility appears
+  in status. Regression/native tests prove unknown IDs do not reveal bars and geometry
+  changes do not replace models or native IDs.
+- Add resident `oxibar session [open|close|toggle]` and version-1 session requests.
+  Bare commands toggle; repeated open preserves its surface. Launcher already supports
+  the same verbs. Document Hyprland/Sway binds and retain System capability/confirmation
+  behavior instead of executing session actions from menu commands.
+- Native smoke found a pending-repeat unwrap after temporary keyboard removal in the
+  vendored backend. Clear queued repeats on release/Enter/Leave/removal and install a
+  timer only with a live keyboard and matching repeat key. This is independent of the
+  earlier anchor-cache fix; an older lost-location panic cannot be identified exactly.
+- Workspace tests/doctests and strict all-targets Clippy pass. Build the host and all
+  thirteen DLLs together through the pinned Nix shell, using only session-owned target
+  cleanup, one link job and stripped root artifacts due limited disk space. The complete
+  isolated Hyprland 0.51.1/Sway GUI flow passes real null-input/output audio, MPRIS/music
+  stack placement, live settings/provider changes, Escape/session commands, monitor
+  preview/rollback and pointer reveal/pinning. Before/after settings screenshots show
+  unchanged form geometry. Evidence: `/tmp/opencode/oxibar-toast-reveal`.
+
+## 2026-10-11 — Actual dock catalog, OxiShut session tiles and optional bar names
+
+- Follow-up request: applications still showed the generic icon, Session should look
+  like OxiShut, and plugin names should be hidden or toggleable. Preserve all earlier
+  user/agent staged and unstaged work, including user edits to the installer. No
+  commit, real desktop activation or delegation was requested.
+- Concrete local icon cause: effective config enabled `libapplications.so`, but the
+  XDG plugin directory did not contain it. `scripts/install-plugins.sh` omitted
+  Applications and repeated Tray. Include all twelve production providers, preflight
+  every file before installation, and respect `CARGO_TARGET_DIR`/`XDG_CONFIG_HOME`.
+  Private fixtures prove missing Applications causes no partial install, correct
+  content/mode for all twelve and absolute/relative build roots.
+- Library search now prefers user XDG files, then colon-separated
+  `OXIBAR_PLUGIN_DIR` directories. The Nix host wrapper defaults that fallback to its
+  pinned Applications package, without implicitly enabling providers. Catalog and
+  live loading share this resolution. Dock matching permits lower-ranked executable
+  fallback despite an alternate StartupWMClass, preserves Steam game identity, and
+  prefers an icon-bearing catalog entry when identity scores tie. Reuse the one
+  resident application catalog; do not introduce per-output scans.
+- Read local `/home/dashie/gits/OxiShut` for visual reference. Session is now a centered
+  host `SurfaceKind::Session`, up to 800×480 and 90% of the output, with three columns
+  of large portable action icons, neutral fills, accent selection, capability-disabled
+  tiles, hover descriptions and selected-action text. Preserve configured action
+  order/default six actions; `power-off`, `reboot`, `suspend` makes a three-tile preset.
+  Reuse System's cached menu/command/native confirmations, not OxiShut's shell commands
+  or another logind owner. Capture source output/owner before retiring the menu;
+  `OnCommandOutput` retains native confirmation placement. Stale IDs, menu disable,
+  competing overlays and output retirement must not remove the bar.
+- `bar.show_labels` defaults false, applies live and supports per-output profiles.
+  Host action tooltips remain discoverable; clock time/workspace numbers remain
+  functional content. Add optional ABI-6 `BarViewFn(model, PluginViewContext, bool)`;
+  prefer `bar_view`, then `view_with_context`, then required `view`. Existing context
+  layout and required signatures stay unchanged. Built-in status providers and the
+  example implement the hook; older opaque third-party views keep legacy behavior.
+  Output-local rendering must not mutate shared provider state.
+- Equal-width icons exposed bounds reuse after a layout drag: a recycled widget tree
+  retained another item's identical rectangle after host anchors were pruned. Add
+  optional `DragHandle::with_identity`; changed identity clears cached bounds while
+  stable identity preserves them. Bar slot/provider and overview window identities
+  now republish the correct callback geometry. Regression and post-drag GUI checks
+  prove this independently of any backend panic.
+- Verification passed: full workspace tests/doctests, strict workspace all-targets
+  Clippy and formatting; all fourteen pinned Nix packages; installer fixture checks;
+  thirteen current oxiced tests, including equal-geometry identity and drag-preview
+  transitions. Rebuilt the host after the identity fix, with unchanged provider
+  exports/ABI. Current host:
+  `/nix/store/xkrcsxkbzm2vgp83p5sv14ly37s526qn-oxibar-0.1.0/bin/oxibar`.
+- Real private Hyprland overview proof deliberately omits Applications from XDG and
+  loads it via fallback: actual green SVG dock pixels, real window previews, centered
+  modal/navigation/remap, retirement activation, hotplug and ten close cycles pass.
+  Two final complete UI runs pass icon-only/live host+Stats labels, 800×480 session
+  tiles/native confirmation, live Applications indexing/owned fixture launch,
+  calculator copy, drag preview/move, post-drag anchors and native display rollback.
+  Screenshots stay under `/tmp/opencode/oxibar-refinements`; no user HOME installation,
+  configuration change, real application launch or session action was performed.
+- An earlier isolated run caught an unlocated `Option::unwrap()` panic; its short log
+  buffer lost the location. No root cause established; the two final runs did not
+  reproduce it. Smoke now enables backtraces, keeps 500 log lines and fails on caught
+  panics rather than accepting a restarted daemon. Track this diagnostic limitation
+  in technical debt; do not claim the anchor fix proves its cause.
+
+## 2026-10-11 — Configurable shortcuts, live providers and readable presentation
+
+- User requested a Shortcuts settings page; a large modal overview with Tab cycling
+  windows and h/j/k/l moving between monitors; dock spacing/real icons/focus hue;
+  accent workspace text; faster first control-center opening; three-column layout
+  drag with visible dragged content; a text-only clock/full-height calendar; contrast
+  review and Base24 compatibility research; actionable session enablement and working
+  Applications launcher providers. Preserve the extensive pre-existing staged and
+  unstaged implementation, including the unrelated staged `result` deletion. No
+  commit, activation or delegation was requested.
+- `src/shortcuts.rs` is the single host key dispatcher and schema. Live text settings
+  accept comma-separated alternatives, Ctrl/Alt/Shift/Super modifiers and empty
+  disablement. Reject malformed or overlapping-context conflicts before adopting
+  configuration. Resolve the exact receiving surface before dispatch; respect
+  captured form input and use current bindings for visible hints. Compositor-level
+  global toggles remain compositor configuration. Shortcuts is category 11, default
+  Alt+s, with existing category shortcuts preserved.
+- Overview remains one visible-owned native capture client with per-output surfaces
+  and one keyboard owner. Surfaces are centered, default maximum 1400×900 and bounded
+  to 90% of logical output size. Tab/Shift+Tab wraps windows within the active monitor;
+  h/j/k/l selects spatial neighbors using current output geometry. Pointer redirect
+  uses actual centered-modal origins. Exact native identity, stale-generation guards
+  and retirement of ALL overview surfaces before activation remain unchanged.
+- Provider enablement is live, with one serialized background loader and queued
+  reconciliation. `src/plugins/runtime.rs` retains disabled models and DLL code,
+  removes their consumers/subscriptions, accepts pending model data and rejects their
+  host actions. Provider identity survives in `PluginEmission` until active-state
+  checking and translation. Re-enable reuses one model/stable IDs and delivers current
+  config/theme/compositor hooks. Completion uses current allowed membership so stale
+  initialization cannot resurrect a disabled provider. DLL code replacement still
+  requires restart; retained service workers may live until process exit under ABI 6.
+- Settings always exposes Applications, Tools and System with enabled/disabled/loading/
+  missing states. Missing packages have installation diagnostics; Session has an
+  actionable Plugin settings fallback. Individual launcher provider toggles and the
+  default-provider group take effect without restarting. Applications indexes normal
+  XDG roots first and appends Nix profile roots even with nonempty/incomplete XDG paths;
+  empty indexes identify their data directories. The owned GUI fixture proves real
+  live indexing, search and activation rather than only saved configuration.
+- Dock uses catalog SVG/raster icons, token spacing and accent focus fill without
+  dots; inactive workspace labels use readable accent text. Clock bar rendering is
+  time text only. Calendar gets bounded full-height space and evenly stretching week
+  rows, with adjacent-month dates using the shared muted role. Existing off-executor
+  calendar workers and stable child-layout reveal are retained and measured.
+- Layout settings uses equal Left/Center/Right columns of compact cards. Existing
+  revision-bound atomic drag payloads are unchanged. Shared draw-only pointer preview
+  never intercepts drop input. Real GUI testing found two bugs absent from compile-
+  only checks: empty surface trees needed a unique preview tag/defensive child diff,
+  and `center_y(Fill)` overrode explicit drag-handle height inside unbounded scrolling.
+  A widget-tree transition regression and actual three-column drag now pass.
+- Keep Base16/Base24 as ecosystem adapters, not the widget color API. Stylix exposes
+  Base16; absent Base24 extensions derive from supplied Base16 roles rather than
+  unrelated seeded brights. Semantic neutral hover stays neutral. Automatic normal,
+  muted and filled-control text meets 4.5:1 across opaque states; factory Catppuccin
+  surfaces/text are adjusted accordingly. Explicit legacy/semantic overrides and raw
+  input/accent colors remain authoritative. No new dependency or native ABI change.
+  Mapping, sources and override/transparency boundaries are in `configuration.md`.
+- Full normal workspace tests/doctests passed, plus final formatting, strict workspace
+  all-target Clippy, host lib/bar-dropdown/overview/settings/theme regressions and
+  all 12 shared-library unit tests. All fourteen pinned Nix outputs built; final
+  host-only drag/layout corrections were rebuilt and tested with the verified DLLs.
+  Current host: `/nix/store/r1laip9j77yrkl2zg8if66shcv3i22x1-oxibar-0.1.0/bin/oxibar`;
+  Applications: `/nix/store/q6pj6wsyhwa8cgb81j22gng1kb7i5haj-applications-0.1.0/lib/libapplications.so`;
+  Clock: `/nix/store/gpzmkpnjnzanym72vkm4qipzkdkxk8ni-clock-0.1.0/lib/libclock.so`.
+- Complete refined UI and real-pixel overview smokes pass on owned private Hyprland
+  fixtures. Overview validates 1400×900 centered bounds, Tab monitor retention,
+  spatial keys/live Ctrl+h remap, SVG pixels, retirement/activation, hotplug and ten
+  closes with zero capture workers and stable thread count. Private Sway presentation
+  measurements during a blocked two-second CalDAV fixture are first 31.25 ms, warm
+  p95 6.38 ms and concurrent status 4.77 ms, all under 50 ms. Preserve the preceding
+  performance record and add `control-center-refinements-reference.json`; no causal
+  percentage improvement is inferred. Screenshots stay under `/tmp/opencode/oxibar-refinements`.
+
+## 2026-10-11 — Real window overview, dock icons and first-open responsiveness
+
+- User approved the overview plan: "plan is good, proceed with implementation";
+  also requested fixing bottom-dock application letters and investigating first
+  control-center load lag. This is a new task after the completed `0fd8bfe` roadmap
+  and preceding UI refinements. No new commit/push/activation/delegation was requested.
+  Preserve all known externally staged work and unrelated staged deletion of `result`.
+- Overview is a host capability, not another model/plugin per monitor. One visible-
+  owned native thread serves per-output grids; only one surface owns keyboard focus.
+  Arrow/Home/End selection scrolls into view, Tab switches monitor groups, and
+  click/Enter uses the exact displayed native handle. Existing source/generation
+  guards and hotplug registry ownership remain authoritative.
+- Hyprland export v2 uses the exact wlr handle. Modern ext capture bridges an exact
+  ext resource to an exact wlr activation/output resource through the advertised
+  full-64-bit mapping protocol, once per window. Old handles never rebind after
+  address reuse. No title/app-ID guess, truncated address or output crop substitutes
+  for native window identity/content. Vendored protocol XML retains BSD notices and
+  pins upstream `4c27ba9ce104782bf718aabf59df3f503afe7caa`.
+- Capture owns proxies, memfds/mappings and frame callbacks. Checked SHM formats,
+  stride/orientation/Y inversion/premultiplied alpha, any-order constraint batches,
+  exact current frame object IDs and monotonic local identities prevent stale pixels.
+  Limits are 256 windows, two global/one per-window jobs, 64 MiB staging and 96 MiB
+  thumbnail image data, with adaptive downsample and configurable maximum 8 Hz.
+  Modern frames can wait for damage; legacy export uses bounded fresh captures.
+  Pixels never persist; denial/stopped/closed sources clear caches.
+- Fixed a coalesced-wake stream bug: an extra wake with an empty latest mailbox must
+  keep waiting, not end the subscription during rapid window moves. Offline commands
+  reject, native activation callbacks identify their exact display sync, and dropping
+  the stream cancels/wakes/joins its owner with no closed capture worker.
+- Native activation must wait for ALL overview Closed events, not only queued
+  RemoveSurface messages. A generation-scoped abort-on-drop retirement timer handles
+  failure without delayed stale wakeups. Exclusive cross-monitor pointer redirection
+  converts actual logical coordinates and tests visible card bounds; scrolled-out
+  zero bounds erase hit regions. No speculative native pointer backend rewrite.
+- Dock bug: SVG paths used the raster renderer and missing icons became letters.
+  Shared SVG/raster/application fallback, automatic GTK4/GTK3/KDE themes, Nix data
+  paths when XDG paths are unset, filename aliases and ranked class/desktop matching
+  fix it. Steam URI-derived classes beat shared generic executable matches. Final
+  review also prevents an explicit game class from falling back to the shared
+  launcher's executable and claiming Steam's own window in a pinned group.
+- Opening lag had blocking calendar refresh/launch calls in async executor work and
+  animation-sized child layout. Bounded off-executor clock jobs/curl waits plus shared
+  stable full-layout reveal avoid both. Selection animations retain the theme and
+  bypass reduced/zero duration; source images do not cross-fade another identity.
+- Full source verification passes 268 normal tests/doctests, 14 opt-in tests ignored
+  by default and strict workspace Clippy. Normal hermetic modern Wayland tests execute
+  real SHM pixels, formats-before-size, resize/denial and recycled-address activation.
+  Actual owned Hyprland 0.51.1 tests prove fresh changed occluded/other-workspace
+  content, identical-title per-monitor previews, exact keyboard/cross-monitor mouse
+  activation, hotplug and ten closes with zero capture workers/cache and stable
+  closed thread counts (64 in the final run). An attempted actual 0.56.2 nested
+  startup failed before connection; its cause was not proved and it is not modern
+  desktop runtime proof.
+- All fourteen pinned Nix outputs build. Clean-source filtering retains required
+  protocol XML; host preCheck supplies already-declared Wayland library paths for
+  dynamic native client loading. The modern test now diagnoses environment errors
+  immediately instead of masking them behind reconnect retries. Final host:
+  `/nix/store/l6qpfnvzmv69cxi1y5qpmnpk8if7fzaz-oxibar-0.1.0/bin/oxibar`;
+  Applications: `/nix/store/9b49s0dci9x0waj161fd6l6iazsjhwa7-applications-0.1.0/lib/libapplications.so`;
+  Clock: `/nix/store/mwynwpg4g7gl35hd05vl5mlvav0g8731-clock-0.1.0/lib/libclock.so`.
+- The final explicit-class/executable dock guard passed host 68 unit tests, eight
+  dock/desktop flows, strict workspace Clippy, a fresh host Nix build and the complete
+  real-pixel overview smoke again. That run has zero closed capture workers, 64
+  threads across every cycle and about +1.5 MiB first/last-five median RSS change,
+  within the 2 MiB noise budget. Performance paths/workloads are unchanged by this
+  matching-only review fix, so presentation references are retained without repetition.
+- Final repeatable `overview-smoke.py`, `ui-smoke.py` and retained `smoke.py` all pass
+  on owned private compositors/buses/XDG fixtures. Actual green SVG/fallback, changed
+  native preview pixels, exact activation, menus/Base24/native display save/revert,
+  OSD input, CalDAV/password/Tray/notification reply-DND and widget/hotplug flows remain
+  correct. All owned child processes/files/compositors are reaped; actual desktop,
+  hardware/session/input/clipboard/calendar/network are untouched. Images stay private.
+- Named Sway 1.11/CLOCK_MONOTONIC references separate UI performance from unsupported
+  Sway content capture. Two native windows/30 opens: first actual overview presentation
+  31.725396 ms, warm p95 37.245715 ms, closed CPU 0.399998814% of one core, zero closed
+  draws/capture workers, +138 KiB median reopen RSS/no thread growth. All seven gates
+  pass. First control-center actual presentation 31.359486 ms, warm p95 4.939352 ms,
+  concurrent status 3.849148 ms while a private two-second CalDAV sync remains blocked;
+  all three gates pass. No configure-time substitute or old-binary percentage claim.
+  Machine-readable reports are `overview-performance-reference.json` and
+  `control-center-performance-reference.json`; voluntary switches are a wakeup proxy.
+- Required ABI 6 remains unchanged. `overview` CLI/config/reserved bar entry needs
+  no provider enablement; supported capture/activation capabilities are explicit.
+  `WINDOW_OVERVIEW_PLAN.md` now records implemented status and platform extensions.
+  Development used filtered pinned Nix, serial builds and only the agent-owned
+  `/tmp/opencode/oxibar-target` (debug=0/incremental=0); no global GC or user-target cleanup.
+
+## 2026-10-11 — Bar-integrated menus, Base24, native displays and button anchors
+
+- Scope is the user's new UI/settings/theme/monitor request after the completed
+  `0fd8bfe` roadmap, plus the later request to open dropdowns at their own buttons.
+  This task does not include another requested commit or implementing the overview;
+  its next-feature plan is `WINDOW_OVERVIEW_PLAN.md`. Preserve the unrelated staged
+  deletion of `result` and known externally staged task changes.
+- Shared bar controls now center their children vertically, use themed SVG action
+  icons and space entries. Settings defaults to 1440×960, reserves scrollbar gutters
+  and uses flat navigation/neutral `primary_bg` cards consistent with launcher/bar.
+  The center uses left navigation with independently scrolling selected content.
+- Control center defaults to 960×760 attached presentation and clock entry selection;
+  configurable provider ordering/inclusion remains shared-model. Notifications opens
+  its inbox inside the same bar by default, with replies/DND/records retained and
+  visible-inbox toast suppression. Optional standalone center/panel modes still work.
+  Attached close paths never remove the native bar or leave its keyboard grab active.
+- Session dropdown adapts OxiShut's keyboard/action UX, but delegates cached actions
+  to the existing native System owner. Lock uses the configured locker; destructive
+  actions still open normal confirmation and validate native policy/session identity.
+  The optional ABI6 `session_menu` capability changes no required signatures.
+- Bar-layout drag/drop captures actual press/release and source slot/revision,
+  atomically saves all three arrays and rejects stale gestures. Keyboard reorder
+  alternatives remain. Default launcher providers are a separate sparse filename
+  list, unioned/deduplicated with ordinary plugins; disabling one never promotes
+  other defaults into the ordinary list. Provider lifecycle stays restart-only.
+- Base24 carries all slots and optional final accent through explicit immutable
+  snapshots. Legacy seed-role overrides are retained unless a new host scheme
+  supersedes them. Standalone flat/nested schemes and explicit role/accent precedence
+  are validated; bright states use the additional slots. The inspected dashnix donor
+  currently has Base16 plus a `base0D` accent override, so its accent convention was
+  inspiration, not a claim that the donor already implements Base24. Donors untouched.
+- ReSet inspired normalized native display boundaries. New bounded Hyprland
+  legacy/Lua IPC and wlr-output-management owners preserve precise modes/zero
+  compositor-defined refresh, advertised proxies/serials, test/apply and rollback.
+  No donor unsafe thread markers, global head state, fabricated serials or rounded
+  refresh identity were copied. Numeric fields and drag diagram share logical drafts.
+- Native previews hold a controller-owned 20-second lease. Keep saves sparse profiles
+  with the starting store revision before releasing rollback; failure, expiry,
+  Revert and orderly drop restore connected baseline/preserve new outputs. The lease
+  is not an external crash/SIGKILL watchdog. Physical links/driver policy remain manual.
+- Actual child layout rectangles and pressed section/index/part keys anchor popup
+  display, input and outside dismissal together. Output edges clamp the connector;
+  moved/removed/duplicate slots are validated/pruned before cache reuse. This fixes
+  leftmost placement without a speculative native pointer rewrite.
+- Verification passed 256 normal tests/doctests, strict workspace Clippy, all 14 Nix
+  outputs and actual native preview/revert/drop tests on owned Hyprland 0.51.1 and
+  Sway 1.11. Final root is
+  `/nix/store/6bbh8asvf9hpx1qs8gv9ix5yw97haqc5-oxibar-0.1.0/bin/oxibar`;
+  final Notifications is
+  `/nix/store/hdcydbyk69iir8788x00bwd36w24x25d-notifications-0.1.0/lib/libnotifications.so`.
+- Final icon review also gave Stats a shared SVG chip and replaced System's
+  font-dependent sun glyph with the shared SVG brightness icon. Focused provider
+  tests, strict workspace Clippy, all 14 package builds and the full new UI smoke
+  passed again with the final shared-component graph.
+- New repeatable `scripts/ui-smoke.py` passed real clock/left-menu/inbox/session
+  confirmation, button anchors, 1440×960 settings, GUI default-provider toggle and
+  restart/calculator copy, pointer layout drag, all eight loaded theme hooks,
+  native 1.25-scale Preview/Keep, 1.5 Preview/Revert, final scale restoration and
+  bottom-bar geometry. Existing `scripts/smoke.py` also passed its full retained
+  legacy flows with explicit optional window/panel preferences. Private bus/services,
+  compositor, XDG state, immutable base and virtual pointer fixtures were cleaned;
+  actual user desktop/input/hardware/session/clipboard were untouched. Images private.
+- Development used filtered pinned Nix, serial package builds and exclusively the
+  session target `/tmp/opencode/oxibar-target` with debug=0/incremental=0. No global
+  GC, user-target cleanup, donor changes, activation, push or delegated agents.
+- Overview plan requires exact per-window source handles and real pixels, not icons
+  or output crops; includes capability-gated ext/Hyprland capture, per-monitor grids,
+  keyboard/mouse activation, bounded visible-only caches and identity/hotplug gates.
+
 ## 2026-10-11 — SDK, Independent App Lifetime and Verified Release Gates
 
 - Completed the final milestone after `5bfa536` (live themes/providers). User's

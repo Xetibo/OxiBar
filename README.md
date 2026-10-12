@@ -1,5 +1,15 @@
 # Oxibar
 
+Current UI refinements include clock-attached controls, a bar inbox, centered
+OxiShut-style session tiles, icon-only bars with live optional labels,
+three-column layout dragging with pointer previews, live provider enablement,
+configurable shortcuts, animated nested settings navigation, monitor-edge snapping,
+shared music/notification placement, pointer-revealed bars,
+contrast-aware Base16/Base24 themes and native monitor preview/save/revert.
+Implemented [window overview](docs/WINDOW_OVERVIEW_PLAN.md) shows real window-content
+thumbnails in large centered modals per monitor. Tab selects windows; h/j/k/l moves
+between monitors by their layout. All shell keys are editable in Settings → Shortcuts.
+
 A Rust/Iced widget shell for Wayland: multi-output bars, a resident launcher,
 control center, dock, desktop widgets, notifications and live GUI settings.
 Your compositor continues to own compositing and window management.
@@ -18,6 +28,21 @@ nix run .#oxibar
 Install the selected plugin libraries in `$XDG_CONFIG_HOME/oxibar/plugins/` and
 enable their filenames in `config.toml`, or use the Home Manager module. Build
 host and plugins from the same workspace/toolchain graph.
+
+The Nix host also bundles an Applications library fallback: enable
+`libapplications.so` for application search and real dock icons even without a
+separate XDG installation. User-installed libraries take precedence.
+
+For a Cargo development installation:
+
+```sh
+nix develop -c cargo build --workspace
+scripts/install-plugins.sh
+```
+
+The installer includes Applications and checks all twelve libraries before writing
+anything. It respects `CARGO_TARGET_DIR` and `XDG_CONFIG_HOME`; pass `release` after
+a release build. Restart Oxibar after replacing initialized plugin libraries.
 
 ```nix
 {
@@ -40,8 +65,10 @@ With the daemon running:
 
 ```sh
 oxibar launcher
+oxibar session
 oxibar settings
 oxibar control-center
+oxibar overview
 oxibar desktop edit
 oxibar action Audio volume +5
 oxibar action System brightness -5
@@ -49,9 +76,35 @@ oxibar plugins
 oxibar status
 ```
 
+Window commands accept `open`, `close` or `toggle`; omitting the action toggles.
+They control the resident shell through IPC. For compositor keybinds:
+
+```ini
+# Hyprland
+bind = SUPER, SPACE, exec, oxibar launcher toggle
+bind = SUPER, ESCAPE, exec, oxibar session toggle
+```
+
+```conf
+# Sway
+bindsym $mod+space exec oxibar launcher toggle
+bindsym $mod+Escape exec oxibar session toggle
+```
+
 ## Features
 
 - Sparse GUI overrides over immutable Nix/base settings, source badges and reset.
+- Live Applications/Tools/System provider controls with installed/missing-library
+  diagnostics; enabling an installed provider immediately updates its consumers.
+- Icon-only bar controls by default; Settings → Bar & layout → Show bar labels
+   applies live and supports per-output overrides. Clock time and workspace numbers remain visible.
+- Optional `bar.auto_hide` reveals the bar near its configured edge, hides it on
+  pointer departure and keeps it visible while a dropdown is open. Output profiles
+  can set their own behavior and `bar.reveal_zone` distance.
+- Music and notification toasts share configurable `toasts.position`, `margin` and
+  `spacing`, with independent stacks per output. All dropdowns close with Escape.
+- Centered OxiShut-style session tiles using System's cached capabilities and native
+  confirmation flow, with configurable action order and inclusion.
 - Existing oxiced palette with spacious Android-inspired forms; explicit live
   theme snapshots, fonts, density and reduced-motion preferences.
 - Localized applications and desktop actions, inherited icons, favorites/usage
@@ -62,6 +115,9 @@ oxibar status
   brightness/power profiles/session controls and input-transparent OSDs.
 - Shared dock catalog and compositor window activation; persistent logical desktop
   placements, explicit move/resize editing and passive widget input policies.
+- Capability-gated real per-window overview previews, exact native activation,
+  monitor navigation and visible-only bounded capture ownership. Dock SVG/raster
+  icons retain their correct renderer and use a portable icon fallback.
 - Existing CalDAV, network password modals, notification inline replies/DND,
   StatusNotifier/dbusmenu and workspace flows.
 
@@ -69,11 +125,15 @@ oxibar status
 commands. [Plugin SDK](docs/PLUGIN_SDK.md) documents ABI 6, lifecycle rules and the
 [example plugin](plugins/example/README.md).
 
+[Native lock screen and kiosk session-manager plan](docs/LOCK_SCREEN_SESSION_MANAGER_PLAN.md)
+covers a Rust/Iced `ext-session-lock-v1` locker and a greetd-backed greeter hosted
+alone in Cage or Hyprland kiosk mode.
+
 ## Verification
 
 ```sh
 nix develop -c cargo fmt --all -- --check
-nix develop -c cargo test --workspace
+nix develop -c env -u HYPRLAND_INSTANCE_SIGNATURE cargo test --workspace
 nix develop -c cargo clippy --workspace --all-targets -- -D warnings
 ```
 

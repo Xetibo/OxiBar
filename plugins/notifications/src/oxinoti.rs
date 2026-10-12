@@ -347,7 +347,14 @@ pub(crate) fn read_timeout(global_config: &Table) -> Duration {
 }
 
 pub(crate) fn bar_button(count: usize) -> button::Button<'static, PluginMsg> {
-    let content: Element<'static, PluginMsg> = if count == 0 {
+    bar_button_with_label(count, true)
+}
+
+pub(crate) fn bar_button_with_label(
+    count: usize,
+    show_label: bool,
+) -> button::Button<'static, PluginMsg> {
+    let content: Element<'static, PluginMsg> = if count == 0 || !show_label {
         text(ICON)
             .size(OXITHEME.font_md)
             .align_y(Alignment::Center)

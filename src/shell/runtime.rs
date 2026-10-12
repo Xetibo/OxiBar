@@ -42,6 +42,7 @@ impl OxiBar {
         tasks.push(self.reconcile_bars());
         tasks.push(self.reconcile_docks());
         tasks.push(self.reconcile_desktop());
+        tasks.push(self.reconcile_overview());
         Task::batch(tasks)
     }
 
@@ -68,9 +69,23 @@ impl OxiBar {
             if let Some(bar) = self.shell.bars.get_mut(&key) {
                 let changed = bar.config != config;
                 let geometry = bar.config.width != config.width
+                    || bar.config.popup_height != config.popup_height
                     || bar.config.height != config.height
                     || bar.config.position != config.position;
+                let reservation = geometry || bar.config.auto_hide != config.auto_hide;
+                if bar.config.auto_hide != config.auto_hide {
+                    bar.revealed = false;
+                }
                 bar.config = config;
+                bar.anchors
+                    .retain(|key, (provider, _)| bar.config.anchor_matches(key, provider));
+                if bar
+                    .pressed_anchor
+                    .as_ref()
+                    .is_some_and(|key| !bar.anchors.contains_key(key))
+                {
+                    bar.pressed_anchor = None;
+                }
                 bar.size.height = size.height;
                 if bar.config.width.is_some() {
                     bar.size.width = size.width;
@@ -78,9 +93,15 @@ impl OxiBar {
                 let id = bar.id;
                 if geometry {
                     tasks.push(Task::done(Message::ConfigureBar(id, bar.config.clone())));
+                }
+                if reservation {
                     tasks.push(Task::done(Message::SetExclusiveZone(
                         id,
-                        bar.config.height as i32,
+                        if bar.config.auto_hide {
+                            0
+                        } else {
+                            bar.config.height as i32
+                        },
                     )));
                 }
                 if changed {
@@ -102,6 +123,9 @@ impl OxiBar {
                         config: config.clone(),
                         size,
                         ready: false,
+                        revealed: false,
+                        anchors: Default::default(),
+                        pressed_anchor: None,
                     },
                 );
                 tasks.push(Task::done(Message::OpenBarLayer(id, output, config)));
@@ -143,14 +167,148 @@ impl OxiBar {
                 .as_deref()
                 .map(|plugin| self.plugin_section_on(id, plugin))
                 .unwrap_or(BarSection::End),
-            width: metrics.map(|metrics| metrics.connector_width).unwrap_or(0),
+            width: metrics
+                .map(|metrics| {
+                    metrics.connector_width.min(
+                        bar.size.width.saturating_sub(
+                            self.popup_plugin
+                                .as_deref()
+                                .map(|plugin| self.dropdown_x(id, plugin).max(0) as u32)
+                                .unwrap_or(0),
+                        ),
+                    )
+                })
+                .unwrap_or(0),
             height: metrics.map(|metrics| metrics.height).unwrap_or(0),
             bar_size: bar.size,
             bottom: bar.config.position == crate::config::bars::Position::Bottom,
+            reserve: bar.config.popup_height,
+            edge_trigger: (!self.bar_is_visible(id)).then_some(bar.config.reveal_zone),
+            x: self
+                .popup_plugin
+                .as_deref()
+                .map(|plugin| self.dropdown_x(id, plugin)),
         })
     }
 
+    pub(crate) fn bar_is_visible(&self, id: IcedId) -> bool {
+        self.shell.bar(id).is_some_and(|bar| {
+            !bar.config.auto_hide
+                || bar.revealed
+                || (self.popup_open && self.shell.popup_bar == Some(id))
+        })
+    }
+
+    pub(crate) fn bar_pointer(
+        &mut self,
+        id: IcedId,
+        position: Option<iced::Point>,
+    ) -> Task<Message> {
+        let Some(bar) = self.shell.bar_mut(id).filter(|bar| bar.config.auto_hide) else {
+            return Task::none();
+        };
+        let y = if bar.config.position == crate::config::bars::Position::Bottom {
+            bar.config.popup_height as f32
+        } else {
+            0.0
+        };
+        let revealed = position.is_some_and(|point| {
+            iced::Rectangle {
+                x: 0.0,
+                y,
+                width: bar.size.width as f32,
+                height: bar.size.height as f32,
+            }
+            .contains(point)
+        });
+        if bar.revealed == revealed {
+            return Task::none();
+        }
+        bar.revealed = revealed;
+        self.bar_input_region_task(id)
+    }
+
+    pub(crate) fn dropdown_x(&self, id: IcedId, plugin: &str) -> i32 {
+        let Some(bar) = self.shell.bar(id) else {
+            return 0;
+        };
+        let matches = |name: &str| {
+            if plugin == "@control-center" {
+                name.eq_ignore_ascii_case("Clock") || name.eq_ignore_ascii_case("control-center")
+            } else if plugin == "@session" {
+                name.eq_ignore_ascii_case("session")
+            } else {
+                name.eq_ignore_ascii_case(plugin)
+            }
+        };
+        let bounds = bar
+            .pressed_anchor
+            .as_ref()
+            .and_then(|key| bar.anchors.get(key))
+            .filter(|(name, _)| matches(name))
+            .or_else(|| bar.anchors.values().find(|(name, _)| matches(name)))
+            .map(|(_, bounds)| *bounds);
+        let width = self.popup_metrics(plugin).connector_width;
+        bounds
+            .map(|bounds| crate::layout::button_popup_x(bar.size.width, width, bounds))
+            .unwrap_or_else(|| {
+                crate::layout::popup_x(bar.size.width, self.plugin_section_on(id, plugin), width)
+            })
+    }
+
+    pub(crate) fn bar_anchor(
+        &mut self,
+        id: IcedId,
+        key: String,
+        provider: String,
+        bounds: iced::Rectangle,
+        pressed: bool,
+    ) -> Task<Message> {
+        let Some(bar) = self.shell.bar_mut(id) else {
+            return Task::none();
+        };
+        if ![bounds.x, bounds.y, bounds.width, bounds.height]
+            .iter()
+            .all(|value| value.is_finite())
+            || bounds.width <= 0.0
+            || bounds.height <= 0.0
+            || !bar.config.anchor_matches(&key, &provider)
+        {
+            return Task::none();
+        }
+        if bar.anchors.len() >= 256 && !bar.anchors.contains_key(&key) {
+            return Task::none();
+        }
+        bar.anchors.insert(key.clone(), (provider, bounds));
+        if pressed {
+            bar.pressed_anchor = Some(key);
+        }
+        if self.popup_open && self.shell.popup_bar == Some(id) {
+            self.bar_input_region_task(id)
+        } else {
+            Task::none()
+        }
+    }
+
     pub(crate) fn plugin_section_on(&self, id: IcedId, plugin: &str) -> BarSection {
+        let plugin = if plugin == "@control-center" {
+            if self.shell.bar(id).is_some_and(|bar| {
+                bar.config
+                    .start
+                    .iter()
+                    .chain(&bar.config.center)
+                    .chain(&bar.config.end)
+                    .any(|name| name.eq_ignore_ascii_case("Clock"))
+            }) {
+                "Clock"
+            } else {
+                "control-center"
+            }
+        } else if plugin == "@session" {
+            "session"
+        } else {
+            plugin
+        };
         if let Some(bar) = self.shell.bar(id) {
             if bar
                 .config
@@ -176,6 +334,41 @@ impl OxiBar {
     pub(crate) fn output_for_bar(&self, id: Option<IcedId>) -> Option<String> {
         id.and_then(|id| self.shell.bar(id))
             .and_then(|bar| bar.output.clone())
+    }
+
+    pub(crate) fn dropdown_bar(&self) -> Option<IcedId> {
+        let output = self.overlay_output();
+        self.shell
+            .bars
+            .values()
+            .find(|bar| bar.output == output)
+            .map(|bar| bar.id)
+            .or_else(|| {
+                self.shell
+                    .active_bar
+                    .filter(|id| self.shell.bar(*id).is_some())
+            })
+            .or(self.bar_window_id)
+    }
+
+    pub(crate) fn close_bar_dropdown(&mut self) -> Task<Message> {
+        if self.control_center.attached_to.take().is_some() {
+            self.control_center.window_id = None;
+        }
+        self.popup_open = false;
+        Task::batch([
+            self.close_session(),
+            self.current_input_region_task(),
+            self.shell
+                .popup_bar
+                .map(|id| {
+                    Task::done(Message::SetToastKeyboardInteractivity(
+                        id,
+                        iced_layershell::reexport::KeyboardInteractivity::None,
+                    ))
+                })
+                .unwrap_or_else(Task::none),
+        ])
     }
 
     pub(crate) fn overlay_output(&self) -> Option<String> {
@@ -227,6 +420,10 @@ impl OxiBar {
         if output_present {
             self.shell.registry.detach_owner(owner);
             if self.shell.popup_bar == Some(owner) {
+                if self.control_center.attached_to == Some(owner) {
+                    self.control_center.attached_to = None;
+                    self.control_center.window_id = None;
+                }
                 self.popup_open = false;
                 self.shell.popup_bar = None;
             }
@@ -253,6 +450,10 @@ impl OxiBar {
             })
             .collect();
         if self.shell.popup_bar == Some(owner) {
+            if self.control_center.attached_to == Some(owner) {
+                self.control_center.attached_to = None;
+                self.control_center.window_id = None;
+            }
             self.popup_open = false;
             self.shell.popup_bar = None;
         }
@@ -262,6 +463,9 @@ impl OxiBar {
     pub(crate) fn forget_surface(&mut self, id: IcedId) -> Task<Message> {
         let mut callback = Task::none();
         self.shell.registry.remove(id);
+        if self.shell.session_window == Some(id) {
+            self.shell.session_window = None;
+        }
         if self.launcher.window_id == Some(id) {
             self.launcher.window_id = None;
         }
@@ -270,6 +474,7 @@ impl OxiBar {
         }
         if self.control_center.window_id == Some(id) {
             self.control_center.window_id = None;
+            self.control_center.attached_to = None;
         }
         if self.modal_window_id == Some(id) {
             self.modal_window_id = None;
@@ -284,6 +489,7 @@ impl OxiBar {
         self.osds.instances.retain(|_, instance| instance.id != id);
         self.docks.instances.retain(|_, instance| instance.id != id);
         self.desktop.forget(id);
+        self.overview.surfaces.retain(|_, surface| surface.id != id);
         callback
     }
 
@@ -313,6 +519,9 @@ impl OxiBar {
     }
 
     pub(crate) fn surface_closed(&mut self, id: IcedId) -> Task<Message> {
+        if let Some(task) = self.overview_surface_retired(id) {
+            return task;
+        }
         let kind = self
             .shell
             .registry
@@ -326,6 +535,7 @@ impl OxiBar {
             return Task::batch([callback, self.reconcile_bars()]);
         }
         match kind {
+            Some(SurfaceKind::Overview) => Task::batch([callback, self.close_overview()]),
             Some(SurfaceKind::DesktopEditor) => Task::batch([callback, self.cancel_desktop_edit()]),
             Some(SurfaceKind::DesktopWidget(_)) => {
                 Task::batch([callback, self.reconcile_desktop()])

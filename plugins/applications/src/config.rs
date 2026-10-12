@@ -57,7 +57,7 @@ pub(crate) fn read_config(global: &Table) -> Config {
         } else {
             requested_locale
         },
-        icon_theme: text("icon_theme", "hicolor"),
+        icon_theme: text("icon_theme", "auto"),
         favorites: table
             .and_then(|table| table.get("favorites"))
             .and_then(|value| value.as_array())

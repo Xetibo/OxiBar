@@ -146,7 +146,7 @@ pub(crate) fn valid_window_id(id: &str) -> bool {
     })
 }
 
-fn dispatch(
+pub(crate) fn dispatch(
     snapshot: &CompositorSnapshot,
     window: Option<&str>,
     workspace: Option<i64>,
@@ -334,7 +334,7 @@ impl WindowIdentities {
     }
 }
 
-fn window_address(id: &str) -> Option<&str> {
+pub(crate) fn window_address(id: &str) -> Option<&str> {
     let address = if let Some(id) = id.strip_prefix("hyprland:") {
         let (serial, address) = id.split_once(':')?;
         if serial.parse::<u64>().ok()? == 0 {
@@ -401,6 +401,9 @@ impl OxiBar {
         }
         let mut snapshot = self.compositor.clone().unwrap_or_default();
         snapshot.error = self.compositor_error.clone();
+        if let Some(client) = &self.overview.client {
+            client.metadata(snapshot.clone());
+        }
         for (id, (model, funcs)) in &self.plugins {
             if let Some(callback) = funcs.compositor_changed
                 && let Some(task) = unsafe { callback(model.clone(), snapshot.clone()) }

@@ -83,6 +83,10 @@ pub(crate) fn load_events(config: CaldavConfig) -> Result<Vec<CalendarEvent>, St
     let output = Command::new("curl")
         .args([
             "-fsS",
+            "--connect-timeout",
+            "3",
+            "--max-time",
+            "10",
             "--proto",
             "=https",
             "--proto-redir",

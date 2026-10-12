@@ -16,6 +16,9 @@ Oxiced is a Rust library for iced theme and widget helpers.
 - Helpers use `OXITHEME` as the source of truth for colors, radius, padding, and text sizes.
 - Application-specific helpers should stay generic enough to be reusable by downstream apps.
 - `src/widgets/oxi_plugin.rs` contains compact helpers used by status-bar/plugin UIs: shadowless bar buttons, text role styles, and compact card containers.
+- Portable semantic action icons and `bar_action_with_label` support icon-only
+  controls without changing the legacy `bar_action` helper. Preferences remain
+  caller-owned rather than mutable widget/library state.
 
 ## Current Downstream
 
@@ -37,3 +40,20 @@ keep theirs. The host uploads fonts before installing the canonical family.
 Reduced/zero motion is handled by returning final content, rather than driving an
 animation with an invalid zero duration. Snapshot validation is pure and shared
 with source-aware host configuration.
+
+## Scheme Adaptation and Interaction Wrappers
+
+Base16/Base24 slots are ecosystem inputs. `theme::base24` derives missing Base16
+extensions and maps slots to semantic roles; `theme::contrast` provides luminance,
+foreground-composited ratios and bounded minimum-change readable colors. Explicit
+role overrides remain authoritative. Automatic normal/muted and filled-control
+text is checked across idle/hover/pressed backgrounds; widgets use semantic helpers.
+
+`oxi_drag_handle::drag_preview` delegates content layout/input/overlays and draws
+an optional pointer-following child without giving it input. It has a distinct
+widget-tree tag and reconciles children through `diff_children`, preserving input
+state when the preview appears/disappears or replaces an empty surface.
+
+Bounds-capture wrappers optionally carry logical identity. A same-sized replacement
+clears the prior geometry cache and republishes bounds; unchanged identity preserves
+the cache. The owning application supplies stable slot/action identity.

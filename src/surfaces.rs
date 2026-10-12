@@ -38,28 +38,9 @@ pub(crate) fn overlay_mouse_event(
         iced::Event::Mouse(Event::CursorMoved { position }) => {
             Some(Message::OverlayPointer(id, Some(position)))
         }
-        iced::Event::Mouse(Event::CursorEntered | Event::CursorLeft) => {
-            Some(Message::OverlayPointer(id, None))
-        }
+        iced::Event::Mouse(Event::CursorEntered) => Some(Message::OverlayPointer(id, None)),
+        iced::Event::Mouse(Event::CursorLeft) => Some(Message::OverlayLeave(id)),
         iced::Event::Mouse(Event::ButtonPressed(Button::Left)) => Some(Message::OverlayPress(id)),
-        _ => None,
-    }
-}
-
-pub(crate) fn modal_key_event(
-    event: iced::Event,
-    status: iced::event::Status,
-    id: IcedId,
-) -> Option<Message> {
-    use iced::keyboard::{Event, Key, key::Named};
-    let iced::Event::Keyboard(Event::KeyPressed { key, modifiers, .. }) = event else {
-        return None;
-    };
-    match key {
-        Key::Named(Named::Escape) => Some(Message::ModalEscape(id)),
-        Key::Named(Named::Tab) if status == iced::event::Status::Ignored => {
-            Some(Message::ModalFocus(id, !modifiers.shift()))
-        }
         _ => None,
     }
 }
@@ -72,10 +53,54 @@ impl OxiBar {
         let Some(pointer) = record.pointer else {
             return iced::Task::none();
         };
+        if matches!(record.kind, SurfaceKind::Bar(_))
+            && self.popup_open
+            && self.shell.popup_bar == Some(id)
+        {
+            let Some(bar) = self.shell.bar(id) else {
+                return iced::Task::none();
+            };
+            let Some(plugin) = self.popup_plugin.as_deref() else {
+                return iced::Task::none();
+            };
+            let metrics = self.popup_input_metrics(plugin);
+            let bottom = bar.config.position == crate::config::bars::Position::Bottom;
+            let bar_y = if bottom {
+                bar.config.popup_height as f32
+            } else {
+                0.0
+            };
+            let popup_y = if bottom {
+                bar_y - metrics.height as f32
+            } else {
+                bar.size.height as f32
+            };
+            let popup_x = self.dropdown_x(id, plugin) as f32;
+            let inside = iced::Rectangle {
+                x: 0.0,
+                y: bar_y,
+                width: bar.size.width as f32,
+                height: bar.size.height as f32,
+            }
+            .contains(pointer)
+                || iced::Rectangle {
+                    x: popup_x,
+                    y: popup_y,
+                    width: metrics.connector_width as f32,
+                    height: metrics.height as f32,
+                }
+                .contains(pointer);
+            return if inside {
+                iced::Task::none()
+            } else {
+                self.close_bar_dropdown()
+            };
+        }
         let fallback = match &record.kind {
             SurfaceKind::Settings => self.config.snapshot.host.settings_size,
             SurfaceKind::Launcher => self.launcher.size,
             SurfaceKind::ControlCenter => self.config.snapshot.host.control_center_size,
+            SurfaceKind::Session => crate::session_menu::SIZE,
             SurfaceKind::Modal(_) => MODAL_SIZE,
             _ => return iced::Task::none(),
         };
@@ -91,6 +116,7 @@ impl OxiBar {
             SurfaceKind::Settings => self.close_settings(),
             SurfaceKind::Launcher => self.close_launcher(),
             SurfaceKind::ControlCenter => self.close_control_center(),
+            SurfaceKind::Session => self.close_session(),
             SurfaceKind::Modal(_) => self.close_modal(),
             _ => iced::Task::none(),
         }
@@ -104,7 +130,14 @@ impl OxiBar {
             Some(SurfaceKind::DesktopWidget(_)) => self.desktop_view(id),
             Some(SurfaceKind::DesktopEditor) => self.desktop_editor_view(id),
             Some(SurfaceKind::ControlCenter) => self.control_center_view(),
-            Some(SurfaceKind::Launcher) => self.launcher.view(),
+            Some(SurfaceKind::Session) => self.session_menu_view(),
+            Some(SurfaceKind::Overview) => self.overview_view(id),
+            Some(SurfaceKind::Launcher) => self.launcher.view(format!(
+                "{}: select · {}: launch · {}: close",
+                self.shortcut_label("launcher.next"),
+                self.shortcut_label("launcher.activate"),
+                self.shortcut_label("close")
+            )),
             Some(SurfaceKind::Modal(_)) => self.modal_surface_view(),
             Some(SurfaceKind::Panel(_)) => self.panel_surface_view(),
             Some(SurfaceKind::Toast(_, _)) => self.toast_surface_view(id),
@@ -118,29 +151,29 @@ impl OxiBar {
         let Some(instance) = self.shell.bar(id) else {
             return self.empty_surface();
         };
-        let start = Container::new(Row::from_vec(self.render_section(
-            id,
-            "start",
-            &instance.config.start,
-        )))
+        let start = Container::new(
+            Row::from_vec(self.render_section(id, "start", &instance.config.start))
+                .spacing(OXITHEME.padding_sm)
+                .align_y(Alignment::Center),
+        )
         .align_x(Alignment::Start)
         .align_y(Alignment::Center)
         .width(Length::Fill)
         .height(Length::Fill);
-        let center = Container::new(Row::from_vec(self.render_section(
-            id,
-            "center",
-            &instance.config.center,
-        )))
+        let center = Container::new(
+            Row::from_vec(self.render_section(id, "center", &instance.config.center))
+                .spacing(OXITHEME.padding_sm)
+                .align_y(Alignment::Center),
+        )
         .align_x(Alignment::Center)
         .align_y(Alignment::Center)
         .width(Length::Fill)
         .height(Length::Fill);
-        let end = Container::new(Row::from_vec(self.render_section(
-            id,
-            "end",
-            &instance.config.end,
-        )))
+        let end = Container::new(
+            Row::from_vec(self.render_section(id, "end", &instance.config.end))
+                .spacing(OXITHEME.padding_sm)
+                .align_y(Alignment::Center),
+        )
         .align_x(Alignment::End)
         .align_y(Alignment::Center)
         .width(Length::Fill)
@@ -154,13 +187,21 @@ impl OxiBar {
             .height(Length::Fill);
         let transparent = instance.config.transparent;
 
-        let bar = Container::new(row)
-            .style(move |theme: &Theme| Self::box_style(theme, transparent))
-            .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
-            .width(Length::Fill)
-            .height(instance.size.height as f32);
+        let bar: Element<'_, Message> = if self.bar_is_visible(id) {
+            Container::new(row)
+                .style(move |theme: &Theme| Self::box_style(theme, transparent))
+                .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+                .height(instance.size.height as f32)
+                .into()
+        } else {
+            Space::new()
+                .width(Length::Fill)
+                .height(instance.size.height as f32)
+                .into()
+        };
 
         let popup = self.animated_popup_row(id);
         let column = if instance.config.position == crate::config::bars::Position::Bottom {
@@ -301,7 +342,12 @@ impl OxiBar {
             .as_deref()
             .map(|plugin_id| self.popup_input_metrics(plugin_id).height as f32)
             .unwrap_or(target);
-        let has_detached_overlay = input_target > target;
+        let content_target = self
+            .popup_plugin
+            .as_deref()
+            .map(|plugin| self.popup_metrics(plugin).height as f32)
+            .unwrap_or(target);
+        let has_detached_overlay = input_target > content_target;
         let motion = oxiced::theme::snapshot::current_snapshot();
         if motion.reduced_motion || motion.animation_ms == 0 {
             let height = if target > 0.0 { input_target } else { 0.0 };
@@ -317,11 +363,16 @@ impl OxiBar {
             } else {
                 height
             };
-            Container::new(self.popup_row(id, height, input_height))
-                .width(Length::Fill)
-                .height(input_height.max(1.0))
-                .clip(!has_detached_overlay)
-                .into()
+            let content = self.popup_row(id, height, input_target.max(target));
+            if has_detached_overlay {
+                Container::new(content)
+                    .width(Length::Fill)
+                    .height(input_height.max(1.))
+                    .into()
+            } else {
+                oxiced::widgets::oxi_reveal::reveal(content, input_target.max(target), input_height)
+                    .into()
+            }
         })
         .animation(
             Easing::EASE_OUT
@@ -341,52 +392,13 @@ impl OxiBar {
         if self.shell.popup_bar != Some(id) {
             return Space::new().height(input_height.max(1.0)).into();
         }
-        let empty = || Space::new().into();
         let Some(plugin_id) = self.popup_plugin.as_deref() else {
             return Space::new().height(input_height.max(1.0)).into();
         };
-        let (start_content, center_content, end_content): (
-            Element<'_, Message>,
-            Element<'_, Message>,
-            Element<'_, Message>,
-        ) = match self.plugin_section_on(id, plugin_id) {
-            crate::layout::BarSection::Start => (
-                self.popup_view(plugin_id, visible_height, input_height),
-                empty(),
-                empty(),
-            ),
-            crate::layout::BarSection::Center => (
-                empty(),
-                self.popup_view(plugin_id, visible_height, input_height),
-                empty(),
-            ),
-            crate::layout::BarSection::End => (
-                empty(),
-                empty(),
-                self.popup_view(plugin_id, visible_height, input_height),
-            ),
-        };
-
-        let start = Container::new(start_content)
-            .align_x(Alignment::Start)
-            .align_y(Alignment::Start)
-            .width(Length::Fill)
-            .height(Length::Fill);
-        let center = Container::new(center_content)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Start)
-            .width(Length::Fill)
-            .height(Length::Fill);
-        let end = Container::new(end_content)
-            .align_x(Alignment::End)
-            .align_y(Alignment::Start)
-            .width(Length::Fill)
-            .height(Length::Fill);
-
         Row::new()
-            .push(start)
-            .push(center)
-            .push(end)
+            .push(Space::new().width(self.dropdown_x(id, plugin_id).max(0) as f32))
+            .push(self.popup_view(plugin_id, visible_height, input_height))
+            .push(Space::new().width(Length::Fill))
             .width(Length::Fill)
             .height(input_height.max(1.0))
             .into()
@@ -398,27 +410,38 @@ impl OxiBar {
         visible_height: f32,
         input_height: f32,
     ) -> Element<'_, Message> {
-        let Some((model, funcs)) = self.plugins.get(plugin_id) else {
-            return Space::new().into();
-        };
-        let popup_elements: Vec<Element<'static, Message>> = render_plugin_popup(funcs, model)
-            .into_iter()
-            .map(|el| {
-                let id = plugin_id.to_owned();
-                el.map(move |msg| map_plugin_message(id.clone(), msg))
-            })
-            .collect();
-        if popup_elements.is_empty() {
-            tracing::warn!(plugin = plugin_id, "plugin popup_view returned no elements");
-        }
-        let popup_content = Column::from_vec(popup_elements)
+        let popup_content: Element<'_, Message> = if plugin_id == "@control-center" {
+            self.control_center_view()
+        } else if plugin_id == "@session" {
+            self.session_menu_view()
+        } else if let Some((model, funcs)) = self.plugins.get(plugin_id) {
+            let elements = if funcs.popup_view.is_some() {
+                render_plugin_popup(funcs, model)
+            } else {
+                render_plugin_panel(funcs, model)
+            };
+            Column::from_vec(
+                elements
+                    .into_iter()
+                    .map(|element| {
+                        let plugin = plugin_id.to_owned();
+                        element.map(move |message| map_plugin_message(plugin.clone(), message))
+                    })
+                    .collect(),
+            )
             .width(Length::Fill)
-            .height(Length::Fill);
+            .height(Length::Fill)
+            .into()
+        } else {
+            Space::new().into()
+        };
 
         let metrics = self.popup_metrics(plugin_id);
         let input_height = input_height.max(1.0);
         let popup_height = visible_height.max(1.0);
-        let body_height = (popup_height - POPUP_CONNECTOR_HEIGHT as f32).max(0.0);
+        // Animate the reveal, not every calendar/form's layout and text shaping.
+        let content_height = metrics.height as f32;
+        let body_height = (content_height - POPUP_CONNECTOR_HEIGHT as f32).max(0.0);
         let background = canvas(PopupBackground {
             width: metrics.connector_width as f32,
             body_width: metrics.body_width as f32,
@@ -437,7 +460,7 @@ impl OxiBar {
                 .align_x(Alignment::Center),
         )
         .width(metrics.connector_width as f32)
-        .height(input_height)
+        .height(content_height.max(input_height))
         .align_x(Alignment::Center)
         .align_y(Alignment::Start);
 
@@ -455,43 +478,91 @@ impl OxiBar {
         section: &str,
         names: &[String],
     ) -> Vec<Element<'static, Message>> {
+        let show_labels = self
+            .shell
+            .bar(source)
+            .map(|bar| bar.config.show_labels)
+            .unwrap_or(self.config.snapshot.host.bar_show_labels);
+        let host_button = |icon, label, action| -> Element<'static, Message> {
+            oxi_plugin::bar_action_with_label(icon, label, show_labels)
+                .on_press(action)
+                .into()
+        };
         names
             .iter()
             .enumerate()
             .flat_map(|(index, name)| {
+                let anchored =
+                    |elements: Vec<Element<'static, Message>>| -> Vec<Element<'static, Message>> {
+                        elements
+                            .into_iter()
+                            .enumerate()
+                            .map(|(part, element)| {
+                                let provider = name.clone();
+                                let key = format!("{section}:{index}:{part}");
+                                let identity = format!("{key}:{provider}");
+                                oxiced::widgets::oxi_drag_handle::capture_bounds(
+                                    element,
+                                    move |bounds, pressed| Message::BarAnchor {
+                                        id: source,
+                                        key: key.clone(),
+                                        provider: provider.clone(),
+                                        bounds,
+                                        pressed,
+                                    },
+                                )
+                                .with_identity(identity)
+                                .into()
+                            })
+                            .collect()
+                    };
+                if name.eq_ignore_ascii_case("session") {
+                    return if self.config.snapshot.host.menus.session_enabled {
+                        anchored(vec![host_button(
+                            oxi_plugin::ShellIcon::Power,
+                            "Session",
+                            Message::Session(crate::session_menu::Action::Toggle),
+                        )])
+                    } else {
+                        Vec::new()
+                    };
+                }
+                if name.eq_ignore_ascii_case("overview") {
+                    return if self.config.snapshot.host.overview.enabled {
+                        anchored(vec![host_button(
+                            oxi_plugin::ShellIcon::Overview,
+                            "Overview",
+                            Message::Overview(crate::overview::Action::Toggle),
+                        )])
+                    } else {
+                        Vec::new()
+                    };
+                }
                 if name.eq_ignore_ascii_case("settings") {
-                    return vec![
-                        oxiced::widgets::oxi_plugin::bar_button(
-                            oxi_plugin::text("Settings").size(OXITHEME.font_md),
-                        )
-                        .on_press(Message::Settings(crate::settings::Action::Open))
-                        .into(),
-                    ];
+                    return anchored(vec![host_button(
+                        oxi_plugin::ShellIcon::Settings,
+                        "Settings",
+                        Message::Settings(crate::settings::Action::Open),
+                    )]);
                 }
                 if name.eq_ignore_ascii_case("launcher") {
                     return if self.launcher.enabled {
-                        vec![
-                            oxiced::widgets::oxi_plugin::bar_button(
-                                oxi_plugin::text("Search").size(OXITHEME.font_md),
-                            )
-                            .on_press(Message::Launcher(crate::launcher::Action::Toggle))
-                            .into(),
-                        ]
+                        anchored(vec![host_button(
+                            oxi_plugin::ShellIcon::Search,
+                            "Search",
+                            Message::Launcher(crate::launcher::Action::Toggle),
+                        )])
                     } else {
                         Vec::new()
                     };
                 }
                 if name.eq_ignore_ascii_case("control-center") {
                     return if self.config.snapshot.host.control_center_enabled {
-                        vec![
-                            oxiced::widgets::oxi_plugin::bar_button(
-                                oxi_plugin::text("Controls").size(OXITHEME.font_md),
-                            )
-                            .on_press(Message::ControlCenter(
-                                crate::control_center::Action::Toggle,
-                            ))
-                            .into(),
-                        ]
+                        anchored(vec![host_button(
+                            oxi_plugin::ShellIcon::Controls,
+                            "Controls",
+                            Message::ControlCenter(crate::control_center::Action::Toggle),
+                        )])
                     } else {
                         Vec::new()
                     };
@@ -509,7 +580,7 @@ impl OxiBar {
                     return Vec::new();
                 };
                 let id = key.clone();
-                let elements = if let Some(view) = funcs.context_view {
+                let elements = if funcs.bar_view.is_some() || funcs.context_view.is_some() {
                     let output = self.output_for_bar(Some(source));
                     let scale = self
                         .shell
@@ -535,17 +606,29 @@ impl OxiBar {
                         output_name: output,
                         output_scale: scale,
                     };
-                    unsafe { view(model.clone(), context) }.unwrap_or_default()
+                    if let Some(view) = funcs.bar_view {
+                        unsafe { view(model.clone(), context, show_labels) }.unwrap_or_default()
+                    } else {
+                        unsafe {
+                            funcs.context_view.expect("checked view capability")(
+                                model.clone(),
+                                context,
+                            )
+                        }
+                        .unwrap_or_default()
+                    }
                 } else {
                     render_plugin(funcs, model)
                 };
-                elements
-                    .into_iter()
-                    .map(move |el| {
-                        let id = id.clone();
-                        el.map(move |msg| Message::PluginSubMsg(id.clone(), msg))
-                    })
-                    .collect::<Vec<_>>()
+                anchored(
+                    elements
+                        .into_iter()
+                        .map(move |el| {
+                            let id = id.clone();
+                            el.map(move |msg| Message::PluginSubMsg(id.clone(), msg))
+                        })
+                        .collect::<Vec<_>>(),
+                )
             })
             .collect()
     }

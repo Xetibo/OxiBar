@@ -21,8 +21,9 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 ### Theme Compatibility and Remaining Restart-only Settings
 
 - Status: live immutable snapshots and bundled theme hooks implemented.
-- Palette/font/density/motion preferences apply live; legacy `bar.font`, plugin
-  lifecycle and existing backend timers keep explicit restart classification.
+- Palette/font/density/motion and installed-provider selections apply live;
+  legacy `bar.font`, library-code replacement and unsupported backend timers keep
+  explicit restart classification.
   Old providers without the optional hook retain their seed palette.
 - Compatibility field access interns at most 128 immutable palette/font values
   per library; exhausting that budget requires restart rather than unbounded leaks.
@@ -52,8 +53,9 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   cancellable pairing and bounded discovery. Control-center views reuse these owners.
   Reviewed ReSet backends provide BlueZ object/property events and broader audio/
   monitor capabilities suitable for selective adaptation.
-- Remaining requirements: richer capabilities and protocol/version-aware display
-  settings. Keep cancellable/reconnecting ownership and proven state/action parity;
+- Remaining requirements: richer hardware capabilities. Native Hyprland and
+  wlr-output-management display settings are now implemented. Keep bounded ownership
+  and proven state/action parity;
   donor placeholders, blocking waits and unsafe thread markers are not reused.
 - Target fix: the ReSet reuse workstream in `SHELL_ROADMAP.md`; keep existing plugin capabilities and themed Iced views throughout migration.
 
@@ -107,6 +109,10 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   unfocus; removed devices release resources and retired keyboard events are ignored.
   Private provider typing/copy/reopen checks passed with virtual-device startup
   delays in the fixture, without changing the user's input devices.
+- Resolved: removing a temporary keyboard could leave an unscheduled repeat behind
+  and unwrap a missing keyboard at timer installation. Focus loss, release and device
+  removal now clear pending repeats; installation revalidates live ownership.
+  The complete private compositor UI flow passes rapid Escape/reopen afterward.
 - Follow-up: upstream the correction and evaluate a released replacement before
   removing the local dependency; startup connection error propagation remains separate.
 
@@ -114,15 +120,92 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 - Status: initial multi-output slice implemented.
 - Current state: explicit surface registry, per-output profiles, hotplug
-  reconciliation and read-only Hyprland/Wayland inventory work. Inventory is
+  reconciliation and Hyprland/Wayland inventory work. Inventory is
   refreshed on background workers at `monitor.refresh_seconds` (default 2), and
   unchanged snapshots do not redraw the UI.
 - Gaps: fully event-driven inventory and further compositor focus adapters remain
-  follow-ups. Generic Wayland output names/logical geometry do not provide global
-  focus, VRR/HDR state or persistent display configuration. Compositors without
+  follow-ups. Generic wl_output names/logical geometry alone do not provide global
+  focus or display control; the separate native management capability is required.
+  Compositors without
   output names retain compositor-selected placement.
-- Target fix: event-driven output service and optional display-settings backends;
+- Target fix: event-driven output service and additional compositor adapters;
   do not conflate shell placement with display-mode/compositor ownership.
+
+### Display Configuration Boundaries
+
+- Status: native Hyprland and wlr-output-management preview/save/revert implemented
+  and tested on owned Hyprland 0.51.1/Sway 1.11 sessions.
+- GUI mode/refresh, scale, position/diagram, transform, enablement and supported VRR
+  use a bounded owner and current protocol serials. Profiles persist sparsely over
+  Nix, with startup application available; fractional refresh and zero compositor-
+  defined refresh are preserved.
+- The 20-second rollback lease survives GUI dismissal/stalls while the controller
+  process runs. Orderly drop and failed persistence restore the baseline; SIGKILL
+  or process crash cannot run in-process rollback. An external watchdog is a future
+  extension. Physical link/driver/VRR policy, compositor restart and HDR/color-profile
+  checks remain separate from the private-headless proof.
+- Compositors without the management protocol/native adapter retain inventory and
+  show unsupported-control diagnostics; Mutter/KWin-specific apply adapters are not
+  silently emulated by shell geometry.
+
+### Window Content Overview
+
+- Status: implemented and verified; `WINDOW_OVERVIEW_PLAN.md` records the design.
+- Native Hyprland export v2 is tested on a private 0.51.1 compositor with real changed
+  occluded/other-workspace pixels, exact activation, hotplug and repeated cleanup.
+  Modern ext capture with exact Hyprland mapping/wlr activation is tested against a
+  hermetic Wayland server, including resize, denial and recycled native addresses.
+  An actual Hyprland 0.56.2 nested fixture failed before connection; no real-modern-
+  compositor runtime claim is inferred from that attempt.
+- Modern compositors need an exact mapping/output/activation bridge; ext toplevel
+  listing alone provides neither output membership nor activation. Sway 1.11 has
+  native window inventory/activation but no supported per-window capture path in
+  this implementation, so its overview explicitly reports capture unsupported.
+  Mutter/KWin-specific capture, minimized-window policy and DMA-BUF imports remain
+  extensions; output-only capture is not substituted for occluded window content.
+- SHM staging and thumbnail image data are bounded at 64/96 MiB, two jobs and 256
+  windows. Driver texture overhead is not an exact image-byte counter. Legacy export
+  refreshes at the configured bounded cadence, while modern frames can wait for
+  compositor damage/readiness; reduced unchanged-frame work is a possible optimization.
+- Performance reference measures actual overview presentation and closed resource
+  release on Sway separately from the real-pixel Hyprland proof. Closed capture
+  workers and draws are zero; all-thread voluntary context switches remain a wakeup
+  proxy, not a kernel hardware-wakeup measurement.
+
+### Dock Icons and Calendar Opening
+
+- Resolved: SVG catalog paths were passed to the raster renderer and absent icons
+  became letters. Shared format-aware icons, portable fallback, automatic theme
+  selection, filename aliases and ranked window-class matching now retain actual icons.
+- Resolved: animation constrained calendar/form layout on every frame, and calendar
+  refresh/launch calls blocked the Iced executor. Stable reveal layout and bounded
+  off-executor jobs are privately measured while a two-second CalDAV sync is blocked.
+- Remaining desktop-entry coverage such as DBusActivatable-only entries stays in the
+  launcher section; this fix does not claim every application ships a usable icon.
+- Resolved: provider switches now load Applications immediately, and Nix profile
+  directories supplement incomplete session XDG paths while preserving precedence.
+- Resolved: the development installer omitted Applications despite enabled config,
+  leaving the dock without a catalog. It now preflights all twelve libraries, includes
+  Applications and respects custom build/config roots. The Nix host supplies a pinned
+  Applications fallback after user-installed libraries, still requiring enablement.
+
+### Legacy Bar Label Capability
+
+- Built-in status providers export optional `bar_view` for live output-local labels;
+  clock/workspace content remains meaningful when names are hidden.
+- Older third-party libraries without this hook retain their existing opaque Iced
+  views. The host cannot reliably remove text from arbitrary elements. Rebuild updated
+  built-ins together with the host; required ABI 6 and existing contexts are unchanged.
+
+### Isolated GUI Panic Diagnostics
+
+- An earlier follow-up run lost an `Option::unwrap()` location. Improved diagnostics
+  subsequently located a layershellev pending-repeat unwrap after temporary keyboard
+  removal; that lifecycle bug is fixed and the complete isolated UI flow passes.
+  The earlier location was not retained, so its identity cannot be proven retroactively.
+- Smoke now retains a larger log buffer, enables backtraces and fails on caught
+  startup/runtime panics rather than accepting a restarted daemon. Keep that diagnostic
+  coverage; the independently fixed equal-geometry anchor cache is not a proven cause.
 
 ### Home Manager Plugin Path
 
@@ -159,6 +242,10 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   availability skips before factories and duplicate names instantiate once.
   The real example contract exercises 25 shared-model/task/view/stream/theme/config/
   modal cycles without a host Tokio reactor; initialized code remains process-resident.
+- Live GUI verification enables installed Applications/Tools without restart,
+  searches and launches an owned desktop fixture and executes calculator copy.
+  Host tests retain stable model data through disable/re-enable and reject late
+  disabled-provider host requests.
 
 ### Release and Application Lifetime Tradeoffs
 
@@ -171,20 +258,41 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Successful plugin code is retained until process exit for opaque/deferred Rust
   vtable safety. Existing notification/tray bus servers remain process-lifetime
   providers; safe generic in-process unloading is not part of ABI 6.
+- Disabled models remain resident for stateful re-enable; model-owned legacy bus
+  workers may remain until exit even though host subscriptions/consumers stop.
+  Replacing initialized library code still needs restart.
 - Native user-manager app handoff escapes the shell termination cgroup where
   supported. Direct fallback creates a reaped process group but cannot escape an
   existing systemd cgroup without a user manager.
 
 ## UI Theme Debt
 
+### Scheme Compatibility and Custom Contrast
+
+- Resolved: built-in Catppuccin muted text, filled-control text and neutral hover
+  use readable semantic roles. Base16-only inputs derive coherent Base24 extensions.
+- Base16/Base24 remains an ecosystem adapter, not a GUI semantic standard. Explicit
+  semantic overrides are preserved; transparent/backdrop-dependent surfaces and
+  arbitrary custom overrides cannot share the automatic opaque-background guarantee.
+
 ### Settings and Control-center Accessibility
 
-- Status: follow-up for the initial settings UI.
+- Status: shared-control accessibility follow-up.
 - Current state: keyboard search, text-field traversal, Enter/Apply, category/tab
-  shortcuts and window-scoped Escape work. Generic Iced button/switch keyboard
+  shortcuts and window-scoped Escape work. Settings now have animated nested
+  groups, breadcrumbs and a narrow full-path picker. Generic Iced button/switch keyboard
   focus and screen-reader semantics are not yet uniformly exposed by shared controls.
 - Target fix: reusable focusable/accessible controls in `crates/oxiced`, with
   full form navigation and runtime checks as the settings pages expand.
+
+### Native Locking and Login Handoff
+
+- Status: planned, not implemented. Existing session actions still launch the
+  configured external locker.
+- The separate Rust/Iced protocol locker and kiosk greeter design is in
+  `LOCK_SCREEN_SESSION_MANAGER_PLAN.md`. Protocol readiness/hotplug, PAM
+  conversations and greetd handoff require dedicated fixtures and NixOS VM checks
+  before implementation can replace the external command.
 
 ### Selectable Search Result Row
 
@@ -195,12 +303,13 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 ### Missing Additional Flat Button Variants In `oxiced`
 
 - Status: partially resolved.
-- Affected code: popup row actions in `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, `plugins/tray/src/lib.rs`, plus workspace pills in `plugins/workspaces/src/lib.rs`.
+- Affected code: popup row actions in `plugins/network/src/lib.rs`, `plugins/notifications/src/lib.rs`, and `plugins/tray/src/lib.rs`.
 - Current state: `oxiced::widgets::oxi_plugin` provides shadowless bar buttons,
   normal-sized surface buttons, source/mode badges and flat background styles;
   themed switches are shared through `oxi_toggler`. Settings/control-center actions
   use these helpers. Some compact popup row/action buttons still use local styles
   or `oxi_button::button`.
+- Workspace/focus pills now use shared accent selection with readable inactive text.
 - Target fix: migrate remaining compact popup row/action buttons to `oxi_plugin` helpers or add more helper variants as needed.
 
 ### Duplicated Bar Button Styling
@@ -225,11 +334,9 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ### Calendar Adjacent-Month Color
 
-- Status: accepted temporary exception.
-- Affected code: `plugins/clock/src/lib.rs`.
-- Current state: adjacent-month days use a named local alpha constant with `OXITHEME.primary`.
-- Why accepted: `oxiced` does not currently provide a semantic token for disabled accent text or adjacent-calendar text.
-- Target fix: add a semantic disabled/accent-muted text color to `oxiced` or use a new calendar helper once available.
+- Status: resolved. Adjacent-month days use the shared readable muted-text role
+  instead of a low-alpha accent. Bounded calendar content fills the available body
+  height with theme-derived spacing.
 
 ### Missing Shared Tooltip Chrome Helper
 

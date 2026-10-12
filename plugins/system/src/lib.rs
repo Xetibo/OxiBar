@@ -128,6 +128,42 @@ pub extern "Rust" fn update(model: PluginModel, message: PluginMsg) -> Option<Ta
 pub extern "Rust" fn launch(_: usize, _: PluginModel) -> Option<Task<PluginMsg>> {
     None
 }
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn session_menu(model: PluginModel) -> Vec<oxibar_plugin_api::SessionMenuEntry> {
+    with_model_read::<Model, _>(&model, |model| {
+        let mut entries = vec![oxibar_plugin_api::SessionMenuEntry {
+            action: "lock".into(),
+            label: "Lock".into(),
+            description: "Start the configured screen locker".into(),
+            enabled: model.lock_enabled && model.locker.is_some(),
+        }];
+        for action in [
+            SessionAction::Logout,
+            SessionAction::Suspend,
+            SessionAction::Hibernate,
+            SessionAction::Reboot,
+            SessionAction::PowerOff,
+        ] {
+            let command = match action {
+                SessionAction::Logout => "logout",
+                SessionAction::Suspend => "suspend",
+                SessionAction::Hibernate => "hibernate",
+                SessionAction::Reboot => "reboot",
+                SessionAction::PowerOff => "power-off",
+            };
+            entries.push(oxibar_plugin_api::SessionMenuEntry {
+                action: command.into(),
+                label: action.label().into(),
+                description: "Confirm before applying this session action".into(),
+                enabled: model.snapshot.can(action)
+                    && !model.pending.contains_key(&Domain::Session),
+            });
+        }
+        entries
+    })
+    .unwrap_or_default()
+}
 #[unsafe(no_mangle)]
 pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
     drain_model_errors::<Model>(&model, |model| &mut model.errors)
@@ -136,7 +172,15 @@ pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    with_model_read::<Model, _>(&model, |model| vec![views::bar(model)])
+    with_model_read::<Model, _>(&model, |model| vec![views::bar(model, true)])
+}
+#[unsafe(no_mangle)]
+pub extern "Rust" fn bar_view(
+    model: PluginModel,
+    _: oxibar_plugin_api::PluginViewContext,
+    show_labels: bool,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| vec![views::bar(model, show_labels)])
 }
 #[unsafe(no_mangle)]
 pub extern "Rust" fn popup_view(
@@ -144,7 +188,7 @@ pub extern "Rust" fn popup_view(
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
         vec![
-            iced::widget::scrollable(views::controls(model))
+            iced::widget::scrollable(views::controls(model, true))
                 .height(iced::Length::Fill)
                 .into(),
         ]
@@ -154,7 +198,7 @@ pub extern "Rust" fn popup_view(
 pub extern "Rust" fn control_center_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
-    with_model_read::<Model, _>(&model, |model| vec![views::controls(model)])
+    with_model_read::<Model, _>(&model, |model| vec![views::controls(model, false)])
 }
 #[unsafe(no_mangle)]
 pub extern "Rust" fn modal_view(

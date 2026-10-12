@@ -885,37 +885,12 @@ fn editor_button(
     }
 }
 
-pub(crate) fn event(
-    event: iced::Event,
-    status: iced::event::Status,
-    id: IcedId,
-) -> Option<Message> {
-    use iced::{
-        keyboard::{self, key::Named},
-        mouse,
-    };
+pub(crate) fn event(event: iced::Event, _: iced::event::Status, id: IcedId) -> Option<Message> {
+    use iced::mouse;
     let action = match event {
         iced::Event::Mouse(mouse::Event::CursorMoved { position }) => Action::Pointer(id, position),
         iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
             Action::Release(id)
-        }
-        iced::Event::Keyboard(keyboard::Event::KeyPressed {
-            key: keyboard::Key::Named(Named::Escape),
-            ..
-        }) => Action::Escape(id),
-        iced::Event::Keyboard(keyboard::Event::KeyPressed {
-            key: keyboard::Key::Named(key),
-            modifiers,
-            ..
-        }) if status == iced::event::Status::Ignored => {
-            let (x, y) = match key {
-                Named::ArrowLeft => (-1, 0),
-                Named::ArrowRight => (1, 0),
-                Named::ArrowUp => (0, -1),
-                Named::ArrowDown => (0, 1),
-                _ => return None,
-            };
-            Action::Nudge(id, x, y, modifiers.shift())
         }
         _ => return None,
     };

@@ -1,0 +1,39 @@
+{
+  "compositor": "sway version 1.11",
+  "presentation_clock": 1,
+  "source_windows": 2,
+  "capture_backend": "Foreign toplevel list (capture unsupported)",
+  "capture_supported": false,
+  "capture_diagnostic": "This compositor cannot capture individual window contents",
+  "samples": {
+    "warm_opens": 30,
+    "closed_idle_seconds": 5.000014824006939
+  },
+  "first_presented_ms": 31.725396,
+  "warm_presented_ms": {
+    "median": 36.7598915,
+    "p95": 37.245715,
+    "max": 38.182689
+  },
+  "closed": {
+    "capture_workers": 0,
+    "cpu_percent_one_core": 0.3999988140829609,
+    "draws": 0,
+    "voluntary_context_switches_per_second_all_threads": 204.399393996393
+  },
+  "reopen_memory": {
+    "growth_kib": 138.0,
+    "initial_threads": 57,
+    "final_threads": 55,
+    "max_threads": 55
+  },
+  "gates": {
+    "first_presentation_under_50ms": true,
+    "warm_presented_p95_under_50ms": true,
+    "no_closed_capture_worker": true,
+    "no_continuous_closed_render": true,
+    "closed_cpu_under_one_percent_core": true,
+    "bounded_reopen_rss": true,
+    "no_worker_growth": true
+  }
+}

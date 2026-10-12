@@ -11,7 +11,8 @@ desktop widgets, settings, and session-action UI. The existing Wayland composito
 continues to own window management, composition, effects, and global keybindings.
 Wallpaper display is an optional background surface/service. Locking remains an
 integration with a dedicated locker, rather than treating a normal overlay as a
-session lock.
+session lock. A separate Rust/Iced protocol locker and kiosk login/session chooser
+are planned in [Native Lock Screen and Kiosk Session Manager](LOCK_SCREEN_SESSION_MANAGER_PLAN.md).
 
 Keep Iced, `iced_layershell`, and `oxiced`. Use Noctalia as UX inspiration:
 consistent surfaces, a discoverable control center, immediate settings, and
@@ -26,6 +27,18 @@ and milestone 6's live themes/providers are implemented. Milestone 7's SDK,
 packaging, isolated smoke checks and named release gates are verified.
 Shared `oxiced` now lives in this workspace.
 
+Post-roadmap UI refinements add clock-attached controls with left navigation,
+bar-integrated inbox content, centered OxiShut-style session tiles,
+icon-only bars with live optional labels, button-accurate placement, draggable bar
+layout, larger/gutter-safe settings, Base24/accent and native display preview/save/
+revert. The approved [window overview design](WINDOW_OVERVIEW_PLAN.md) is now
+implemented: real per-window content previews on each monitor, exact mouse/keyboard
+activation, bounded visible capture ownership and explicit unsupported capabilities.
+Dock icons and first-open calendar/control-center responsiveness are verified too.
+Subsequent refinements add centered overview modals, spatial Vim monitor keys,
+live shortcut/provider controls, three-column drag previews and readable
+Base16/Base24 semantic mapping.
+
 ## Starting Point
 
 - One resident host already owns bar/popup/modal/panel/toast surfaces.
@@ -39,7 +52,8 @@ Shared `oxiced` now lives in this workspace.
 - Configuration uses immutable, source-aware snapshots and a serialized override
   store. The initial settings UI applies host geometry/layout and supported plugin
   fields live. Immutable theme snapshots apply palette/font/density/motion live;
-  legacy bar font, lifecycle and backend timers retain restart classification.
+   legacy bar font, library-code replacement and unsupported backend timers retain
+   restart classification. Installed-provider selections now apply live.
 
 ## Configuration Contract: GUI Overrides Nix
 

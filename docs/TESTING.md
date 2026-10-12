@@ -39,11 +39,15 @@
   readonly Nix symlink regeneration, unknown-field preservation, private atomic
   writes, managed-symlink refusal, revision conflicts, invalid-input retention,
   live geometry/input-region actions, widget layout, retained plugin models and
-  structured socket replies. Plugin tests cover live hook state preservation.
+  structured socket replies. Navigation tests cover unique schema-to-page coverage,
+  nested routes, expansion/removal fallback and retained drafts/surface state through
+  saves. Plugin tests cover live hook state preservation.
 - Multi-output: stable IDs, independent logical dimensions/profiles, popup/modal
   source routing, output fallback/disable, hotplug cleanup, retained plugin models,
   late task results and unknown-window rejection. Monitor parser tests preserve
-  fractional scale/rotation, negative coordinates and precise refresh rates.
+  fractional scale/rotation, negative coordinates and precise refresh rates. Pure
+  snapping fixtures cover ReSet-style opposing/matching edges, disabled peers,
+  deterministic peer order, bounds and overlapping-drop restoration.
 - Control center: optional capability/fallback selection, configured ordering and
   deduplication, retained provider state, source-scoped async modals, overlay
   dismissal, live resize/disable/reset, visible-inbox toast suppression, hidden-bar
@@ -63,9 +67,38 @@
   hide/add/remove/output assignment, passive-input overrides and visible ownership.
 - Clock/Stats: bounded proc parsing and immediate owned-timer resume without a host
   reactor. Modal tests also cover actual-bound outside dismissal and cleanup once.
+- Overview: checked shape/stride/format, orientation and premultiplied alpha;
+  coalesced mailbox wakes, bounded scheduling, centered modal bounds, Tab cycling
+  within a monitor, spatial monitor navigation and scoped configurable shortcuts,
+  native retirement-before-activation, stale generations and modal-origin-aware
+  clipped cross-monitor hit bounds.
+  A normal private Wayland server executes modern SHM capture, any-order constraints,
+  resize/stopped/denied sources and exact activation across recycled addresses.
+- Dock/calendar opening: qualified/Steam class ranking, lower-priority executable
+  fallback despite alternate declared classes, library-path precedence, SVG filename aliases and
+  portable format-aware icons; blocked calendar work stays off the UI executor.
+  Shared reveal tests keep expensive child layout full-sized throughout animation.
+  Drag-preview tests reconcile an empty/previous surface tree and preview insertion/
+  removal while preserving the content's widget state.
+  Bounds-capture tests invalidate equal geometry when logical widget identity changes.
 - Themes: exact legacy seed, immutable/exact-Arc delivery, bounded interning without
   revision growth, alpha/preset/density/motion validation, live source/reset, retained
   startup font and late uploaded-font guards.
+- UI/menu refinements: default clock-attached center, configured entries, integrated
+  inbox/toast retention, centered session tiles and native confirmation/output handoff,
+  disabled capabilities, stale session IDs/menu disablement, stale drag identity/
+  revision rejection, sparse default-provider enablement and exact button anchoring.
+  Anchor tests cover relayout, duplicate providers, edge clamps and removed slots.
+  Live-provider tests retain one model through disable/re-enable, accept pending
+  data updates while disabled and reject deferred disabled-provider host requests.
+  Multi-output tests cover live global/profile label preferences without replacing
+  bar IDs or shared provider state.
+- Base16/Base24: complete slot inheritance, derived missing Base16 extensions,
+  standalone flat/nested equivalence, validated accent precedence, explicit semantic
+  overrides/bright states and legacy seed equality. Catppuccin Mocha, Latte and
+  factory-default text roles meet 4.5:1 contrast across their opaque neutral and
+  filled-control states. Monitor tests cover precision/negative geometry/diagram transforms,
+  invalid/all-disabled profiles, independent rollback leases and failed/stale saves.
 - Tools: bounded calculator parsing, all provider prefixes, quoted argument vectors,
   bookmark/action validation, immutable edited actions, opt-out history clearing,
   no clipboard text in identity/usage state and actual failed copy outcomes.
@@ -73,10 +106,84 @@
   longest-prefix cancellation and sparse live favorite changes. Filesystem tests
   cover nonrecursive missing parents, created roots and prompt owned watcher drop.
 
+## Refined UI and Native Display Runtime Verification
+
+`scripts/ui-smoke.py` runs only inside an owned isolated compositor. Supply the host
+and Clock/System/Notifications/Audio/Bluetooth/Stats/Applications/Tools DLLs:
+
+```sh
+nix develop --impure --file nix/gui-tests.nix -c \
+  python scripts/run-isolated.py -- \
+  python scripts/ui-smoke.py "$OXIBAR" "$CLOCK" "$SYSTEM" "$NOTIFICATIONS" \
+    "$AUDIO" "$BLUETOOTH" "$STATS" "$APPLICATIONS" "$TOOLS"
+```
+
+It checks actual clicked-button geometry, icon-only host/provider bars and live label
+width changes, attached clock/left navigation/inbox, centered 800×480 OxiShut-style
+session tiles and native confirmation, 1440×960 settings, live default-provider enablement without
+restart, indexing/search/activation of an owned desktop-entry fixture and calculator
+copy. Three-column pointer drag and its content preview, coherent Base24/accent and
+real monitor Preview/Keep/Revert/sparse-save plus bottom-bar placement are covered. The fixture owns
+its XDG config/data/state, immutable base symlink, bus, mock logind/power profiles,
+MPRIS player, null-device PulseAudio server, virtual pointer and compositor;
+it never changes the real desktop/monitor/session. Additional assertions cover the
+640-high ordinary Audio dropdown and Escape, idempotent session open/toggle/close,
+unchanged settings surface geometry on saves, shared notification/music edges and
+spacing with live bottom-left placement, and actual pointer reveal/hide with
+dropdown pinning. The hover fixture retains its virtual pointer until replacement;
+removing the seat's only pointer emits Leave and must not masquerade as hovering.
+The fixture also creates a second owned headless output. It checks nested page
+selection, sidebar folding/expansion, reduced motion, the narrow full-path picker,
+header reset placement and a compact footer that retains its bounds across saves.
+Real pointer drags exercise edge snapping and overlap restoration on both outputs
+before the existing native preview/Keep/Revert flow. Dedicated session tiles remain;
+embedded System content omits duplicate session actions.
+Optional screenshots are private. Capture after compositor animation settles,
+except the explicit intermediate/final sidebar images used for visual motion review.
+Read layer geometry after waiting, so resizing does not crop against an old position.
+Use the whole-output narrow-window capture to verify padding after a live resize;
+reported layer bounds can differ from the rendered position during repositioning.
+Native navigation uses captured child-page card bounds; sidebar bounds collected
+during animated layout changes are not a reliable animation timing assertion.
+The smoke enables backtraces, retains panic diagnostics and fails if the daemon's
+retry loop catches a panic. A restarted daemon cannot satisfy the run.
+
+Installer verification uses private fake-library fixtures: a missing Applications
+file must fail before any installation, all twelve libraries must install with
+correct contents/mode, and absolute/relative `CARGO_TARGET_DIR` plus custom
+`XDG_CONFIG_HOME` must work. `bash -n scripts/install-plugins.sh` checks syntax.
+
+The native controller's opt-in test also runs against both the isolated Hyprland
+session and the parent Sway wlr-output-management session:
+
+```sh
+nix develop --impure --file nix/gui-tests.nix -c \
+  python scripts/run-isolated.py -- \
+  nix develop -c cargo test -p oxibar \
+    private_compositor_native_preview_revert_and_shutdown_restore -- --ignored
+# Repeat with scripts/run-isolated.py --parent for the native wlr backend.
+```
+
+Use the filtered source dev-shell form below while new files are untracked, and
+the session target/debug flags when storage is limited. The test requires
+`OXIBAR_TEST_ISOLATED=1` set by the coordinator, preserves advertised zero refresh
+for virtual heads, and proves fractional-scale preview, Revert and owner-drop
+restoration. Pure fixtures additionally prove lease expiry without a GUI loop,
+stale confirmations never save and failed persistence immediately rolls back.
+
+The preceding UI-refinement task passed **256 normal tests/doctests**, strict workspace
+Clippy, all **14 Nix package outputs**, both native display tests and the full new
+UI smoke. The existing all-flow smoke also passed with explicit legacy standalone
+control/panel preferences, covering retained CalDAV, password/modal, tray,
+notification reply/DND/toast/panel, desktop revision/hotplug and reopen behavior.
+The new default presentation is tested separately rather than weakening those
+legacy assertions. Physical display links/driver policy and abrupt-kill rollback
+are separate known boundaries, not inferred from headless success.
+
 ## Expected Commands
 
 - `nix develop -c cargo fmt --all -- --check`
-- `nix develop -c cargo test --workspace`
+- `nix develop -c env -u HYPRLAND_INSTANCE_SIGNATURE cargo test --workspace`
 - `nix develop -c cargo clippy --workspace --all-targets -- -D warnings`
 - `nix build .#oxibar .#oxibar-audio .#oxibar-bluetooth .#oxibar-system` after native backend/API
   changes, with more plugin package targets as needed.
@@ -86,7 +193,7 @@ bar plugin such as `oxibar-clock`. While new files are still untracked, use the
 local-path flake reference so Nix sees them:
 
 ```sh
-nix develop path:. -c cargo test --workspace
+nix develop path:. -c env -u HYPRLAND_INSTANCE_SIGNATURE cargo test --workspace
 nix develop path:. -c cargo clippy --workspace --all-targets -- -D warnings
 nix build path:.#oxibar path:.#oxibar-applications path:.#oxibar-clock --no-link
 ```
@@ -104,8 +211,107 @@ nix develop --impure --expr '
       !(builtins.elem (builtins.baseNameOf path) [".git" ".direnv" "target" "tmp"]);
   }; in (builtins.getFlake (builtins.unsafeDiscardStringContext (toString source)))
     .devShells.${builtins.currentSystem}.default
-' -c cargo test --workspace
+' -c env -u HYPRLAND_INSTANCE_SIGNATURE cargo test --workspace
 ```
+
+Service-free host fixtures must unset `HYPRLAND_INSTANCE_SIGNATURE`; otherwise
+real focused-monitor lookup can override the fake inventory. Native tests use the
+owned coordinator's compositor environment instead. Workspace formatting excludes
+the vendored backend, so check it separately after editing:
+
+```sh
+nix develop -c rustfmt --edition 2024 --check crates/layershellev/src/lib.rs
+```
+
+## Window Overview and First-Open Responsiveness
+
+The preceding overview phase passed **268 normal tests/doctests**, 14 explicitly
+opt-in tests, strict workspace Clippy and all **14 Nix package outputs**. The modern
+protocol fixture is a normal test with its own private socket/server and no actual
+desktop dependency. Nix host checks load their declared Wayland runtime before the
+final executable wrapper; protocol XML remains included in cleaned sources.
+
+The real native capture test is deliberately opt-in and must run only under the
+owned coordinator, never against the user's actual desktop:
+
+```sh
+nix develop --impure --file nix/gui-tests.nix -c \
+  python scripts/run-isolated.py -- \
+  nix develop -c cargo test -p oxibar --lib \
+    private_overview_real_pixels_exact_handles_and_owned_cleanup -- --ignored --nocapture
+```
+
+It creates two native, identical-title red/white and blue/white windows. Actual
+Hyprland 0.51.1 tests overlap them and move one to another workspace, then change
+both buffers and require fresh matching preview pixels. It also verifies exact
+handle activation, stale identity rejection, storage limits and prompt owner drop.
+Modern ext coverage is separately executed by the normal hermetic server, including
+formats-before-size, resize, denial and same-address replacement with old handles
+still present. A failed nested Hyprland 0.56.2 startup is not modern desktop proof.
+
+Build the owned window-fixture test binary with the same pinned graph, then supply
+the packaged host/Applications/Clock libraries to the repeatable GUI smoke:
+
+```sh
+FIXTURE="$(nix develop -c cargo test -p oxibar --lib --no-run --message-format=json | \
+  jq -r 'select(.reason == "compiler-artifact" and .profile.test and .target.kind == ["lib"]) | .executable')"
+nix develop --impure --file nix/gui-tests.nix -c \
+  python scripts/run-isolated.py -- \
+  python scripts/overview-smoke.py "$HOST" "$FIXTURE" "$APPS" "$CLOCK"
+```
+
+Use the filtered-source form while files are untracked and the session target/debug
+flags when storage is limited. The script owns both monitor/window fixtures and
+virtual pointer, captures proof pixels in memory, verifies grouping/keyboard and
+centered 1400×900 modal geometry, Tab staying within a monitor, spatial h/l navigation
+and live Ctrl+h remapping. Cross-monitor mouse activation after native grab retirement,
+changed source pixels, hotplug and ten reopen cycles are covered. A real green SVG dock icon and portable missing-icon
+fallback are checked too. Every closed cycle has zero capture workers, empty
+windows/staging/cache and stable thread count. Optional screenshots stay private.
+Applications is deliberately absent from the private XDG plugin directory; an
+`OXIBAR_PLUGIN_DIR` fallback supplies its pinned library for the real SVG-icon proof.
+
+Actual presentation and closed ownership have a separate conforming-clock reference:
+
+```sh
+nix develop --impure --file nix/gui-tests.nix -c \
+  python scripts/run-isolated.py --parent -- \
+  python scripts/overview-performance.py "$HOST" "$FIXTURE" \
+    --output /tmp/oxibar-overview-performance.json
+nix develop --impure --file nix/gui-tests.nix -c \
+  python scripts/run-isolated.py --parent -- \
+  python scripts/control-center-performance.py "$HOST" "$CLOCK" \
+    --output /tmp/oxibar-control-center-performance.json
+```
+
+Sway 1.11 advertises `CLOCK_MONOTONIC` but does not support individual-window capture
+through these paths. The two-window overview benchmark explicitly reports that
+limitation; it measures the UI and closed resource release, not captured-content
+latency. Thirty opens pass first presentation **31.73 ms**, warm p95 **37.25 ms**,
+closed CPU **0.40% of one core**, zero closed draws/capture workers, **+138 KiB**
+median reopen RSS and no worker growth. The real-pixel Hyprland run separately has
+zero closed capture workers and stable thread count (64 in the final ten-cycle run).
+
+Control-center first-open measurement blocks a private CalDAV curl fixture for two
+seconds. First actual bar presentation is **31.36 ms**, warm p95 **4.94 ms** and
+concurrent status **3.85 ms**, all below 50 ms while sync remains in flight. Stable
+reveal layout and off-executor calendar jobs are measured directly; no old-binary
+percentage improvement is inferred. Both complete retained UI/legacy smoke suites
+also pass. Exact JSON records and counter definitions are in `RELEASE_CHECKS.md`.
+
+The subsequent shortcuts/provider/presentation refinement passed the full normal
+workspace tests/doctests, formatting and strict all-target workspace Clippy. After
+real GUI checks exposed a drag-preview tree transition and an unbounded-scroll
+height mistake, focused host/overview/settings/theme flows and the shared-widget
+regression passed again. All fourteen Nix outputs built from the pinned graph;
+the final host was rebuilt after those host-only presentation corrections and the
+complete refined UI smoke passed with the verified provider libraries. The real-pixel
+overview smoke also passed with centered modal navigation and live key remapping.
+
+The same blocked-sync control-center workload measures **31.25 ms** first actual
+presentation, **6.38 ms** warm p95 and **4.77 ms** concurrent status, all below 50 ms.
+The prior reference above is retained; the additional record is
+[`control-center-refinements-reference.json`](control-center-refinements-reference.json).
 
 The dylib regression test is explicitly opt-in because it requires an actual
 built library. Run it against the Nix plugin output (or a same-toolchain Cargo
@@ -409,7 +615,7 @@ its changed Rust file uses `rustfmt` explicitly alongside workspace `cargo fmt`.
 
 ## Final SDK, Lifecycle and Release Verification
 
-The final source check passed **243 normal tests/doctests**, with eleven explicitly
+The original roadmap release passed **243 normal tests/doctests**, with eleven explicitly
 opt-in tests, plus strict Clippy for every workspace target. All fourteen Nix
 outputs built with shared Crane artifacts. Actual Nix example dylib checks ran
 25 model/task/view/theme/config/modal/owned-stream cycles without host Tokio TLS.
@@ -473,7 +679,9 @@ disabled in normal runtime.
   private System domains/actions, modern/compatible clipboard, real example and
   loader lifecycle plus private user-manager handoff. Additional native hardware,
   system policy and compositor-specific capabilities remain manual/extension work.
-- UI rendering tests only validate that view functions return elements for valid models; they do not assert pixel output.
+- Ordinary component tests validate constructed elements rather than full application
+  golden images. Native overview tests additionally inspect real RGBA buffers and
+  private compositor RGB output; broader full-surface visual snapshots remain manual.
 - Keyboard search, text-field traversal/application, category shortcuts and Escape
   are verified; generic checkbox/button keyboard focus and screen-reader support
   remain a shared-control follow-up.

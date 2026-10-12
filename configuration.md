@@ -9,7 +9,18 @@ Explicit GUI values remain overrides even when equal to the base.
 
 Plugins are loaded from `$XDG_CONFIG_HOME/oxibar/plugins/`. Drop the built
 `.so` files there (e.g. `libclock.so`, `libworkspaces.so`) and list the file
-names you want enabled in the top-level `plugins` array.
+names you want enabled in the top-level `plugins` array or `launcher.default_plugins`.
+The colon-separated `OXIBAR_PLUGIN_DIR` environment variable supplies additional
+search directories after that user directory. The Nix host sets a default fallback
+to its pinned Applications package, so enabling `libapplications.so` supplies its
+catalog/icons without a separate XDG installation. This does not implicitly enable
+any provider; a user-installed library always takes precedence.
+
+For manual development installation, run `nix develop -c cargo build --workspace`
+then `scripts/install-plugins.sh` (or pass `release` after a release build). The
+installer includes Applications, respects `CARGO_TARGET_DIR` and `XDG_CONFIG_HOME`,
+and verifies all twelve plugin files before installing any of them. Restart after
+replacing initialized libraries; build the host and plugins together.
 
 ## Top-level keys
 
@@ -23,7 +34,7 @@ Example:
 plugins = ["libclock.so", "libworkspaces.so", "libbattery.so", "libbluetooth.so", "libnotifications.so"]
 ```
 
-A plugin file present on disk but not listed here is not initialized; it remains
+A plugin file present on disk but in neither enabled list is not initialized; it remains
 visible in the installed catalog. Unknown enabled names
 are skipped with a warning. Plugins whose `abi_version()` does not match the
 host's are also skipped with a warning — rebuild them against the current
@@ -36,8 +47,13 @@ Bluetooth recovers when the service or adapters later appear.
 
 `oxibar plugins` returns installed filenames, enabled/running state, ABI version
 and optional capabilities. Settings → Plugins uses the same metadata without
-starting disabled models or subscriptions. Enablement requires a daemon restart;
-host and native libraries must use the same pinned Rust/dependency graph.
+starting disabled models or subscriptions. Enablement applies live: one background
+loader initializes new providers; disabled models remain resident for stateful
+re-enablement. Their surfaces/subscriptions close and pending host requests are ignored.
+Applications, Tools and System are listed even when their package is missing, with
+an installation diagnostic. Installing packages is separate from enabling them.
+Replacing already-loaded library code still requires restart; host and native
+libraries must use the same pinned Rust/dependency graph.
 
 The Home Manager module supports `programs.oxibar.extraPlugins` for installed but
 disabled libraries. `config.plugins` still defines the immutable enabled package
@@ -82,8 +98,11 @@ Home Manager, private app-lifetime, compositor smoke and performance verificatio
 | Key           | Type            | Default          | Description                                                                                                                                                          |
 | ------------- | --------------- | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `transparent` | bool            | `false`          | When `true`, the bar's container background is fully transparent. Plugins still render their own backgrounds. Useful with a wallpaper or a compositor blur effect. |
+| `show_labels` | bool            | `false`          | Show names/status values beside bar icons. Applies live, with per-output profile overrides. Clock time and workspace numbers remain visible. |
 | `width`       | integer (`> 0`) | active output width | Optional explicit layer width. Omit it to let layer shell size the bar from the compositor-selected active Wayland output. Startup fallback before the first configure event is `3440`. |
-| `height`      | integer (`> 0`) | `31`             | Visible bar height. The layer reserves this as its exclusive zone and adds popup headroom internally. |
+| `height`      | integer (`> 0`) | `31`             | Visible bar height. The layer reserves this as its exclusive zone unless auto-hide is enabled, and adds popup headroom internally. |
+| `auto_hide`   | bool            | `false`          | Reveal near the configured edge and hide on pointer departure. Open dropdowns keep the bar visible; auto-hidden bars reserve no desktop space. |
+| `reveal_zone` | integer `1..128` | `8`              | Logical pixels from the edge that trigger reveal, capped at the visible bar height. Applies live and supports per-output profiles. |
 | `font`        | string          | `"Adwaita Sans"` | Default font *family name* used across the entire bar. Oxibar resolves it through `fc-match`, loads the matched font file into iced/cosmic-text, then uses the matched family name as iced's `default_font`. Plugins that don't override their own font inherit it. |
 | `font_file`   | string          | _unset_          | Absolute path to a `.ttf` / `.otf` file. When set, this explicit file is loaded instead of the `fc-match` result. The `font` value must still match the family name inside the file. |
 | `start`       | array of string | `[]`             | Plugin names to render in the **start** (left) section, in the given order.                                                                                          |
@@ -106,9 +125,23 @@ the same order as the top-level `plugins = [...]` array — the old single-row
 layout, now deterministic.
 
 Fallback layout starts with the enabled host-owned `"launcher"` and
-`"control-center"` controls, then `"settings"`, then plugins. In explicit layouts,
+`"control-center"` controls, then `"settings"`, enabled `"session"`, then plugins. In explicit layouts,
 add these names to any section to display their buttons; they are host controls,
-not plugin library names. The control-center button is labeled `Controls`.
+not plugin library names. With labels enabled, the control-center button uses `Controls`.
+
+Host actions have shared SVG icons, optional vertically centered labels and theme-derived
+entry spacing. Settings → Bar/Layout shows equal Left, Center and Right columns
+with small widget cards. Drag a card onto another card or a column's append area;
+a noninteractive preview follows the pointer. Up/down actions remain available.
+A drop saves all three arrays atomically and rejects stale starting revisions
+instead of changing a newer layout.
+
+Settings → Bar & layout → **Show bar labels** toggles icon-only rendering live.
+Bar icons stay visually flat on hover; host action icons do not show name tooltips.
+Built-in status providers support
+the same preference without changing their shared model; their popup/details retain
+the full status. Older third-party providers without the optional `bar_view` hook
+keep their legacy rendering. Rebuild/reinstall built-in libraries to use the new hook.
 
 Explicit GUI section overrides suppress fallback even when all arrays are empty,
 allowing the GUI to remove every widget. Resetting those overrides restores the legacy
@@ -116,7 +149,23 @@ fallback. Add `"settings"` to an explicit Nix/base layout to show its button.
 
 Popup size precedence is: `[bar.popup_sizes]` override, runtime
 `popup_metrics(model)`, plugin metadata, then the host default `320 × 300`.
-`audio`, `bluetooth`, and `network` declare `460 × 420` via metadata.
+Audio declares `460 × 640`; Bluetooth and Network declare `460 × 420` via metadata.
+The default audio dropdown and taller control center fit media plus input/output
+controls without scrolling. Popups are bounded to the output's available headroom;
+smaller outputs or explicit size overrides retain scrolling.
+
+For a bottom bar that appears when the pointer approaches it:
+
+```toml
+[bar]
+position = "bottom"
+auto_hide = true
+reveal_zone = 8
+```
+
+The native bar and provider models remain resident. Moving away hides the bar;
+an open dropdown pins it until dismissed. Escape closes every bar dropdown and
+the optional standalone notification panel.
 
 Example:
 
@@ -141,8 +190,10 @@ later pass:
 
 - Layer — `Top`. Will become `[bar] layer = "background" | "bottom" | "top" | "overlay"`.
 - Margins — `(0, 0, 0, 0)`. Will become `[bar] margin = [t, r, b, l]`.
-- Exclusive zone: follows `[bar] height`. A separate `[bar] exclusive_zone = N` may be added later.
-- Keyboard interactivity — `None` for the main bar/popup layer; modal dialogs use `Exclusive`. Will become `[bar] keyboard = "none" | "on-demand" | "exclusive"`.
+- Exclusive zone: follows `[bar] height`, or zero with auto-hide. A separate `[bar] exclusive_zone = N` may be added later.
+- Keyboard interactivity — normally `None`; all attached dropdown menus
+  temporarily request `Exclusive` and restore the bar policy when dismissed.
+  Session owns a separate centered keyboard-focused overlay.
 
 Top/bottom placement is already configured through `bar.position`. Native output
 and buffer scaling follow the compositor through the layer-shell backend.
@@ -167,11 +218,14 @@ center = ["clock"]
 [bar.profiles."DP-2"]
 position = "bottom"
 height = 44
+show_labels = true
+auto_hide = true
+reveal_zone = 8
 center = ["clock"]
 ```
 
-Profiles support `width`, `height`, `transparent`, `position`, `start`, `center`
-and `end`; omitted fields inherit common settings. Profile widget arrays replace
+Profiles support `width`, `height`, `transparent`, `show_labels`, `position`,
+`auto_hide`, `reveal_zone`, `start`, `center` and `end`; omitted fields inherit common settings. Profile widget arrays replace
 the corresponding common arrays. Dimensions and positions are logical units;
 native output/buffer scaling is handled by the layer-shell backend. Top bars place
 popups below; bottom bars place them above, with output-local input regions.
@@ -184,7 +238,8 @@ popups below; bottom bars place them above, with output-local input regions.
 | `bar.output_fallback` | bool | `true` | Fall back to a connected output if all selected outputs disappear. |
 | `monitor.refresh_seconds` | integer `1..3600` | `2` | Background inventory refresh interval; unchanged snapshots are suppressed. |
 
-View the read-only inventory in the Monitors settings page (Alt+6) or:
+View output inventory in Settings → Monitors → Arrange displays (Alt+6 selects
+the Monitors root) or:
 
 ```sh
 oxibar outputs
@@ -198,20 +253,75 @@ generic wl_output/xdg_output provides a Wayland fallback. Refresh rates retain
 fractional precision. Monitor discovery does not change display modes, compositor
 configuration or Nix-managed files.
 
+### Native display configuration
+
+Settings → Monitors → Arrange displays provides a draggable logical-layout diagram and mode/precise
+refresh, scale, X/Y, rotation, enablement and supported VRR controls. Hyprland uses
+native version-aware IPC; wlr-output-management uses actual head/mode proxies and
+configuration serials. Inventory-only backends show unsupported-control diagnostics.
+
+Dragging snaps opposing or matching display edges within 150 logical units,
+following ReSet-style arrangement behavior. Alignment guides show the snapped axes;
+dropping an overlapping display restores its starting position. Geometry respects
+fractional scale, rotation and negative coordinates. Numeric X/Y edits remain exact
+and unsnapped. Arrangement edits do not apply to the compositor until Test layout.
+
+**Test layout** applies a temporary layout with a controller-owned 20-second rollback
+lease. **Keep and save** persists one sparse, revision-checked profile array;
+**Revert**, expiry, failed persistence and orderly controller shutdown restore the
+connected baseline. This never edits the Nix base or compositor dotfiles. Profiles
+retain fractional refresh, negative coordinates and unknown fields. At least one
+output must stay enabled; new/disconnected outputs are handled during rollback.
+In-process rollback cannot execute after an abrupt process kill.
+
+**Apply saved** reapplies profiles explicitly. Startup application is enabled by
+default; `apply_on_start` changes take effect after restarting the shell.
+
+```toml
+[monitor]
+apply_on_start = true
+
+[[monitor.profiles]]
+name = "DP-1"
+enabled = true
+width = 2560
+height = 1440
+refresh_hz = 143.981
+scale = 1.25
+x = -2048
+y = 0
+transform = 0
+# vrr = true # Only when supported by this backend/output.
+```
+
+Bounds: at most 32 unique connectors; width/height `1..16384`, scale `0.25..8`,
+positions `-32768..32768`, transform `0..7`, refresh `0..1000` Hz. Zero denotes
+compositor-defined refresh where advertised by a virtual head. `oxibar status`
+includes editor/preview diagnostics; merely editing saved profile values does not
+substitute for Test Layout/Apply Saved or startup application.
+
 Hotplug creates/removes only the affected surfaces. Popup/modal/panel requests
 follow their originating bar; removed outputs dismiss owned surfaces while
 retaining plugin state. Unknown/retired window events cannot become bars. Plugins
-may optionally export `view_with_context` for output-aware views; existing views
-remain supported.
+may optionally export `bar_view(model, context, show_labels)` for output-aware,
+label-configurable rendering. It takes precedence over `view_with_context` and
+ordinary `view`; those existing hooks remain supported with unchanged signatures.
 
 ## Dock and desktop widgets
 
 The dock shares Applications' resident desktop-entry/icon catalog. Pinned entries
-use desktop IDs, such as `org.gnome.Nautilus.desktop`; running/focused indicators
+use desktop IDs, such as `org.gnome.Nautilus.desktop`; focused accent-hue backgrounds
 and exact-window activation use the host's single Hyprland event broker. Clicking
 an existing window activates it instead of launching another process. Other
 compositors retain pinned launches when window state is unavailable. Inspect cached
 window identities and diagnostics with `oxibar windows` or `oxibar status`.
+Entries have theme-derived gaps and no below-icon dot. Enable Applications for its
+real application catalog/icons; only unresolved icons use the portable fallback.
+
+Application SVGs use the vector renderer; PNG/raster paths use the image renderer.
+Missing icons show a shared portable application icon, not an initial letter.
+Running-window matching prefers explicit window class/desktop identity over a
+generic executable, including Steam game classes derived from their desktop URI.
 
 | `[dock]` key | Default | Meaning |
 | --- | --- | --- |
@@ -281,6 +391,68 @@ when controls exist. Optional `interactive = true/false` overrides it; the edito
 Input button cycles automatic/on/off. Hidden widgets remove surfaces. Clock/Stats
 pause their one refresh stream only when no bar/widget/other consumer remains.
 
+## Window overview
+
+With the resident daemon running:
+
+```sh
+oxibar overview             # toggle
+oxibar overview open
+oxibar overview close
+```
+
+Overview is a host capability; it requires no thumbnail plugin per monitor. Add
+the reserved `overview` item through Bar & layout, or include it in an explicit
+bar section. Bind `oxibar overview` through the compositor for a global shortcut.
+
+Each connected named monitor gets its own large centered modal. Cards show actual
+window content with preserved aspect ratio, title/application labels and themed
+selection. Tab/Shift+Tab cycles windows within the active monitor; h/j/k/l moves
+left/down/up/right between monitors using their logical positions. Arrow keys
+select within the grid, Home/End selects the first/last card, Enter or a click activates
+the exact existing window, and Escape closes all overview surfaces. Keyboard
+selection scrolls into view. Only one monitor owns keyboard focus, and native
+overview grabs retire before activation is sent to the compositor.
+
+| `[overview]` key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Allow overview CLI/bar actions; disabling closes active capture. |
+| `width` / `height` | `1400` / `900` | Maximum centered modal size, bounded to 90% of each output; `320..7680` / `240..4320`. |
+| `refresh_fps` | `8` | Maximum preview cadence, `1..8`; live. |
+| `thumbnail_size` | `512` | Maximum longest thumbnail edge in pixels, `128..640`; rebuilds active capture surfaces. |
+| `columns` | `4` | Maximum columns, `1..8`; grids adapt to available logical width. |
+
+```toml
+[bar]
+start = ["overview", "launcher", "settings"]
+
+[overview]
+enabled = true
+width = 1400
+height = 900
+refresh_fps = 8
+thumbnail_size = 512
+columns = 4
+```
+
+These preferences are in Settings → Launcher and apply without daemon restart.
+Navigation bindings are in Settings → Shortcuts.
+Capture prefers modern ext toplevel source/copy protocols with an exact Hyprland
+mapping/wlr activation bridge, or Hyprland export v2 with an exact wlr handle.
+Unsupported or denied capture is reported explicitly; an output crop or icon is
+not substituted for an occluded window. Sway 1.11 can list/activate windows but
+does not provide a supported per-window preview path here. Other compositor
+extensions remain capability-dependent.
+
+One visible-owned worker handles all monitors. At most two captures/one per window
+are in flight, with 64 MiB staging and 96 MiB thumbnail image data, up to 256 windows.
+Capture pixels stay in memory and clear on close, denial or source retirement.
+Closed overview retains no capture worker, session or pixel cache. Modern frames
+can wait for source damage/readiness; legacy export refreshes at the configured
+bounded cadence. `oxibar status` reports capabilities, window identities, output
+groups and budgets, without exposing captured pixel bytes. See the implemented
+[overview design](docs/WINDOW_OVERVIEW_PLAN.md) for protocol/proof boundaries.
+
 ## Resident launcher
 
 Start `oxibar` once from the compositor/session startup configuration, then bind
@@ -335,6 +507,20 @@ refresh_seconds = 300
 | `enabled` | bool | `true` | Enable launcher surfaces, bar control and command listener. |
 | `width` / `height` | integer (`> 0`) | `600` / `600` | Overlay dimensions in logical units. |
 | `max_entries` | integer (`> 0`) | `7` | Maximum globally ranked visible results, capped at `50`. |
+| `default_plugins` | string array | `[]` | Additional installed provider filenames, deduplicated with `plugins`; live. |
+
+Settings → Launcher has a **Default launcher plugins** switch for installed
+Applications and Tools, plus individual provider switches and diagnostics. It
+writes a sparse `launcher.default_plugins` list and loads installed providers
+immediately; it does not install libraries or initialize a second copy.
+Turning it off does not remove a provider explicitly enabled in ordinary/Nix
+`plugins`. Disabling a provider in the installed catalog removes it from both lists.
+
+```toml
+plugins = ["libclock.so"]
+[launcher]
+default_plugins = ["libapplications.so", "libtools.so"]
+```
 
 ### `[applications]` — application provider
 
@@ -345,7 +531,7 @@ refresh_seconds = 300
 | `refresh_seconds` | integer (`> 0`) | `300` | Background index refresh interval; opening/querying never scans the filesystem. |
 | `prefix` | string | `"a "` | Application-only prefix, including its trailing space; live. |
 | `locale` | string | `""` | Live desktop-entry locale; empty uses `LC_ALL`, `LC_MESSAGES`, then `LANG`. |
-| `icon_theme` | string | `"hicolor"` | Live icon theme with inherited parents and hicolor fallback. |
+| `icon_theme` | string | `"auto"` | Live GTK4/GTK3/KDE icon-theme detection, or an explicit theme; inherited parents and hicolor fallback. |
 | `favorites` | string array | `[]` | Live desktop/action IDs; normally changed with result stars. |
 
 The provider searches desktop entry names, categories, keywords and generic names.
@@ -354,7 +540,10 @@ directories take precedence over system directories, including hidden-entry
 masking. Commands use argument-based process launching and support common desktop
 Exec field codes. Localized desktop actions are separate stable choices and are
 excluded from the dock catalog. Icons honor theme inheritance, user precedence,
-pixmaps and absolute paths. Filesystem changes refresh the resident index with
+pixmaps, absolute paths and names with `.svg`/`.png` suffixes. Nix user profiles,
+`NIX_PROFILES`, per-user system profiles and current-system data directories are
+also searched, even with an incomplete session `XDG_DATA_DIRS`; XDG paths retain
+precedence. An empty index reports its searched directories. Filesystem changes refresh the resident index with
 debouncing; the interval is a fallback. Latest-only index/query workers cancel
 superseded work. See `docs/TECHNICAL_DEBT.md` for remaining desktop-entry coverage.
 
@@ -425,23 +614,28 @@ oxibar control-center close
 ```
 
 The center combines existing audio/media, network, Bluetooth, battery,
-notification, calendar and System controls in the resident host. Alt+number selects a
-provider tile; Escape closes this surface. The same plugin models/subscriptions
+notification, calendar and System controls inside its source bar by default. Clock
+opens it with the configured calendar selected. Alt+number selects a left-menu
+entry; Escape closes the dropdown without removing the bar. The same models/subscriptions
 serve bar, popup/panel and center, including password/pairing modals and
 notification actions/replies. Settings, launcher and center dismiss each other.
 
 ```toml
 [control_center]
 enabled = true
-width = 680
-height = 760
+width = 960
+height = 960
+presentation = "dropdown"
+attach_to_clock = true
 widgets = ["Audio", "Network", "Bluetooth", "Battery", "Notifications", "Clock", "System"]
 ```
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `enabled` | bool | `true` | Enable the overlay, bar control and open/toggle commands. |
-| `width` / `height` | integer `1..16384` | `680` / `760` | Overlay dimensions in logical units; live resize. |
+| `enabled` | bool | `true` | Enable center content, bar control and open/toggle commands. |
+| `width` / `height` | integer `1..16384` | `960` / `960` | Logical dimensions; attached content is clamped to output headroom. |
+| `presentation` | `"dropdown"` / `"window"` | `"dropdown"` | Attached bar menu or optional standalone overlay. |
+| `attach_to_clock` | bool | `true` | Clock opens the center/calendar instead of an independent popup. |
 | `widgets` | string array | Seven providers shown above | Ordered plugin names, matched case-insensitively and deduplicated. Empty means no controls. |
 
 Only running, available plugins with dedicated control-center or popup/panel
@@ -450,16 +644,88 @@ configure `plugins` and packaged libraries as usual. Plugins may optionally
 export `control_center_view`; legacy popup/panel content remains supported.
 
 Preferences apply live and are editable on the Control Center settings page
-(Alt+7). Tiles collapse to one column at narrow widths, and detail content scrolls.
+(Alt+7). Left navigation stays visible; only selected detail content scrolls.
 Opening from a bar targets that output; global commands use focused-output
-selection. Hiding bars retains the center; removing its output closes the surface
-without discarding plugin state.
+selection. Attached menus close with their owning bar; optional standalone centers
+remain available when bars are hidden. Output removal closes affected surfaces
+without discarding plugin state. Drawing, input and outside dismissal use the same
+actual clicked-button offset, clamped to output edges.
 
 Selecting Notifications closes visible toasts and suppresses new notification
 toasts while that inbox is visible. Stored notifications remain available; later
 toasts resume after switching away or closing. Native audio and BlueZ devices are
 supported. System adds brightness, power profiles and session actions. More shell
 features remain tracked in `docs/SHELL_ROADMAP.md`.
+
+### Inbox and session menu
+
+Notifications opens its shared bar inbox by default, retaining inline replies, DND
+and records. Escape/Close dismisses it without deleting notifications; selecting
+that inbox suppresses visible toasts. Disable integration for the separate panel.
+
+The reserved `"session"` bar item opens a centered OxiShut-style menu, up to
+800×480 logical units and bounded to 90% of its output. Three equal columns contain
+large icon-only action tiles with themed neutral fills, accent selection, hover
+descriptions and a selected-action label. The six default actions form two rows.
+Choices come from the existing System provider's cached capabilities. Lock invokes
+its configured locker; logout/power choices open the ordinary confirmation modal
+before native logind/policy delegation. The menu releases its surface before that
+handoff and preserves the originating output. Arrow/Tab navigation and Enter are
+scoped to its current window and skip unavailable actions.
+Compositor bindings can open the same resident menu directly:
+
+```sh
+oxibar session           # toggle
+oxibar session open
+oxibar session close
+oxibar session toggle
+```
+
+Repeated `open` keeps the existing surface. These commands show the menu; choosing
+an action uses its ordinary capability and confirmation flow. The version-1 IPC
+request is `{"version":1,"command":"session","action":"open"}`.
+
+If System is disabled, the menu offers a Plugin settings button; enable the
+installed `libsystem.so` there without restarting. A missing library is explicitly
+marked as needing the System plugin package.
+
+```toml
+[menus]
+notifications_dropdown = true
+notification_width = 600
+notification_height = 640
+session_enabled = true
+session_actions = ["lock", "logout", "suspend", "hibernate", "reboot", "power-off"]
+```
+
+Ordering/inclusion is configurable; unavailable actions are disabled. Control
+center and inbox commands retain standalone/panel fallback when no bar exists.
+For an independent clock popup, set `control_center.attach_to_clock = false`.
+For OxiShut's three-action arrangement, set
+`menus.session_actions = ["power-off", "reboot", "suspend"]`.
+
+## Notification and music toast placement
+
+Notification toasts and Audio's music/media-volume feedback share an output-local
+stack. Their chosen edges align; notifications appear first and music occupies the
+next slot. Updating placement, resizing or dismissing a notification restacks live.
+
+```toml
+[toasts]
+position = "top-right"
+margin = 16
+spacing = 12
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `position` | string | `"top-right"` | `top-left`, `top-center`, `top-right`, `bottom-left`, `bottom-center` or `bottom-right`. |
+| `margin` | integer `0..16384` | `16` | Logical distance from the selected vertical and horizontal output edges. |
+| `spacing` | integer `0..16384` | `12` | Logical gap between stack entries. |
+
+All fields apply live in Settings → Appearance. Music remains read-only and
+pointer-transparent; notifications retain their existing actions and inline replies.
+Device-volume and brightness OSDs continue to use `[osd]` placement below.
 
 ## OSDs and resident actions
 
@@ -503,6 +769,8 @@ OSDs are pointer-transparent and take no keyboard focus or exclusive zone. One
 instance per output coalesces updates and renews expiry. Initial snapshots are
 quiet; successful actions stay on their original output, while external changes
 follow focus. Disabling OSDs does not disable provider actions.
+Audio `media` and `media-volume` use `[toasts]` positioning while retaining the OSD
+size and timeout; other topics use `[osd]` position and margin.
 
 The version-1 action request uses `provider`, `action` and `args`:
 
@@ -512,8 +780,9 @@ The version-1 action request uses `provider`, `action` and `args`:
 
 ## Live theme preferences
 
-The default remains the existing oxiced seed palette (including a configured
-oxiced theme file). Host and upgraded libraries receive one immutable snapshot;
+The built-in Catppuccin palette uses readable muted text, neutral hover surfaces
+and contrasting text on filled accents. Explicit colors in an existing oxiced
+theme file remain authoritative. Host and upgraded libraries receive one immutable snapshot;
 older providers without a theme hook keep their fallback. Theme changes do not
 restart services or discard plugin state.
 
@@ -526,6 +795,7 @@ restart services or discard plugin state.
 | `reduced_motion` | `false` | Render final layout directly when true. |
 | `animation_ms` | `150` | `0..1000`; zero also bypasses animation. |
 | `radius` | inherited | Optional `0..128`; reset reveals the seed radius. |
+| `accent` | inherited | Optional final RGB/RGBA accent; shared by all upgraded surfaces. |
 
 `[theme.palette]` accepts declared color roles as `RRGGBB`/`RRGGBBAA`, optionally
 prefixed by `#`. The Theme settings page lists all roles with source/reset controls.
@@ -533,6 +803,54 @@ Font files are resolved/read with bounds and uploaded before the family switches
 late font work cannot overwrite newer preferences. Glyph icons keep their icon font.
 `bar.font`/`bar.font_file` remain legacy startup settings; use `theme.font` for live
 changes. Explicit plugin-specific font sizes remain their own settings.
+
+### Base16/Base24 scheme and contrast
+
+`theme.base24` supports all slots `base00` through `base17`. It also accepts a
+Base16 scheme's `base00`–`base0f` without extra colors. Partial schemes inherit
+the validated seed; when a Base16 slot is supplied, missing extensions derive as
+`10←01`, `11←00`, `12←08`, `13←0a`, `14←0b`, `15←0c`, `16←0d`, `17←0e`.
+Explicit Base24 extensions win. Semantic `theme.palette` overrides follow scheme mapping and
+`theme.accent` is final. Extra bright red/yellow/green/cyan/blue/magenta states use
+`base12`–`base17`; settings/forms do not receive a separate palette.
+
+Schemes are compatibility inputs, while widgets consume semantic roles. Automatic
+normal/muted text and filled-control text target WCAG 4.5:1 across their opaque
+idle/hover/pressed backgrounds; shared accent-text helpers adjust a display color
+without changing the requested accent. Neutral hover stays neutral. Explicit
+semantic color overrides are preserved, including intentionally low-contrast ones;
+transparent surfaces depend on their backdrop.
+
+This keeps Base24 useful for dashNix/tinted-theming and accepts Stylix's Base16
+colors through the same table. A GUI should not use terminal/syntax slots directly:
+Catppuccin Mocha's `base04` is Surface2, which is too dim for ordinary helper text.
+Keep the adapter and semantic roles rather than replace them with another scheme.
+See the [Base16 specification](https://github.com/tinted-theming/home/blob/main/styling.md),
+[Catppuccin Base24 source](https://github.com/tinted-theming/schemes/blob/spec-0.11/base24/catppuccin-mocha.yaml)
+and [Stylix palette API](https://github.com/nix-community/stylix/blob/master/stylix/palette.nix).
+
+```toml
+[theme]
+accent = "#ffc857"
+
+[theme.base24]
+base00 = "#20252e" # Mantle/background chrome.
+base01 = "#252b36"
+base05 = "#eef2f6" # Ordinary text.
+base0d = "#86b8e8" # Primary when no accent override is set.
+base10 = "#2d3542" # Neutral form cards.
+base12 = "#f09090"
+base13 = "#f8da8e"
+base14 = "#b9dc9c"
+base15 = "#98dbd4"
+base16 = "#a4c9ee"
+base17 = "#d3b4ee"
+```
+
+Standalone `$XDG_CONFIG_HOME/oxiced/theme.toml` accepts flat slot keys or `[base24]`
+and top-level `accent`. Slots are case-insensitive; duplicate spellings are rejected.
+Use canonical lowercase host keys for GUI fields. Settings → Theme displays the
+accent, all 24 slots and inherited semantic colors; Reset reveals the scheme/seed.
 
 ```toml
 [theme]
@@ -559,21 +877,62 @@ oxibar settings open
 oxibar settings close
 ```
 
-Pages cover Appearance, Bar/Layout, Launcher, Plugins, Advanced, Monitors,
-Control Center, Dock, Desktop widgets and Theme. Search spans all declared settings. Fields show effective value,
-base/default value, source
+Root categories cover Appearance, Bar/Layout, Launcher, Plugins, Advanced, Monitors,
+Control Center, Dock, Desktop widgets, Theme and Shortcuts. Each expands into nested
+pages: for example Appearance → Notifications & feedback → Notification toasts,
+and Theme → Colors → Base24 palette. Search spans all declared settings independently
+of the selected page. Fields show effective value, base/default value, source
 and application mode. Text/number drafts save with Enter/Apply; switch/pick-list
 changes save immediately. Reset removes the GUI override and reveals the current
-base/default. The Advanced page edits sparse override TOML while preserving
+base/default. Advanced → GUI overrides edits sparse override TOML while preserving
 unknown plugin fields.
 
 Forms use spacious themed cards, normal-sized actions and switches. Desktop
-widths use category navigation on the left; narrow widths use a category picker.
+widths use indented expandable navigation on the left, with animated child groups,
+child-page cards and clickable breadcrumbs. Opening another root folds the previous
+root while retaining its nested expansion state. Narrow widths use a full-path page
+picker. Live motion preferences control expansion; reduced/zero motion is immediate.
+Default settings dimensions are **1440×960**, configurable with `settings.width` /
+`settings.height`. Navigation and cards reserve scrollbar gutters. Cards and menu
+selection use the same neutral theme roles as launcher/bar controls.
 
 Keyboard controls: Ctrl+F focuses search, Alt+1 through Alt+9 selects the first nine
-pages and Alt+0 selects Theme,
+root categories, Alt+0 selects Theme and Alt+S selects Shortcuts,
 Tab/Shift+Tab traverses text fields, Enter applies a field, and Escape closes the
 settings surface. Settings access remains available when the launcher is disabled.
+
+### Shortcuts
+
+Settings → Shortcuts contains every host-owned key binding: overlay dismissal,
+form traversal, settings search/categories, control-center sections, launcher,
+session, overview and desktop editing. Changes apply live. Global daemon-opening
+bindings remain in the compositor configuration.
+
+Bindings are comma-separated alternatives with `Ctrl`, `Alt`, `Shift` or `Super`
+modifiers joined by `+`. Named keys include `Escape`, `Enter`, `Tab`, `Space`,
+`ArrowLeft/Down/Up/Right`, `Home`, `End`, `PageUp/Down`, `Backspace`, `Delete`
+and `F1`–`F12`; use `Plus`/`Comma` for literal separator keys. An empty string
+disables an action. Invalid names and conflicting bindings in overlapping contexts
+are rejected before saving; unrelated surfaces may reuse a key.
+
+```toml
+[shortcuts]
+close = "Escape"
+focus_next = "Tab"
+focus_previous = "Shift+Tab"
+
+[shortcuts.overview]
+next_window = "Tab"
+previous_window = "Shift+Tab"
+monitor_left = "h"
+monitor_down = "j"
+monitor_up = "k"
+monitor_right = "l"
+activate = "Enter"
+
+[shortcuts.settings]
+search = "Ctrl+f"
+```
 
 Base `config.toml` may remain an immutable Home Manager/Nix-store symlink. Oxibar
 never writes it. Override writes are validated, revision-checked, owner-only and
@@ -594,9 +953,10 @@ height then reveals 34. Unoverridden fields follow the regenerated base.
 
 ### Application modes
 
-- **Live / surface update:** bar transparency/order/geometry, launcher enablement,
+- **Live / surface update:** bar transparency/order/geometry/edge reveal, toast placement, launcher enablement,
   dimensions and result limit, settings/control-center dimensions, control-center
   enablement/order, OSD preferences, output selection/profiles, inventory interval,
+  inbox/session preferences, Base24/accent and saved display profile values,
   application-provider terminal and result limit, clock text size/bold/calendar
   command, notification default timeout, preferred backlight and locker preferences.
   Dock geometry/content, desktop layout/input, theme preferences and supported runner
@@ -608,7 +968,7 @@ height then reveals 34. Unoverridden fields follow the regenerated base.
   Pending changes are displayed; loaded plugin models and system functionality stay
   available until restart. Resetting back to the running value clears the indicator.
 - Plugin schemas/hooks are optional. Legacy plugin settings can be edited through
-  Advanced and are treated as restart-only. Plugins are selected from installed
+   Advanced → GUI overrides and are treated as restart-only. Plugins are selected from installed
   libraries; adding missing packages remains a Nix/package-manager operation.
 
 Explicit surface dimensions are validated within `1..16384` logical units.
@@ -620,8 +980,15 @@ zone and input regions.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `width` | positive integer | `960` | Settings surface width. |
-| `height` | positive integer | `720` | Settings surface height. |
+| `width` | positive integer | `1440` | Settings surface width. |
+| `height` | positive integer | `960` | Settings surface height. |
+
+Reset all overrides sits in the header, immediately left of Reload and Close.
+Save/reload messages occupy a compact fixed-height footer row. Settings keep the same
+surface and form geometry while applying changes; long diagnostics scroll within
+that row instead of resizing the form viewport. Selected pages, expansion state
+and unapplied drafts survive configuration saves/reloads. The configuration
+directory is shown on Advanced → GUI overrides.
 
 ### Configuration commands
 

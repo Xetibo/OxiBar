@@ -6,7 +6,8 @@ use std::{
 use iced::{Color, Font};
 use toml::Table;
 
-use super::theme_impl::{ComputedOxiTheme, LEGACY_THEME};
+use super::base24::Base24;
+use super::theme_impl::{ComputedOxiTheme, LEGACY_SEED, LEGACY_THEME};
 use crate::utils::color::{darken_color, lighten_color};
 
 pub const MAX_THEME_VALUES: usize = 128;
@@ -51,6 +52,8 @@ pub struct ThemeSnapshot {
     pub font_scale: f32,
     pub reduced_motion: bool,
     pub animation_ms: u32,
+    pub base24: Base24,
+    pub accent: Option<Color>,
 }
 
 impl ThemeSnapshot {
@@ -64,6 +67,8 @@ impl ThemeSnapshot {
             font_scale: 1.0,
             reduced_motion: false,
             animation_ms: 150,
+            base24: LEGACY_SEED.base24.clone(),
+            accent: LEGACY_SEED.accent,
         }
     }
 
@@ -126,10 +131,27 @@ impl ThemeSnapshot {
             return Err("theme.animation_ms: expected 0..1000".into());
         }
         snapshot.animation_ms = duration as u32;
+        let base24 = theme.and_then(|theme| theme.get("base24"));
+        let configured_scheme = if let Some(table) = base24 {
+            let table = table.as_table().ok_or("theme.base24: expected a table")?;
+            snapshot.base24.configure(table)?;
+            !table.is_empty()
+        } else {
+            false
+        };
+        if configured_scheme {
+            snapshot.base24.apply(&mut snapshot.tokens);
+        }
+        let mut roles = if configured_scheme {
+            Table::new()
+        } else {
+            LEGACY_SEED.roles.clone()
+        };
         if let Some(palette) = theme.and_then(|theme| theme.get("palette")) {
             let palette = palette
                 .as_table()
                 .ok_or("theme.palette: expected a table")?;
+            roles.extend(palette.clone());
             for role in COLOR_ROLES {
                 if let Some(value) = palette.get(*role) {
                     let color = parse_color(
@@ -141,7 +163,28 @@ impl ThemeSnapshot {
                 }
             }
         }
+        if let Some(accent) = theme.and_then(|theme| theme.get("accent")) {
+            let accent = parse_color(accent.as_str().ok_or("theme.accent: expected a color")?)?;
+            snapshot.accent = Some(accent);
+            snapshot.base24.colors[0x0d] = accent;
+            snapshot.tokens.primary = accent;
+            snapshot.tokens.blue = accent;
+            snapshot.tokens.border_color_strong = accent;
+            snapshot.tokens.primary_contrast = snapshot.base24.contrast(accent);
+        }
         derive_states(&mut snapshot.tokens);
+        if configured_scheme || LEGACY_SEED.configured {
+            snapshot.base24.apply_bright_states(
+                &mut snapshot.tokens,
+                Some(&roles),
+                snapshot.accent.is_some(),
+            );
+        }
+        snapshot.base24.apply_contrast(
+            &mut snapshot.tokens,
+            Some(&roles),
+            snapshot.accent.is_some(),
+        );
         let density = snapshot.density
             * match snapshot.preset.as_str() {
                 "compact" => 0.85,
@@ -183,6 +226,10 @@ impl ThemeSnapshot {
         } else {
             u64::from(self.animation_ms)
         })
+    }
+
+    pub fn palette_color(&self, role: &str) -> Option<Color> {
+        color_mut(&mut self.tokens.clone(), role).copied()
     }
 }
 
@@ -230,7 +277,7 @@ pub fn legacy_colors() -> Vec<(String, String)> {
         .collect()
 }
 
-fn color_mut<'a>(tokens: &'a mut ComputedOxiTheme, role: &str) -> Option<&'a mut Color> {
+pub(crate) fn color_mut<'a>(tokens: &'a mut ComputedOxiTheme, role: &str) -> Option<&'a mut Color> {
     Some(match role {
         "base" => &mut tokens.base,
         "mantle" => &mut tokens.mantle,
@@ -264,7 +311,7 @@ fn color_mut<'a>(tokens: &'a mut ComputedOxiTheme, role: &str) -> Option<&'a mut
     })
 }
 
-fn derive_states(tokens: &mut ComputedOxiTheme) {
+pub(crate) fn derive_states(tokens: &mut ComputedOxiTheme) {
     for (base, hover, active) in [
         (
             tokens.mantle,
@@ -287,8 +334,13 @@ fn derive_states(tokens: &mut ComputedOxiTheme) {
             &mut tokens.tertiary_bg_active,
         ),
     ] {
-        *hover = lighten_color(&base, tokens.tint_amount);
-        *active = lighten_color(&base, tokens.shade_amount);
+        let adjust = if super::contrast::luminance(base) > super::contrast::luminance(tokens.text) {
+            darken_color
+        } else {
+            lighten_color
+        };
+        *hover = adjust(&base, tokens.tint_amount);
+        *active = adjust(&base, tokens.shade_amount);
     }
     for (base, hover, active, active_amount) in [
         (

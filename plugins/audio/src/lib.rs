@@ -62,7 +62,7 @@ pub extern "Rust" fn settings_schema() -> Vec<oxibar_plugin_api::SettingDescript
     ]
 }
 const AUDIO_ICON: &str = "󰕾";
-const POPUP_SIZE: (u32, u32) = (460, 420);
+const POPUP_SIZE: (u32, u32) = (460, 640);
 const ARTWORK_PREVIEW_SIZE: u32 = 76;
 const ARTWORK_ICON_SIZE: f32 = 30.0;
 const MAX_DEVICE_VOLUME: u8 = 150;
@@ -549,38 +549,59 @@ pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    bar_elements(model, true)
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn bar_view(
+    model: PluginModel,
+    _: oxibar_plugin_api::PluginViewContext,
+    show_labels: bool,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    bar_elements(model, show_labels)
+}
+
+fn bar_elements(
+    model: PluginModel,
+    show_labels: bool,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
         let device = selected_device(
             &model.snapshot.outputs,
             model.snapshot.default_output.as_deref(),
         );
-        let content: Element<'static, PluginMsg> = if let Some(device) = device {
-            Row::new()
-                .push(
-                    text(if device.muted { "󰝟" } else { AUDIO_ICON })
+        let content: Element<'static, PluginMsg> =
+            if let Some(device) = device.filter(|_| show_labels) {
+                Row::new()
+                    .push(
+                        text(if device.muted { "󰝟" } else { AUDIO_ICON })
+                            .size(OXITHEME.font_md)
+                            .align_y(Alignment::Center),
+                    )
+                    .push(
+                        text(if device.muted {
+                            "Muted".to_owned()
+                        } else {
+                            format!("{}%", device.volume)
+                        })
                         .size(OXITHEME.font_md)
                         .align_y(Alignment::Center),
-                )
-                .push(
-                    text(if device.muted {
-                        "Muted".to_owned()
-                    } else {
-                        format!("{}%", device.volume)
-                    })
-                    .size(OXITHEME.font_md)
-                    .align_y(Alignment::Center),
-                )
-                .spacing(OXITHEME.padding_xs)
-                .height(Length::Fill)
-                .align_y(Alignment::Center)
-                .into()
-        } else {
-            text(AUDIO_ICON)
+                    )
+                    .spacing(OXITHEME.padding_xs)
+                    .height(Length::Fill)
+                    .align_y(Alignment::Center)
+                    .into()
+            } else {
+                text(if device.is_some_and(|device| device.muted) {
+                    "󰝟"
+                } else {
+                    AUDIO_ICON
+                })
                 .size(OXITHEME.font_md)
                 .align_y(Alignment::Center)
                 .align_x(Alignment::Center)
                 .into()
-        };
+            };
         let btn = oxi_plugin::bar_button(content).on_press(msg(Message::TogglePopup));
 
         vec![btn.into()]

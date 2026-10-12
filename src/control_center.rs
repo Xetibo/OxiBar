@@ -1,6 +1,6 @@
 use iced::{
     Alignment, Element, Length, Task,
-    widget::{Column, Row, Space, container, scrollable},
+    widget::{Column, Row, Space, container},
 };
 use iced_layershell::reexport::IcedId;
 use oxiced::widgets::oxi_plugin::text;
@@ -8,7 +8,6 @@ use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_plugin};
 
 use crate::{
     app::OxiBar,
-    layout,
     messages::{Message, map_plugin_message},
     plugins::render_plugin_control_center,
     shell::SurfaceKind,
@@ -26,6 +25,7 @@ pub enum Action {
 #[derive(Default)]
 pub(crate) struct ControlCenter {
     pub window_id: Option<IcedId>,
+    pub attached_to: Option<IcedId>,
     pub selected: Option<String>,
 }
 
@@ -69,6 +69,11 @@ impl OxiBar {
                 {
                     return Task::none();
                 }
+                if self.config.snapshot.host.menus.controls_dropdown
+                    && let Some(bar) = self.dropdown_bar()
+                {
+                    return self.open_attached_controls(bar, None);
+                }
                 let id = IcedId::unique();
                 let output = self.overlay_output();
                 self.register_overlay(
@@ -87,10 +92,12 @@ impl OxiBar {
                     Task::none()
                 };
                 Task::batch([
+                    self.close_overview(),
                     self.close_launcher(),
                     self.close_settings(),
                     self.close_modal(),
                     self.close_panel(),
+                    self.close_bar_dropdown(),
                     self.close_control_center_toasts(),
                     close_editor,
                     self.current_input_region_task(),
@@ -136,6 +143,9 @@ impl OxiBar {
     }
 
     pub(crate) fn close_control_center(&mut self) -> Task<Message> {
+        if self.control_center.attached_to.is_some() {
+            return self.close_bar_dropdown();
+        }
         self.control_center
             .window_id
             .take()
@@ -144,6 +154,48 @@ impl OxiBar {
                 Task::done(Message::RemoveSurface(id))
             })
             .unwrap_or_else(Task::none)
+    }
+
+    pub(crate) fn open_attached_controls(
+        &mut self,
+        bar: IcedId,
+        selected: Option<String>,
+    ) -> Task<Message> {
+        if self.shell.bar(bar).is_none() || !self.config.snapshot.host.control_center_enabled {
+            return Task::none();
+        }
+        let close = self.close_control_center();
+        let close_popup = self.close_bar_dropdown();
+        let dismiss = Task::batch([
+            self.close_overview(),
+            close,
+            close_popup,
+            self.close_launcher(),
+            self.close_settings(),
+            self.close_modal(),
+            self.close_panel(),
+        ]);
+        self.control_center.window_id = Some(bar);
+        self.control_center.attached_to = Some(bar);
+        self.normalize_control_center_selection();
+        if let Some(selected) = selected.and_then(|selected| {
+            self.control_center_plugins()
+                .into_iter()
+                .find(|name| name.eq_ignore_ascii_case(&selected))
+        }) {
+            self.control_center.selected = Some(selected);
+        }
+        self.shell.popup_bar = Some(bar);
+        self.popup_plugin = Some("@control-center".into());
+        self.popup_open = true;
+        dismiss.chain(Task::batch([
+            self.current_input_region_task(),
+            self.close_control_center_toasts(),
+            Task::done(Message::SetToastKeyboardInteractivity(
+                bar,
+                iced_layershell::reexport::KeyboardInteractivity::Exclusive,
+            )),
+        ]))
     }
 
     pub(crate) fn control_center_view(&self) -> Element<'_, Message> {
@@ -156,11 +208,6 @@ impl OxiBar {
                             .size(OXITHEME.font_xxl)
                             .style(oxi_plugin::text_primary),
                     )
-                    .push(
-                        text("Everything within reach")
-                            .size(OXITHEME.font_md)
-                            .style(oxi_plugin::text_muted),
-                    )
                     .spacing(OXITHEME.padding_sm)
                     .width(Length::Fill),
             )
@@ -170,47 +217,25 @@ impl OxiBar {
             )
             .spacing(OXITHEME.padding_lg)
             .align_y(Alignment::Center);
-        let columns = if self.config.snapshot.host.control_center_size.0
-            < layout::CONTROL_CENTER_SINGLE_COLUMN_WIDTH
-        {
-            1
-        } else {
-            2
-        };
-        let mut body = Column::new()
-            .spacing(OXITHEME.padding_xl)
-            .width(Length::Fill);
-        let mut tiles = Column::new().spacing(OXITHEME.padding_md);
-        for group in plugins.chunks(columns) {
-            let mut row = Row::new().spacing(OXITHEME.padding_md);
-            for plugin in group {
-                let selected = self.control_center.selected.as_ref() == Some(plugin);
-                row = row.push(
-                    oxi_plugin::selectable_row(
-                        Column::new()
-                            .push(
-                                text(plugin.clone())
-                                    .size(OXITHEME.font_lg)
-                                    .style(oxi_plugin::text_primary),
-                            )
-                            .push(
-                                text(control_description(plugin))
-                                    .size(OXITHEME.font_md)
-                                    .style(oxi_plugin::text_muted),
-                            )
-                            .spacing(OXITHEME.padding_sm),
-                        selected,
-                    )
-                    .padding(OXITHEME.padding_lg)
-                    .on_press(Message::ControlCenter(Action::Select(plugin.clone()))),
-                );
-            }
-            if group.len() < columns {
-                row = row.push(Space::new().width(Length::Fill));
-            }
-            tiles = tiles.push(row);
+        let mut navigation = Column::new().spacing(OXITHEME.padding_xs).width(180);
+        for plugin in &plugins {
+            navigation = navigation.push(
+                oxi_plugin::navigation_row(
+                    text(plugin.clone()).size(OXITHEME.font_md),
+                    self.control_center.selected.as_ref() == Some(plugin),
+                )
+                .padding([OXITHEME.padding_sm, OXITHEME.padding_md])
+                .on_press(Message::ControlCenter(Action::Select(plugin.clone()))),
+            );
         }
-        body = body.push(tiles);
+        let fill_height = self
+            .control_center
+            .selected
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case("clock"));
+        let mut body = Column::new()
+            .spacing(OXITHEME.padding_lg)
+            .width(Length::Fill);
         if let Some(selected) = &self.control_center.selected {
             if let Some((model, funcs)) = self.plugins.get(selected) {
                 let mut detail = Column::new()
@@ -218,6 +243,11 @@ impl OxiBar {
                         text(selected)
                             .size(OXITHEME.font_xl)
                             .style(oxi_plugin::text_primary),
+                    )
+                    .push(
+                        text(control_description(selected))
+                            .size(OXITHEME.font_md)
+                            .style(oxi_plugin::text_muted),
                     )
                     .spacing(OXITHEME.padding_lg)
                     .width(Length::Fill);
@@ -246,7 +276,11 @@ impl OxiBar {
                         )
                     }
                 }
-                body = body.push(oxi_plugin::settings_card(detail));
+                body = body.push(if fill_height {
+                    oxi_plugin::settings_card(detail.height(Length::Fill)).height(Length::Fill)
+                } else {
+                    oxi_plugin::settings_card(detail)
+                });
             }
         } else {
             body = body.push(oxi_plugin::settings_card(Column::new()
@@ -254,11 +288,20 @@ impl OxiBar {
                 .push(text("Enable plugins in Settings, then choose their names in Control center preferences.").size(OXITHEME.font_md).style(oxi_plugin::text_muted))
                 .spacing(OXITHEME.padding_md)));
         }
+        let content: Element<'_, Message> = if fill_height {
+            body.height(Length::Fill).into()
+        } else {
+            oxi_plugin::scroll_panel(body).into()
+        };
         let footer = Row::new()
             .push(
-                text("Alt + number to switch · Esc to close")
-                    .size(OXITHEME.font_sm)
-                    .style(oxi_plugin::text_muted),
+                text(format!(
+                    "{}: first section · {}: close · All keys in Shortcuts",
+                    self.shortcut_label("controls.section_1"),
+                    self.shortcut_label("close")
+                ))
+                .size(OXITHEME.font_sm)
+                .style(oxi_plugin::text_muted),
             )
             .push(Space::new().width(Length::Fill))
             .push(
@@ -271,14 +314,16 @@ impl OxiBar {
             Column::new()
                 .push(header)
                 .push(
-                    scrollable(
-                        container(body).padding(iced::Padding::ZERO.right(OXITHEME.padding_md)),
-                    )
-                    .height(Length::Fill),
+                    Row::new()
+                        .push(navigation)
+                        .push(content)
+                        .spacing(OXITHEME.padding_xl)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
                 )
                 .push(footer)
-                .padding(OXITHEME.padding_xl)
-                .spacing(OXITHEME.padding_xl)
+                .padding(OXITHEME.padding_lg)
+                .spacing(OXITHEME.padding_lg)
                 .height(Length::Fill)
                 .width(Length::Fill),
         )
@@ -297,29 +342,7 @@ fn control_description(name: &str) -> &'static str {
         "battery" => "Charge & remaining time",
         "notifications" => "Inbox & do not disturb",
         "clock" => "Calendar & events",
+        "system" => "Brightness & power",
         _ => "Plugin controls",
-    }
-}
-
-pub(crate) fn key_event(
-    event: iced::Event,
-    status: iced::event::Status,
-    id: IcedId,
-) -> Option<Message> {
-    use iced::keyboard::{Event, Key, key::Named};
-    let iced::Event::Keyboard(Event::KeyPressed { key, modifiers, .. }) = event else {
-        return None;
-    };
-    match key {
-        Key::Named(Named::Escape) => Some(Message::ControlCenterKey(id, Action::Close)),
-        Key::Named(Named::Tab) if status == iced::event::Status::Ignored => {
-            Some(Message::ControlCenterFocus(id, !modifiers.shift()))
-        }
-        Key::Character(key) if modifiers.alt() => key
-            .parse::<usize>()
-            .ok()
-            .and_then(|index| index.checked_sub(1))
-            .map(|index| Message::ControlCenterKey(id, Action::SelectIndex(index))),
-        _ => None,
     }
 }

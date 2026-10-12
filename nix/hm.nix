@@ -43,7 +43,7 @@ in {
       default = [];
       description = mdDoc ''
         Additional plugin libraries installed in the GUI catalog without enabling
-        them in the immutable base configuration. GUI enablement requires restart.
+         them in the immutable base configuration. GUI enablement takes effect live.
       '';
     };
 

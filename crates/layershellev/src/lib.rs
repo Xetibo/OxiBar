@@ -1699,6 +1699,7 @@ impl<T: 'static> Dispatch<wl_seat::WlSeat, ()> for WindowState<T> {
                     state.keyboard_state = Some(KeyboardState::new(seat.get_keyboard(qh, ())));
                 }
             } else if let Some(mut keyboard) = state.keyboard_state.take() {
+                state.repeat_delay = None;
                 if let Some(token) = keyboard.repeat_token.take() {
                     state.to_remove_tokens.push(token);
                 }
@@ -1777,6 +1778,7 @@ impl<T> Dispatch<wl_keyboard::WlKeyboard, ()> for WindowState<T> {
                 _ => unreachable!(),
             },
             wl_keyboard::Event::Enter { surface, .. } => {
+                state.repeat_delay = None;
                 state.keyboard_surface = Some(surface.clone());
                 state.update_current_surface(Some(surface));
                 if let Some(id) = state.keyboard_surface_id() {
@@ -1794,6 +1796,7 @@ impl<T> Dispatch<wl_keyboard::WlKeyboard, ()> for WindowState<T> {
                 if state.keyboard_surface.as_ref() != Some(&surface) {
                     return;
                 }
+                state.repeat_delay = None;
                 state.keyboard_surface = None;
                 let keyboard_state = state.keyboard_state.as_mut().unwrap();
                 keyboard_state.current_repeat = None;
@@ -1871,6 +1874,7 @@ impl<T> Dispatch<wl_keyboard::WlKeyboard, ()> for WindowState<T> {
                             && Some(key) == keyboard_state.current_repeat
                         {
                             keyboard_state.current_repeat = None;
+                            state.repeat_delay = None;
 
                             if let Some(token) = keyboard_state.repeat_token.take() {
                                 state.to_remove_tokens.push(token);
@@ -3578,9 +3582,10 @@ impl<T: 'static> WindowState<T> {
                     surface_id,
                     pressed_state,
                 }) = window_state.repeat_delay.take()
+                    && let Some(keyboard_state) = window_state.keyboard_state.as_mut()
+                    && keyboard_state.current_repeat == Some(key)
                 {
                     let timer = Timer::from_duration(delay);
-                    let keyboard_state = window_state.keyboard_state.as_mut().unwrap();
                     keyboard_state.repeat_token = looph
                         .insert_source(timer, move |_, _, r_window_state| {
                             let state = &mut r_window_state.raw;

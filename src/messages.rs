@@ -9,15 +9,45 @@ use oxibar_plugin_api::{
     PluginMsg,
 };
 
-use crate::layout::{
-    BarDimensions, BarSection, MODAL_SIZE, PANEL_WIDTH, TOAST_MARGIN_RIGHT, popup_x,
-};
+use crate::layout::{BarDimensions, BarSection, MODAL_SIZE, PANEL_WIDTH, popup_x};
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    PluginsLoaded(std::sync::Arc<crate::plugins::LoadOutcome>),
+    PluginEmission(String, PluginMsg),
+    ShortcutKey(
+        IcedId,
+        iced::keyboard::Key,
+        iced::keyboard::Modifiers,
+        iced::event::Status,
+    ),
+    Overview(crate::overview::Action),
+    OverviewKey(IcedId, crate::overview::Action),
+    OverviewSnapshot(u64, crate::overview::capture::Snapshot),
+    OverviewActivated(u64, Result<(), String>),
+    OverviewRetirementTimeout(u64),
+    OverviewBounds(IcedId, Option<u64>, iced::Rectangle),
+    OverviewPointer(IcedId, Option<iced::Point>),
+    OverviewPress(IcedId),
+    OpenOverviewLayer(IcedId, (u32, u32), bool),
+    DropdownEscape(IcedId),
+    BarAnchor {
+        id: IcedId,
+        key: String,
+        provider: String,
+        bounds: iced::Rectangle,
+        pressed: bool,
+    },
+    Monitor(crate::monitor::runtime::Action),
+    MonitorsLoaded(Result<crate::monitor::OutputSnapshot, String>),
+    MonitorsPreviewed(Result<crate::monitor::controller::Preview, String>),
+    MonitorsReverted(Result<crate::monitor::OutputSnapshot, String>),
+    MonitorsExpired(crate::monitor::controller::Event),
+    MonitorsSaved(Result<std::sync::Arc<crate::config::ConfigSnapshot>, String>),
     ThemeFontLoaded(String, Result<crate::font::FontData, String>),
     ThemeFontReady(String, Result<String, String>),
     OverlayPointer(IcedId, Option<iced::Point>),
+    OverlayLeave(IcedId),
     OverlayPress(IcedId),
     Dock(crate::dock::Action),
     Desktop(crate::desktop::Action),
@@ -52,6 +82,7 @@ pub enum Message {
     ConfigureBar(IcedId, crate::config::bars::BarConfig),
     RemoveSurface(IcedId),
     SetBarInputRegion {
+        x: Option<i32>,
         id: IcedId,
         open: bool,
         section: BarSection,
@@ -59,6 +90,8 @@ pub enum Message {
         height: u32,
         bar_size: BarDimensions,
         bottom: bool,
+        reserve: u32,
+        edge_trigger: Option<u32>,
     },
     Settings(crate::settings::Action),
     ControlCenter(crate::control_center::Action),
@@ -69,6 +102,16 @@ pub enum Message {
     SettingsFocus(IcedId, bool),
     SettingsSearchFocus(IcedId),
     SettingsCategory(IcedId, crate::settings::Category),
+    SettingsDragRelease(IcedId),
+    Session(crate::session_menu::Action),
+    SessionKey(IcedId, crate::session_menu::Action),
+    OpenSessionLayer(IcedId, (u32, u32)),
+    LocalCommandFinished {
+        provider: String,
+        source: Option<IcedId>,
+        outcome: oxibar_plugin_api::CommandOutcome,
+    },
+    CloseBarDropdown,
     ControlRequest(crate::ipc::ControlRequest),
     ReloadConfig,
     ConfigUpdated(std::sync::Arc<crate::settings::ConfigOutcome>),
@@ -106,9 +149,9 @@ pub enum Message {
     ShowPluginToast(String, HostToastRequest),
     ClosePluginToast(String, String),
     SetPluginToastKeyboard(String, String, KeyboardInteractivity),
-    OpenToastLayer(IcedId, u32, u32, i32),
+    OpenToastLayer(IcedId, u32, u32, crate::config::toasts::Placement),
     CloseToastLayer(IcedId),
-    MoveToastLayer(IcedId, i32),
+    MoveToastLayer(IcedId, crate::config::toasts::Placement),
     ResizeToastLayer(IcedId, u32, u32),
     SetToastKeyboardInteractivity(IcedId, KeyboardInteractivity),
 }
@@ -118,6 +161,40 @@ impl TryInto<LayershellCustomActionWithId> for Message {
 
     fn try_into(self) -> Result<LayershellCustomActionWithId, Self::Error> {
         match self {
+            Message::OpenSessionLayer(id, size) => Ok(LayershellCustomActionWithId::new(
+                None,
+                LayershellCustomAction::NewLayerShell {
+                    settings: NewLayerShellSettings {
+                        size: Some(size),
+                        layer: Layer::Overlay,
+                        anchor: Anchor::empty(),
+                        exclusive_zone: Some(-1),
+                        keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                        namespace: Some("OxiBar session".into()),
+                        ..Default::default()
+                    },
+                    id,
+                },
+            )),
+            Message::OpenOverviewLayer(id, size, active) => Ok(LayershellCustomActionWithId::new(
+                None,
+                LayershellCustomAction::NewLayerShell {
+                    settings: NewLayerShellSettings {
+                        size: Some(size),
+                        layer: Layer::Overlay,
+                        anchor: Anchor::empty(),
+                        exclusive_zone: Some(-1),
+                        keyboard_interactivity: if active {
+                            KeyboardInteractivity::Exclusive
+                        } else {
+                            KeyboardInteractivity::None
+                        },
+                        namespace: Some("OxiBar overview".into()),
+                        ..Default::default()
+                    },
+                    id,
+                },
+            )),
             Message::OpenDockLayer(id, size, bottom, margin, reserve) => {
                 Ok(LayershellCustomActionWithId::new(
                     None,
@@ -208,11 +285,7 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                     settings: NewLayerShellSettings {
                         size: Some(config.size),
                         layer: Layer::Overlay,
-                        anchor: if config.bottom {
-                            Anchor::Bottom
-                        } else {
-                            Anchor::Top
-                        },
+                        anchor: config.anchor(),
                         exclusive_zone: Some(0),
                         margin: Some(osd_margin(&config)),
                         keyboard_interactivity: KeyboardInteractivity::None,
@@ -225,14 +298,7 @@ impl TryInto<LayershellCustomActionWithId> for Message {
             )),
             Message::ConfigureOsdLayer(id, config) => Ok(LayershellCustomActionWithId::new(
                 Some(id),
-                LayershellCustomAction::AnchorSizeChange(
-                    if config.bottom {
-                        Anchor::Bottom
-                    } else {
-                        Anchor::Top
-                    },
-                    config.size,
-                ),
+                LayershellCustomAction::AnchorSizeChange(config.anchor(), config.size),
             )),
             Message::OnOutput(output, message) => {
                 let mut action: LayershellCustomActionWithId = (*message)
@@ -251,11 +317,15 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                     settings: NewLayerShellSettings {
                         size: Some((
                             config.width.unwrap_or(0),
-                            config.height + crate::layout::POPUP_MAX_HEIGHT,
+                            config.height + config.popup_height,
                         )),
                         layer: Layer::Top,
                         anchor: bar_anchor(config.position),
-                        exclusive_zone: Some(config.height as i32),
+                        exclusive_zone: Some(if config.auto_hide {
+                            0
+                        } else {
+                            config.height as i32
+                        }),
                         margin: Some((0, 0, 0, 0)),
                         keyboard_interactivity: KeyboardInteractivity::None,
                         output_option: output
@@ -273,7 +343,7 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                     bar_anchor(config.position),
                     (
                         config.width.unwrap_or(0),
-                        config.height + crate::layout::POPUP_MAX_HEIGHT,
+                        config.height + config.popup_height,
                     ),
                 ),
             )),
@@ -282,6 +352,7 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                 LayershellCustomAction::RemoveWindow,
             )),
             Message::SetBarInputRegion {
+                x,
                 id,
                 open,
                 section,
@@ -289,19 +360,23 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                 height,
                 bar_size,
                 bottom,
+                reserve,
+                edge_trigger,
             } => Ok(LayershellCustomActionWithId::new(
                 Some(id),
                 LayershellCustomAction::SetInputRegion(ActionCallback::new(move |region| {
-                    let bar_y = if bottom {
-                        crate::layout::POPUP_MAX_HEIGHT as i32
+                    let bar_y = if bottom { reserve as i32 } else { 0 };
+                    let input_height = edge_trigger.unwrap_or(bar_size.height).min(bar_size.height);
+                    let input_y = if bottom {
+                        bar_y + region_dimension(bar_size.height.saturating_sub(input_height))
                     } else {
-                        0
+                        bar_y
                     };
                     region.add(
                         0,
-                        bar_y,
+                        input_y,
                         region_dimension(bar_size.width),
-                        region_dimension(bar_size.height),
+                        region_dimension(input_height),
                     );
                     if open {
                         let popup_y = if bottom {
@@ -310,7 +385,7 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                             region_dimension(bar_size.height)
                         };
                         region.add(
-                            popup_x(bar_size.width, section, width),
+                            x.unwrap_or_else(|| popup_x(bar_size.width, section, width)),
                             popup_y,
                             region_dimension(width),
                             region_dimension(height),
@@ -442,7 +517,7 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                         anchor: Anchor::Top | Anchor::Bottom | Anchor::Right,
                         exclusive_zone: None,
                         margin: Some((0, 0, 0, 0)),
-                        keyboard_interactivity: KeyboardInteractivity::OnDemand,
+                        keyboard_interactivity: KeyboardInteractivity::Exclusive,
                         output_option: OutputOption::LastOutput,
                         events_transparent: false,
                         namespace: Some("OxiBar notification panel".to_owned()),
@@ -454,16 +529,16 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                 Some(id),
                 LayershellCustomAction::RemoveWindow,
             )),
-            Message::OpenToastLayer(id, width, height, top) => {
+            Message::OpenToastLayer(id, width, height, placement) => {
                 Ok(LayershellCustomActionWithId::new(
                     None,
                     LayershellCustomAction::NewLayerShell {
                         settings: NewLayerShellSettings {
                             size: Some((width, height)),
                             layer: Layer::Overlay,
-                            anchor: Anchor::Top | Anchor::Right,
+                            anchor: placement.anchor,
                             exclusive_zone: None,
-                            margin: Some((top, TOAST_MARGIN_RIGHT, 0, 0)),
+                            margin: Some(placement.margin),
                             keyboard_interactivity: KeyboardInteractivity::None,
                             output_option: OutputOption::LastOutput,
                             events_transparent: false,
@@ -477,9 +552,9 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                 Some(id),
                 LayershellCustomAction::RemoveWindow,
             )),
-            Message::MoveToastLayer(id, top) => Ok(LayershellCustomActionWithId::new(
+            Message::MoveToastLayer(id, placement) => Ok(LayershellCustomActionWithId::new(
                 Some(id),
-                LayershellCustomAction::MarginChange((top, TOAST_MARGIN_RIGHT, 0, 0)),
+                LayershellCustomAction::AnchorChange(placement.anchor),
             )),
             Message::ResizeToastLayer(id, width, height) => Ok(LayershellCustomActionWithId::new(
                 Some(id),
@@ -505,7 +580,9 @@ fn bar_anchor(position: crate::config::bars::Position) -> Anchor {
 }
 
 pub(crate) fn osd_margin(config: &crate::osd::OsdConfig) -> (i32, i32, i32, i32) {
-    if config.bottom {
+    if let Some(placement) = config.placement {
+        placement.margin
+    } else if config.bottom {
         (0, 0, config.margin as i32, 0)
     } else {
         (config.margin as i32, 0, 0, 0)
@@ -517,6 +594,10 @@ fn region_dimension(value: u32) -> i32 {
 }
 
 pub(crate) fn map_plugin_message(plugin_id: String, msg: PluginMsg) -> Message {
+    Message::PluginEmission(plugin_id, msg)
+}
+
+pub(crate) fn translate_plugin_message(plugin_id: String, msg: PluginMsg) -> Message {
     if let Some(value) = msg
         .downcast_ref::<String>()
         .and_then(|value| value.strip_prefix(oxibar_plugin_api::HOST_REQUEST_WORKSPACE_PREFIX))
@@ -597,6 +678,7 @@ fn parse_toast_keyboard_request(value: &str) -> Option<(String, KeyboardInteract
 
 #[cfg(test)]
 mod tests {
+    use super::translate_plugin_message as map_plugin_message;
     use std::sync::Arc;
 
     use super::*;
@@ -695,10 +777,17 @@ mod tests {
     #[test]
     fn toast_layers_start_keyboard_disabled() {
         let id = IcedId::unique();
-        let action = <Message as TryInto<LayershellCustomActionWithId>>::try_into(
-            Message::OpenToastLayer(id, 380, 144, 16),
-        )
-        .unwrap();
+        let action =
+            <Message as TryInto<LayershellCustomActionWithId>>::try_into(Message::OpenToastLayer(
+                id,
+                380,
+                144,
+                crate::config::toasts::Placement {
+                    anchor: Anchor::Top | Anchor::Right,
+                    margin: (16, 16, 0, 0),
+                },
+            ))
+            .unwrap();
 
         let LayershellCustomActionWithId(
             None,

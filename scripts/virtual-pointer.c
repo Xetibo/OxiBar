@@ -28,7 +28,7 @@ static void global(void *data, struct wl_registry *registry, uint32_t id, const 
 static void removed(void *d, struct wl_registry *r, uint32_t id) {}
 static uint32_t timestamp(void) { struct timespec value; clock_gettime(CLOCK_MONOTONIC, &value); return value.tv_sec * 1000 + value.tv_nsec / 1000000; }
 int main(int argc, char **argv) {
-    if (argc != 8) return 2;
+    if (argc != 8 && argc != 9) return 2;
     struct wl_display *display = wl_display_connect(NULL);
     if (!display) return 3;
     struct wl_registry *registry = wl_display_get_registry(display);
@@ -45,14 +45,21 @@ int main(int argc, char **argv) {
     zwlr_virtual_pointer_v1_frame(pointer); wl_display_roundtrip(display);
     zwlr_virtual_pointer_v1_motion(pointer, timestamp(), wl_fixed_from_int(-1), 0);
     zwlr_virtual_pointer_v1_frame(pointer); wl_display_roundtrip(display); usleep(60000);
-    zwlr_virtual_pointer_v1_button(pointer, timestamp(), 272, WL_POINTER_BUTTON_STATE_PRESSED);
-    zwlr_virtual_pointer_v1_frame(pointer); wl_display_flush(display); usleep(100000);
-    for (int step = 0; step < 20; ++step) {
-        zwlr_virtual_pointer_v1_motion(pointer, timestamp(), wl_fixed_from_double(strtod(argv[1], NULL) / 20), wl_fixed_from_double(strtod(argv[2], NULL) / 20));
-        zwlr_virtual_pointer_v1_frame(pointer); wl_display_flush(display); usleep(15000);
+    if (argc != 9 || strcmp(argv[8], "move")) {
+        zwlr_virtual_pointer_v1_button(pointer, timestamp(), 272, WL_POINTER_BUTTON_STATE_PRESSED);
+        zwlr_virtual_pointer_v1_frame(pointer); wl_display_flush(display); usleep(100000);
+        for (int step = 0; step < 20; ++step) {
+            zwlr_virtual_pointer_v1_motion(pointer, timestamp(), wl_fixed_from_double(strtod(argv[1], NULL) / 20), wl_fixed_from_double(strtod(argv[2], NULL) / 20));
+            zwlr_virtual_pointer_v1_frame(pointer); wl_display_flush(display); usleep(15000);
+        }
+        if (argc == 9) usleep(strtoul(argv[8], NULL, 10) * 1000);
+        zwlr_virtual_pointer_v1_button(pointer, timestamp(), 272, WL_POINTER_BUTTON_STATE_RELEASED);
+        zwlr_virtual_pointer_v1_frame(pointer); wl_display_roundtrip(display); usleep(100000);
+    } else {
+        puts("ready"); fflush(stdout);
+        /* Device removal produces a leave event, so hover fixtures retain it. */
+        while (getchar() != EOF) {}
     }
-    zwlr_virtual_pointer_v1_button(pointer, timestamp(), 272, WL_POINTER_BUTTON_STATE_RELEASED);
-    zwlr_virtual_pointer_v1_frame(pointer); wl_display_roundtrip(display); usleep(100000);
     zwlr_virtual_pointer_v1_destroy(pointer); zwlr_virtual_pointer_manager_v1_destroy(manager);
     while (outputs) { struct output *next = outputs->next; wl_output_destroy(outputs->proxy); free(outputs->name); free(outputs); outputs = next; }
     wl_registry_destroy(registry); wl_display_flush(display); wl_display_disconnect(display);

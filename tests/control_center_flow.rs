@@ -96,6 +96,11 @@ fn control_center_actions_and_async_modals_follow_the_source_output() {
     let mut host = TestHost::with_plugins([("Network", FakePluginOptions::all_surfaces())]);
     set(
         &mut host,
+        "control_center.presentation",
+        Value::String("window".into()),
+    );
+    set(
+        &mut host,
         "bar.outputs",
         Value::Array(vec![Value::String("*".to_owned())]),
     );
@@ -138,6 +143,11 @@ fn control_center_actions_and_async_modals_follow_the_source_output() {
 #[test]
 fn exclusive_host_surfaces_dismiss_each_other_and_keys_are_window_scoped() {
     let mut host = TestHost::with_plugins([("Clock", FakePluginOptions::popup())]);
+    set(
+        &mut host,
+        "control_center.presentation",
+        Value::String("window".into()),
+    );
     host.drive(Message::Settings(settings::Action::Open));
     host.drive(Message::ControlCenter(Action::Open));
     let center = host.control_center_window().unwrap();
@@ -165,17 +175,26 @@ fn live_preferences_resize_disable_and_reset_without_losing_plugin_state() {
         ("Audio", FakePluginOptions::popup()),
         ("Clock", FakePluginOptions::popup()),
     ]);
+    set(
+        &mut host,
+        "control_center.presentation",
+        Value::String("window".into()),
+    );
     host.drive(Message::ControlCenter(Action::Open));
     let center = host.control_center_window().unwrap();
     let messages = set(&mut host, "control_center.width", Value::Integer(720));
+    let height = oxibar::layout::DEFAULT_CONTROL_CENTER_SIZE.1;
     assert!(
         messages
             .iter()
-            .any(|message| matches!(message, Message::ResizeLayer(id, 720, 760) if *id == center))
+            .any(|message| matches!(message, Message::ResizeLayer(id, 720, h) if *id == center && *h == height))
     );
     set(&mut host, "control_center.width", Value::Integer(0));
     assert!(host.settings_error().is_some());
-    assert_eq!(host.config_snapshot().host.control_center_size, (720, 760));
+    assert_eq!(
+        host.config_snapshot().host.control_center_size,
+        (720, height)
+    );
     host.drive_plugin_record("Audio", "still warm");
     set(
         &mut host,
@@ -222,6 +241,11 @@ fn viewing_notifications_clears_toasts_and_suppresses_only_that_visible_provider
 #[test]
 fn hiding_bars_keeps_controls_but_output_removal_retires_the_surface() {
     let mut host = TestHost::with_plugins([("Audio", FakePluginOptions::popup())]);
+    set(
+        &mut host,
+        "control_center.presentation",
+        Value::String("window".into()),
+    );
     host.drive(Message::OutputsChanged(Ok(outputs(&["DP-1"]))));
     let bar = host.main_window();
     host.drive(Message::FromSurface(

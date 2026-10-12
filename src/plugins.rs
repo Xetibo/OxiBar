@@ -7,10 +7,9 @@
 //!
 //! ## Lifetime model
 //!
-//! Both the loaded `Library` and the plugin's model are owned by [`OxiBar`]
-//! (the host) — no `Box::leak`. We keep an `Arc<Library>` around for as long
-//! as any of its symbols are reachable, so unloading happens automatically on
-//! shutdown when the last `Arc` drops. Symbols are stored as raw fn pointers
+//! Active and disabled models are owned by the host. Successfully initialized
+//! libraries stay mapped until process exit because deferred Rust trait objects
+//! can outlive the host state. Symbols are stored as raw fn pointers
 //! (`Symbol::into_raw` + cast) so we don't have to fight the `'static`
 //! borrow that `Symbol` would otherwise impose.
 //!
@@ -37,10 +36,14 @@ use tracing::{error, info, warn};
 
 use crate::config::{get_allowed_plugins, get_oxirun_dir};
 
+mod runtime;
+pub(crate) use runtime::{LoadOutcome, PluginRuntime};
+
 /// Resolved entry-point pointers for a single plugin. The `Library` is kept
 /// alive via the `Arc` so that the raw fn pointers remain valid for the
 /// lifetime of this struct.
 pub struct PluginFuncs {
+    pub session_menu: Option<oxibar_plugin_api::SessionMenuFn>,
     pub theme_changed: Option<oxibar_plugin_api::ThemeChangedFn>,
     pub subscription_policy: Option<oxibar_plugin_api::SubscriptionPolicyFn>,
     pub dock_entries: Option<oxibar_plugin_api::DockEntriesFn>,
@@ -50,6 +53,7 @@ pub struct PluginFuncs {
     pub command: Option<CommandFn>,
     pub osd_view: Option<OsdViewFn>,
     pub context_view: Option<ContextViewFn>,
+    pub bar_view: Option<oxibar_plugin_api::BarViewFn>,
     pub control_center_view: Option<ControlCenterViewFn>,
     pub filename: String,
     pub settings_schema: Option<SettingsSchemaFn>,
@@ -204,6 +208,7 @@ unsafe fn load_one(
     Ok((
         plugin_name,
         PluginFuncs {
+            session_menu: unsafe { resolve_optional(&lib, "session_menu") },
             subscription_policy: unsafe { resolve_optional(&lib, "subscription_policy") },
             dock_entries: unsafe { resolve_optional(&lib, "dock_entries") },
             desktop_view: unsafe { resolve_optional(&lib, "desktop_view") },
@@ -218,6 +223,7 @@ unsafe fn load_one(
             command: unsafe { resolve_optional(&lib, "command") },
             osd_view: unsafe { resolve_optional(&lib, "osd_view") },
             context_view,
+            bar_view: unsafe { resolve_optional(&lib, "bar_view") },
             control_center_view,
             filename: path
                 .file_name()
@@ -262,7 +268,7 @@ fn retain_resident_library(library: &Arc<Library>) {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct LibraryInfo {
     pub name: Option<String>,
     pub abi: Option<u32>,
@@ -302,6 +308,7 @@ pub(crate) fn inspect_library(path: &std::path::Path) -> LibraryInfo {
             ("validation", "config_validate"),
             ("live config", "config_changed"),
             ("live theme", "theme_changed"),
+            ("bar labels", "bar_view"),
             ("popup", "popup_view"),
             ("modal", "modal_view"),
             ("modal lifecycle", "modal_closed"),
@@ -315,6 +322,7 @@ pub(crate) fn inspect_library(path: &std::path::Path) -> LibraryInfo {
             ("runner prefixes", "runner_prefixes"),
             ("favorites", "runner_favorite"),
             ("commands", "command"),
+            ("session menu", "session_menu"),
             ("OSD", "osd_view"),
             ("compositor state", "compositor_changed"),
             ("visibility lifecycle", "subscription_policy"),
@@ -329,6 +337,31 @@ pub(crate) fn inspect_library(path: &std::path::Path) -> LibraryInfo {
     info
 }
 
+pub(crate) fn plugin_directories(primary: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::iter::once(primary.to_owned())
+        .chain(
+            std::env::var_os("OXIBAR_PLUGIN_DIR")
+                .into_iter()
+                .flat_map(|paths| std::env::split_paths(&paths).collect::<Vec<_>>()),
+        )
+        .collect()
+}
+
+fn library_in_directories(
+    directories: &[std::path::PathBuf],
+    filename: &str,
+) -> std::path::PathBuf {
+    directories
+        .iter()
+        .map(|directory| directory.join(filename))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| directories[0].join(filename))
+}
+
+pub(crate) fn library_path(primary: &std::path::Path, filename: &str) -> std::path::PathBuf {
+    library_in_directories(&plugin_directories(primary), filename)
+}
+
 /// Load and instantiate plugins in the order listed by `plugins = [...]`.
 /// Failures are logged and skipped — never fatal.
 pub fn load_plugins(config: &Table) -> LoadedPlugins {
@@ -336,6 +369,14 @@ pub fn load_plugins(config: &Table) -> LoadedPlugins {
 }
 
 fn load_plugins_from_dir(config: &Table, plugin_dir: &std::path::Path) -> LoadedPlugins {
+    load_missing_plugins(config, plugin_dir, &BTreeMap::new())
+}
+
+fn load_missing_plugins(
+    config: &Table,
+    plugin_dir: &std::path::Path,
+    existing: &BTreeMap<String, String>,
+) -> LoadedPlugins {
     let mut plugins = PluginMap::new();
     let mut tasks = Vec::new();
     let mut order = Vec::new();
@@ -355,7 +396,10 @@ fn load_plugins_from_dir(config: &Table, plugin_dir: &std::path::Path) -> Loaded
 
     let allowed = get_allowed_plugins(config);
     for name_str in allowed {
-        let path = plugin_dir.join(name_str);
+        if existing.values().any(|filename| filename == name_str) {
+            continue;
+        }
+        let path = library_path(plugin_dir, name_str);
         if !path.is_file() {
             failures.insert(name_str.to_owned(), "Library missing".to_owned());
             warn!("configured plugin {} was not found", path.display());
@@ -363,8 +407,10 @@ fn load_plugins_from_dir(config: &Table, plugin_dir: &std::path::Path) -> Loaded
         }
         match unsafe { load_one(&path, config) } {
             Ok((plugin_name, funcs)) => {
-                if plugins.contains_key(&plugin_name) {
-                    warn!("{}", LoadError::DuplicateName(plugin_name));
+                if plugins.contains_key(&plugin_name) || existing.contains_key(&plugin_name) {
+                    let error = LoadError::DuplicateName(plugin_name);
+                    failures.insert(name_str.to_owned(), error.to_string());
+                    warn!("{error}");
                     continue;
                 }
                 let (model, init_task) = unsafe { (funcs.model)(config.clone()) };
@@ -535,6 +581,39 @@ pub fn drain_errors(funcs: &PluginFuncs, model: &PluginModel) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_libraries_override_bundled_fallback_and_missing_paths_remain_diagnostic() {
+        let root = std::env::temp_dir().join(format!(
+            "oxibar-library-paths-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let primary = root.join("configured");
+        let bundled = root.join("bundled");
+        std::fs::create_dir_all(&primary).unwrap();
+        std::fs::create_dir(&bundled).unwrap();
+        let directories = [primary.clone(), bundled.clone()];
+        let filename = "libapplications.so";
+        assert_eq!(
+            library_in_directories(&directories, filename),
+            primary.join(filename)
+        );
+        std::fs::write(bundled.join(filename), []).unwrap();
+        assert_eq!(
+            library_in_directories(&directories, filename),
+            bundled.join(filename)
+        );
+        std::fs::write(primary.join(filename), []).unwrap();
+        assert_eq!(
+            library_in_directories(&directories, filename),
+            primary.join(filename)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn unavailable_load_error_names_plugin_and_reason() {

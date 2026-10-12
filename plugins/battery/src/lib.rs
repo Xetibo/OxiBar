@@ -134,8 +134,24 @@ pub extern "Rust" fn errors(model: PluginModel) -> Vec<String> {
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    bar_elements(model, true)
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn bar_view(
+    model: PluginModel,
+    _: oxibar_plugin_api::PluginViewContext,
+    show_labels: bool,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    bar_elements(model, show_labels)
+}
+
+fn bar_elements(
+    model: PluginModel,
+    show_labels: bool,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
-        let bar = battery_bar_content(model.snapshot.as_ref());
+        let bar = battery_bar_content(model.snapshot.as_ref(), show_labels);
         let button = oxi_plugin::bar_button(bar).on_press(msg(Message::Refresh));
         let element: Element<'static, PluginMsg> = tooltip(
             button,
@@ -208,7 +224,10 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
     Box::into_raw(Box::new(s)) as *mut PluginStream
 }
 
-fn battery_bar_content(snapshot: Option<&BatterySnapshot>) -> Element<'static, PluginMsg> {
+fn battery_bar_content(
+    snapshot: Option<&BatterySnapshot>,
+    show_labels: bool,
+) -> Element<'static, PluginMsg> {
     let icon = snapshot
         .map(|snapshot| state_icon(snapshot.state))
         .unwrap_or(DRAINING_ICON);
@@ -216,14 +235,15 @@ fn battery_bar_content(snapshot: Option<&BatterySnapshot>) -> Element<'static, P
         .map(|snapshot| percentage_label(snapshot.percentage))
         .unwrap_or_else(|| UNKNOWN_PERCENTAGE.to_owned());
 
-    Row::new()
-        .push(text(icon).size(OXITHEME.font_md).align_y(Alignment::Center))
-        .push(
+    let mut row = Row::new().push(text(icon).size(OXITHEME.font_md).align_y(Alignment::Center));
+    if show_labels {
+        row = row.push(
             text(percentage)
                 .size(OXITHEME.font_md)
                 .align_y(Alignment::Center),
-        )
-        .spacing(OXITHEME.padding_xs)
+        );
+    }
+    row.spacing(OXITHEME.padding_xs)
         .height(Length::Fill)
         .align_y(Alignment::Center)
         .into()

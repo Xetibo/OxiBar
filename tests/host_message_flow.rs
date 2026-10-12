@@ -13,6 +13,18 @@ fn contains_host_request(messages: &[Message], plugin_id: &str, request: &str) -
         .any(|message| is_host_request(message, plugin_id, request))
 }
 
+fn legacy_menus(host: &mut TestHost) {
+    for path in [
+        "control_center.attach_to_clock",
+        "menus.notifications_dropdown",
+    ] {
+        host.drive(Message::Settings(oxibar::settings::Action::Set(
+            path.into(),
+            toml::Value::Boolean(false),
+        )));
+    }
+}
+
 #[test]
 fn launcher_launches_only_selected_provider_and_keeps_bar_plugins_alive() {
     let mut host = TestHost::with_plugins([
@@ -66,6 +78,7 @@ fn plugin_popup_request_drives_host_popup_state_without_view() {
         FakePluginOptions::popup().with_popup_size(360, 280),
     )]);
 
+    legacy_menus(&mut host);
     let applied = host.drive_plugin_request("Clock", TOGGLE_POPUP);
 
     assert!(contains_host_request(&applied, "Clock", TOGGLE_POPUP));
@@ -120,6 +133,7 @@ fn popup_request_uses_dynamic_metrics_when_available() {
 fn repeated_popup_request_closes_open_popup_without_clearing_plugin() {
     let mut host = TestHost::with_plugins([("Clock", FakePluginOptions::popup())]);
 
+    legacy_menus(&mut host);
     host.drive_plugin_request("Clock", TOGGLE_POPUP);
     host.drive_plugin_request("Clock", TOGGLE_POPUP);
 
@@ -131,6 +145,7 @@ fn repeated_popup_request_closes_open_popup_without_clearing_plugin() {
 fn popup_request_is_ignored_when_plugin_has_no_popup_view() {
     let mut host = TestHost::with_plugins([("Clock", FakePluginOptions::default())]);
 
+    legacy_menus(&mut host);
     host.drive_plugin_request("Clock", TOGGLE_POPUP);
 
     assert_eq!(host.popup_plugin(), None);
@@ -158,6 +173,7 @@ fn modal_open_and_close_requests_drive_host_modal_state_without_view() {
 fn panel_toggle_request_opens_and_closes_panel_without_view() {
     let mut host = TestHost::with_plugins([("Notifications", FakePluginOptions::panel())]);
 
+    legacy_menus(&mut host);
     let open = host.drive_plugin_request("Notifications", TOGGLE_PANEL);
 
     assert!(contains_host_request(&open, "Notifications", TOGGLE_PANEL));
@@ -212,6 +228,7 @@ fn plugin_toast_request_opens_and_closes_host_toast_without_view_interaction() {
 fn toast_request_is_ignored_while_panel_is_open() {
     let mut host = TestHost::with_plugins([("Notifications", FakePluginOptions::all_surfaces())]);
 
+    legacy_menus(&mut host);
     host.drive_plugin_request("Notifications", TOGGLE_PANEL);
     host.drive_plugin_toast_show("Notifications", "n1", 380, 144);
 
@@ -224,6 +241,7 @@ fn opening_panel_closes_existing_toasts() {
     let mut host = TestHost::with_plugins([("Notifications", FakePluginOptions::all_surfaces())]);
 
     host.drive_plugin_toast_show("Notifications", "n1", 380, 144);
+    legacy_menus(&mut host);
     host.drive_plugin_request("Notifications", TOGGLE_PANEL);
 
     assert!(host.panel_open());

@@ -8,20 +8,98 @@ use crate::utils::{
     file::get_theme_toml,
 };
 
-pub(crate) static LEGACY_THEME: Lazy<ComputedOxiTheme> = Lazy::new(|| {
-    let default_theme = default_theme();
-    let theme_str_opt = get_theme_toml();
-    if theme_str_opt.is_err() {
-        return ComputedOxiTheme::from(default_theme);
-    };
-    let theme_opt = toml::from_str::<OptionalOxiTheme>(&theme_str_opt.unwrap());
-    let theme = if let Ok(theme) = theme_opt {
-        theme.build(default_theme)
-    } else {
-        default_theme
-    };
-    ComputedOxiTheme::from(theme)
+pub(crate) struct ThemeSeed {
+    pub tokens: ComputedOxiTheme,
+    pub base24: super::base24::Base24,
+    pub accent: Option<Color>,
+    pub configured: bool,
+    pub roles: toml::Table,
+}
+
+pub(crate) static LEGACY_SEED: Lazy<ThemeSeed> = Lazy::new(|| {
+    get_theme_toml()
+        .ok()
+        .and_then(|text| theme_from_toml(&text).ok())
+        .unwrap_or_else(|| theme_from_toml("").expect("built-in theme"))
 });
+pub(crate) static LEGACY_THEME: Lazy<ComputedOxiTheme> = Lazy::new(|| LEGACY_SEED.tokens.clone());
+
+pub(crate) fn theme_from_toml(text: &str) -> Result<ThemeSeed, String> {
+    use super::{
+        base24::{Base24, SLOTS},
+        snapshot::{COLOR_ROLES, color_mut, derive_states, parse_color},
+    };
+    let values: toml::Table = toml::from_str(text).map_err(|error| error.to_string())?;
+    let mut layout = values.clone();
+    for role in COLOR_ROLES {
+        layout.remove(*role);
+    }
+    let optional: OptionalOxiTheme = toml::Value::Table(layout)
+        .try_into()
+        .map_err(|error: toml::de::Error| error.to_string())?;
+    let mut tokens = ComputedOxiTheme::from(optional.build(default_theme()));
+    let mut scheme = Base24::inherited(&tokens);
+    let mut slots = values
+        .get("base24")
+        .map(|value| value.as_table().cloned().ok_or("base24: expected a table"))
+        .transpose()?
+        .unwrap_or_default();
+    for (name, value) in &values {
+        if SLOTS.iter().any(|slot| slot.eq_ignore_ascii_case(name)) {
+            if slots.keys().any(|slot| slot.eq_ignore_ascii_case(name)) {
+                return Err(format!("duplicate Base24 slot: {name}"));
+            }
+            slots.insert(name.clone(), value.clone());
+        }
+    }
+    let configured = !slots.is_empty();
+    scheme.configure(&slots)?;
+    if configured {
+        scheme.apply(&mut tokens);
+    }
+    let mut roles = values
+        .get("palette")
+        .map(|value| value.as_table().cloned().ok_or("palette: expected a table"))
+        .transpose()?
+        .unwrap_or_default();
+    for role in COLOR_ROLES {
+        if let Some(value) = values.get(*role) {
+            roles.insert((*role).into(), value.clone());
+        }
+    }
+    for role in COLOR_ROLES {
+        if let Some(value) = roles.get(*role) {
+            *color_mut(&mut tokens, role).expect("known role") =
+                parse_color(value.as_str().ok_or("palette: expected color strings")?)?;
+        }
+    }
+    let accent = values
+        .get("accent")
+        .map(|value| parse_color(value.as_str().ok_or("accent: expected a color")?))
+        .transpose()?;
+    if let Some(color) = accent {
+        scheme.colors[0x0d] = color;
+        tokens.primary = color;
+        tokens.blue = color;
+        tokens.border_color_strong = color;
+        tokens.primary_contrast = scheme.contrast(color);
+    }
+    derive_states(&mut tokens);
+    if configured {
+        scheme.apply_bright_states(&mut tokens, Some(&roles), accent.is_some());
+    }
+    scheme.apply_contrast(&mut tokens, Some(&roles), accent.is_some());
+    if !configured {
+        scheme = Base24::inherited(&tokens);
+    }
+    Ok(ThemeSeed {
+        tokens,
+        base24: scheme,
+        accent,
+        configured,
+        roles,
+    })
+}
 
 pub static OXITHEME: super::snapshot::ThemeHandle = super::snapshot::ThemeHandle;
 
@@ -48,23 +126,23 @@ fn default_theme() -> OxiTheme {
         primary_bg: String::from("181825"),
         secondary_bg: String::from("313244"),
         // String::from("45475a"),// TODO beforepr needed?
-        tertiary_bg: String::from("585b70"),
+        tertiary_bg: String::from("45475a"),
         text: String::from("cdd6f4"),
-        text_muted: String::from("585b70"),
+        text_muted: String::from("bac2de"),
         tint: String::from("ffffff"),
         shade: String::from("000000"),
         primary: String::from("89b4fa"),
         secondary: String::from("b4befe"),
-        primary_contrast: String::from("ffffff"),
-        secondary_contrast: String::from("ffffff"),
+        primary_contrast: String::from("1e1e2e"),
+        secondary_contrast: String::from("1e1e2e"),
         good: String::from("a6e3a1"),
-        good_contrast: String::from("000000"),
+        good_contrast: String::from("1e1e2e"),
         bad: String::from("f38ba8"),
-        bad_contrast: String::from("ffffff"),
+        bad_contrast: String::from("1e1e2e"),
         info: String::from("94e2d5"),
-        info_contrast: String::from("ffffff"),
+        info_contrast: String::from("1e1e2e"),
         warning: String::from("f9e2af"),
-        warning_contrast: String::from("ffffff"),
+        warning_contrast: String::from("1e1e2e"),
         rose: String::from("f5e0dc"),
         lavender: String::from("b4befe"),
         blue: String::from("89b4fa"),
@@ -73,7 +151,7 @@ fn default_theme() -> OxiTheme {
         tint_amount: 0.04,
         shade_amount: 0.08,
         border_radius: 10,
-        border_color_weak: String::from("cdd6f4"),
+        border_color_weak: String::from("45475a"),
         border_color_strong: String::from("89b4fa"),
         padding_xs: 4.0,
         padding_sm: 8.0,

@@ -320,9 +320,25 @@ pub extern "Rust" fn command(
 pub extern "Rust" fn view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    bar_elements(model, true)
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn bar_view(
+    model: PluginModel,
+    _: oxibar_plugin_api::PluginViewContext,
+    show_labels: bool,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    bar_elements(model, show_labels)
+}
+
+fn bar_elements(
+    model: PluginModel,
+    show_labels: bool,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| {
         let connected = model.connected.len();
-        let content: Element<'static, PluginMsg> = if connected == 0 {
+        let content: Element<'static, PluginMsg> = if connected == 0 || !show_labels {
             text(WIFI_ICON)
                 .size(OXITHEME.font_md)
                 .align_y(Alignment::Center)

@@ -5,16 +5,20 @@ use toml::Table;
 
 pub mod bars;
 pub mod desktop;
+pub mod menus;
 pub mod schema;
 pub mod store;
 #[cfg(test)]
 mod tests;
+pub mod toasts;
 mod watch;
 pub use store::{ConfigSnapshot, ConfigStore, Mutation, Source};
 pub(crate) use watch::{WatchPaths, watch_changes};
 
+pub const DEFAULT_RUNNER_PLUGINS: [&str; 2] = ["libapplications.so", "libtools.so"];
+
 pub fn get_allowed_plugins(config: &Table) -> Vec<&str> {
-    match config.get("plugins") {
+    let mut files = match config.get("plugins") {
         Some(toml::Value::Array(values)) => values
             .iter()
             .filter_map(|value| match value {
@@ -23,7 +27,20 @@ pub fn get_allowed_plugins(config: &Table) -> Vec<&str> {
             })
             .collect::<Vec<_>>(),
         _ => Vec::new(),
+    };
+    for file in config
+        .get("launcher")
+        .and_then(|value| value.get("default_plugins"))
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_str)
+    {
+        if !files.contains(&file) {
+            files.push(file);
+        }
     }
+    files
 }
 
 pub fn get_config_dir() -> PathBuf {

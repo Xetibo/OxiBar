@@ -16,6 +16,8 @@ pub enum SurfaceKind {
     Launcher,
     Settings,
     ControlCenter,
+    Session,
+    Overview,
     Osd,
     Dock,
     DesktopWidget(String),
@@ -87,9 +89,15 @@ pub struct BarInstance {
     pub config: BarConfig,
     pub size: BarDimensions,
     pub ready: bool,
+    pub revealed: bool,
+    pub anchors: BTreeMap<String, (String, iced::Rectangle)>,
+    pub pressed_anchor: Option<String>,
 }
 
 pub(crate) struct Shell {
+    pub session_window: Option<IcedId>,
+    pub session_focused: usize,
+    pub session_error: Option<String>,
     pub command_output: Option<Option<String>>,
     pub registry: SurfaceRegistry,
     pub bars: BTreeMap<String, BarInstance>,
@@ -110,6 +118,9 @@ impl Shell {
             .and_then(OutputSnapshot::focused)
             .map(|output| output.name.clone());
         Self {
+            session_window: None,
+            session_focused: 0,
+            session_error: None,
             command_output: None,
             registry: SurfaceRegistry::default(),
             bars: BTreeMap::new(),
@@ -210,7 +221,10 @@ impl Shell {
         targets
             .into_iter()
             .map(|output| {
-                let config = BarConfig::for_output(snapshot, Some(&output.name), order);
+                let mut config = BarConfig::for_output(snapshot, Some(&output.name), order);
+                config.popup_height = config
+                    .popup_height
+                    .min(output.logical_size.1.saturating_sub(config.height));
                 let size = BarDimensions {
                     width: config.width.unwrap_or(output.logical_size.0),
                     height: config.height,

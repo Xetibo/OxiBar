@@ -37,6 +37,16 @@ impl ThemeRuntime {
 pub fn schema() -> Vec<SettingDescriptor> {
     let mut fields = vec![
         SettingDescriptor::new(
+            "theme.accent",
+            "Accent color",
+            SettingKind::Color,
+            None,
+            ApplyMode::Live,
+        )
+        .description(
+            "Overrides Base24 base0D and the shared primary accent. Reset inherits the scheme.",
+        ),
+        SettingDescriptor::new(
             "theme.preset",
             "Spacing preset",
             SettingKind::Choice(vec!["current".into(), "compact".into(), "roomy".into()]),
@@ -100,14 +110,47 @@ pub fn schema() -> Vec<SettingDescriptor> {
             &format!("theme.palette.{role}"),
             &role.replace('_', " "),
             SettingKind::Color,
-            Some(Value::String(value)),
+            None,
             ApplyMode::Live,
         )
+        .description(&format!(
+            "Optional semantic override; inherited color is {value}. Base24 supplies the palette."
+        ))
+    }));
+    fields.extend(oxiced::theme::base24::SLOTS.into_iter().map(|slot| {
+        SettingDescriptor::new(
+            &format!("theme.base24.{slot}"),
+            &format!("Base24 {slot}"),
+            SettingKind::Color,
+            None,
+            ApplyMode::Live,
+        )
+        .description("Base24 color slot. Unset slots inherit the current oxiced theme.")
     }));
     fields
 }
 
 impl OxiBar {
+    pub(crate) fn setting_value(&self, path: &str) -> Option<Value> {
+        if let Some(value) = crate::config::store::get_path(&self.config.snapshot.effective, path) {
+            return Some(value.clone());
+        }
+        let snapshot = &self.appearance.snapshot;
+        let color = if path == "theme.accent" {
+            Some(snapshot.tokens.primary)
+        } else if let Some(slot) = path.strip_prefix("theme.base24.") {
+            oxiced::theme::base24::SLOTS
+                .iter()
+                .position(|name| *name == slot)
+                .map(|index| snapshot.base24.colors[index])
+        } else if let Some(role) = path.strip_prefix("theme.palette.") {
+            snapshot.palette_color(role)
+        } else {
+            None
+        };
+        color.map(|color| Value::String(snapshot::color_hex(color)))
+    }
+
     pub(crate) fn apply_theme(&mut self, force: bool) -> Task<Message> {
         let mut config = self.config.snapshot.effective.clone();
         if config

@@ -11,9 +11,9 @@ use oxiced::{
 
 use super::{ICON, Message, Model, agent::PromptKind, msg, system::BluetoothDevice};
 
-pub(super) fn bar(model: &Model) -> Element<'static, PluginMsg> {
+pub(super) fn bar(model: &Model, show_labels: bool) -> Element<'static, PluginMsg> {
     let count = model.snapshot.connected.len();
-    let label = if count == 0 {
+    let label = if count == 0 || !show_labels {
         ICON.to_owned()
     } else {
         format!("{ICON} {count}")

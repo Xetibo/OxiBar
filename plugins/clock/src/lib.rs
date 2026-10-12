@@ -36,6 +36,7 @@ use oxiced::widgets::oxi_plugin;
 use oxiced::widgets::oxi_plugin::text;
 
 mod caldav;
+mod worker;
 
 use caldav::{CaldavConfig, CalendarEvent, load_events};
 
@@ -119,9 +120,7 @@ pub extern "Rust" fn config_changed(model: PluginModel, global: Table) -> Option
 const CALENDAR_POPUP_SIZE: (u32, u32) = (360, 320);
 const CALENDAR_NAV_TEXT_SIZE: f32 = 20.0;
 const CALENDAR_NAV_HEIGHT: u32 = 28;
-const CALENDAR_DAY_CELL_HEIGHT: u32 = 30;
 const CALENDAR_TOOLTIP_WIDTH: u32 = 240;
-const ADJACENT_MONTH_ALPHA: f32 = 0.45;
 const TOOLTIP_BORDER_WIDTH: f32 = 1.0;
 const TOOLTIP_SHADOW_ALPHA: f32 = 0.35;
 const TOOLTIP_SHADOW_OFFSET_Y: f32 = 8.0;
@@ -394,7 +393,7 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
         Message::OpenDay(date) => {
             let command = model.calendar_command.clone();
             Some(Task::perform(
-                async move { open_calendar_day(date, command) },
+                worker::run(move || open_calendar_day(date, command)),
                 |result| msg(Message::CalendarOpenResult(result)),
             ))
         }
@@ -431,7 +430,7 @@ fn start_caldav_refresh(model: &mut Model) -> Option<Task<PluginMsg>> {
     let config = model.caldav_config.clone()?;
     model.calendar_pending = true;
     Some(Task::perform(
-        async move { load_events(config) },
+        worker::run(move || load_events(config)),
         |result| msg(Message::CalendarLoaded(result)),
     ))
 }
@@ -458,7 +457,7 @@ pub extern "Rust" fn command(
                 with_model_read::<Model, _>(&model, |model| model.calendar_command.clone())
                     .map_err(|error| error.to_string())?;
             Ok(Task::perform(
-                async move { open_calendar_day(date, command) },
+                worker::run(move || open_calendar_day(date, command)),
                 |result| oxibar_plugin_api::CommandOutcome {
                     message: msg(Message::CalendarOpenResult(result.clone())),
                     result,
@@ -536,11 +535,11 @@ pub extern "Rust" fn popup_view(
             .width(Length::Fill);
 
         let mut column = Column::new()
-            .spacing(OXITHEME.padding_sm)
+            .spacing(OXITHEME.padding_md)
             .padding([OXITHEME.padding_md, OXITHEME.padding_lg])
             .push(header);
 
-        let mut weekdays = Row::new().spacing(OXITHEME.padding_xs).width(Length::Fill);
+        let mut weekdays = Row::new().spacing(OXITHEME.padding_sm).width(Length::Fill);
         for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
             weekdays = weekdays.push(
                 text(day)
@@ -557,7 +556,10 @@ pub extern "Rust" fn popup_view(
         let first_offset = month_start.weekday().num_days_from_monday() as i64;
         let grid_start = month_start - ChronoDuration::days(first_offset);
         for week in 0..6 {
-            let mut row = Row::new().spacing(OXITHEME.padding_xs).width(Length::Fill);
+            let mut row = Row::new()
+                .spacing(OXITHEME.padding_sm)
+                .width(Length::Fill)
+                .height(Length::FillPortion(1));
             for day in 0..7 {
                 let date = grid_start + ChronoDuration::days(week * 7 + day);
                 let is_current_month =
@@ -590,6 +592,7 @@ fn calendar_nav_button(label: &'static str, message: Message) -> Element<'static
     button(
         text(label)
             .size(CALENDAR_NAV_TEXT_SIZE)
+            .height(Length::Fill)
             .align_x(Alignment::Center)
             .align_y(Alignment::Center),
     )
@@ -611,10 +614,7 @@ fn day_cell(
     let text_color = if is_current_month {
         palette.primary
     } else {
-        Color {
-            a: ADJACENT_MONTH_ALPHA,
-            ..palette.primary
-        }
+        palette.text_muted
     };
     let background = if is_today {
         Some(Background::Color(palette.primary_bg_hover))
@@ -627,6 +627,8 @@ fn day_cell(
     let cell = button(
         text(date.day().to_string())
             .size(OXITHEME.font_md)
+            .width(Length::Fill)
+            .height(Length::Fill)
             .align_x(Alignment::Center)
             .align_y(Alignment::Center)
             .style(move |_| iced::widget::text::Style {
@@ -653,7 +655,7 @@ fn day_cell(
     })
     .padding(0)
     .width(Length::Fill)
-    .height(CALENDAR_DAY_CELL_HEIGHT);
+    .height(Length::Fill);
 
     if events.is_empty() {
         cell.into()

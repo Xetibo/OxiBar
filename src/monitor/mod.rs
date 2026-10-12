@@ -1,8 +1,16 @@
 #[cfg(test)]
 use iced_layershell::reexport::OutputOption;
 
+pub mod configuration;
+#[cfg(test)]
+mod configuration_tests;
+pub(crate) mod controller;
+mod diagram;
 mod hyprland;
+mod management;
 pub mod output;
+pub(crate) mod runtime;
+mod snapping;
 mod wayland;
 pub use output::{Output, OutputMode, OutputSnapshot};
 

@@ -8,6 +8,48 @@ use oxibar::{
 use toml::Value;
 
 #[test]
+fn nested_navigation_keeps_drafts_live_surface_and_expansion_across_saves() {
+    let mut host = TestHost::with_plugins(std::iter::empty::<(&str, FakePluginOptions)>());
+    host.drive(Message::Settings(Action::Open));
+    let surface = host.settings_window().unwrap();
+    host.drive(Message::Settings(Action::Edit(
+        "bar.height".into(),
+        "40".into(),
+    )));
+    host.drive(Message::Settings(Action::Page(
+        "appearance/feedback/notifications".into(),
+    )));
+    host.drive(Message::Settings(Action::Search("bar.height".into())));
+    host.drive(Message::Settings(Action::Page("bar/geometry".into())));
+    host.drive(Message::Settings(Action::Apply("bar.height".into())));
+    assert_eq!(host.config_snapshot().host.bar_height, 40);
+    assert_eq!(host.settings_window(), Some(surface));
+    let navigation =
+        host.request(None, oxibar::ipc::Command::Status).1["data"]["settings_navigation"].clone();
+    assert_eq!(navigation["page"], "bar/geometry");
+    let expanded = navigation["expanded"].as_array().unwrap();
+    assert!(expanded.contains(&serde_json::json!("appearance/feedback")));
+    assert!(expanded.contains(&serde_json::json!("bar")));
+    host.drive(Message::Settings(Action::Page(
+        "missing/plugin/page".into(),
+    )));
+    assert_eq!(
+        host.request(None, oxibar::ipc::Command::Status).1["data"]["settings_navigation"]["page"],
+        "bar/geometry"
+    );
+    host.drive(Message::Settings(Action::Category(
+        oxibar::settings::Category::Launcher,
+    )));
+    assert_eq!(
+        host.request(None, oxibar::ipc::Command::Status).1["data"]["settings_navigation"]["page"],
+        "launcher"
+    );
+    host.drive(Message::Settings(Action::TogglePage("launcher".into())));
+    assert!(!host.request(None, oxibar::ipc::Command::Status).1["data"]["settings_navigation"]["expanded"]
+        .as_array().unwrap().contains(&serde_json::json!("launcher")));
+}
+
+#[test]
 fn live_height_changes_surface_and_input_region_without_replacing_plugins() {
     let mut host = TestHost::with_plugins([("Clock", FakePluginOptions::popup())]);
     let bar = host.main_window();
@@ -65,7 +107,7 @@ fn plugin_hooks_use_schema_paths_independently_of_the_display_name() {
         "plugins".to_owned(),
         Value::Array(vec![Value::String("libfake.so".to_owned())]),
     )));
-    assert_eq!(host.restart_fields(), ["plugins"]);
+    assert!(host.restart_fields().is_empty());
     host.drive_plugin_record("DifferentName", "still loaded");
     assert!(
         host.seen_by_plugin("DifferentName")

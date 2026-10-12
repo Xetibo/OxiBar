@@ -23,7 +23,7 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
 const ACTION_TIMEOUT: Duration = Duration::from_secs(8);
 pub const PROTOCOL_VERSION: u64 = 1;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowCommand {
     Toggle,
     Open,
@@ -41,6 +41,7 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Overview(WindowCommand),
     Desktop(crate::desktop::Action),
     Windows,
     Plugins,
@@ -58,6 +59,7 @@ pub enum Command {
     Launcher(WindowCommand),
     Settings(WindowCommand),
     ControlCenter(WindowCommand),
+    Session(WindowCommand),
     Config(ConfigCommand),
     Status,
 }
@@ -159,7 +161,7 @@ fn parse_request(text: &str) -> Result<Command, String> {
             },
             _ => return Err("Unknown OSD action".to_owned()),
         },
-        "launcher" | "settings" | "control-center" => {
+        "launcher" | "settings" | "control-center" | "overview" | "session" => {
             let action = match string("action")? {
                 "toggle" => WindowCommand::Toggle,
                 "open" => WindowCommand::Open,
@@ -170,6 +172,10 @@ fn parse_request(text: &str) -> Result<Command, String> {
                 Command::Launcher(action)
             } else if string("command")? == "settings" {
                 Command::Settings(action)
+            } else if string("command")? == "overview" {
+                Command::Overview(action)
+            } else if string("command")? == "session" {
+                Command::Session(action)
             } else {
                 Command::ControlCenter(action)
             }
@@ -296,7 +302,7 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
     {
         ["--help"] | ["-h"] => {
             println!(
-                "Usage: oxibar [launcher|settings|control-center [toggle|open|close]]\n\
+                "Usage: oxibar [launcher|settings|control-center|overview|session [toggle|open|close]]\n\
                  oxibar config get [path]\n\
                  oxibar config set <path> <TOML value>\n\
                  oxibar config reset <path> | reset-all | reload | schema\n\
@@ -307,7 +313,7 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
                  oxibar action <provider> <verb> [args...]\n\
                  oxibar osd <provider> <topic> | osd close\n\n\
                   No arguments: start the resident widget shell.\n\
-                  launcher: send a command to the running shell."
+                   Window commands: control the running shell (bare command toggles)."
             );
         }
         ["--version"] | ["-V"] => println!("oxibar {}", env!("CARGO_PKG_VERSION")),
@@ -333,13 +339,16 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
                 let arguments: Vec<_> = args.iter().map(String::as_str).collect();
                 let mut request = serde_json::json!({"version": PROTOCOL_VERSION});
                 match arguments.as_slice() {
-                    [command @ ("settings" | "control-center")]
-                    | [command @ ("settings" | "control-center"), "toggle"] => {
+                    [command @ ("settings" | "control-center" | "overview" | "session")]
+                    | [
+                        command @ ("settings" | "control-center" | "overview" | "session"),
+                        "toggle",
+                    ] => {
                         request["command"] = (*command).into();
                         request["action"] = "toggle".into();
                     }
                     [
-                        command @ ("settings" | "control-center"),
+                        command @ ("settings" | "control-center" | "overview" | "session"),
                         action @ ("open" | "close"),
                     ] => {
                         request["command"] = (*command).into();
@@ -644,6 +653,17 @@ mod tests {
         assert!(
             parse_request(r#"{"version":1,"command":"control-center","action":"select"}"#).is_err()
         );
+        for (action, expected) in [
+            ("open", WindowCommand::Open),
+            ("close", WindowCommand::Close),
+            ("toggle", WindowCommand::Toggle),
+        ] {
+            let request = serde_json::json!({"version":1,"command":"session","action":action});
+            assert!(
+                matches!(parse_request(&request.to_string()).unwrap(), Command::Session(command) if command == expected)
+            );
+        }
+        assert!(parse_request(r#"{"version":1,"command":"session","action":"logout"}"#).is_err());
     }
 
     #[test]

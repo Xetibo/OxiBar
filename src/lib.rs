@@ -13,9 +13,12 @@ pub mod layout;
 pub mod messages;
 pub mod monitor;
 pub mod osd;
+pub mod overview;
 pub mod plugins;
+pub mod session_menu;
 pub mod settings;
 pub mod shell;
+pub mod shortcuts;
 pub mod single_instance;
 pub mod surfaces;
 #[doc(hidden)]

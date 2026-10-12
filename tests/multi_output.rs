@@ -208,8 +208,10 @@ fn disabling_a_bar_keeps_settings_on_a_still_connected_output() {
 fn output_profiles_control_geometry_without_changing_global_preferences() {
     let mut host = TestHost::with_plugins([("Clock", FakePluginOptions::popup())]);
     all_outputs(&mut host);
-    let profile =
-        toml::from_str::<toml::Table>("height=44\nposition='bottom'\ncenter=['clock']").unwrap();
+    let profile = toml::from_str::<toml::Table>(
+        "height=44\nposition='bottom'\ncenter=['clock']\nshow_labels=true",
+    )
+    .unwrap();
     host.drive(Message::Settings(Action::Set(
         "bar.profiles.DP-2".to_owned(),
         Value::Table(profile),
@@ -217,6 +219,24 @@ fn output_profiles_control_geometry_without_changing_global_preferences() {
     let window = host.bar_windows()[1];
     assert_eq!(host.bar_dimensions(window).unwrap().height, 44);
     assert_eq!(host.config_snapshot().host.bar_height, 31);
+    assert_eq!(host.bar_show_labels(host.bar_windows()[0]), Some(false));
+    assert_eq!(host.bar_show_labels(window), Some(true));
+    let windows = host.bar_windows();
+    host.drive_plugin_record("Clock", "labels off");
+    host.drive(Message::Settings(Action::Set(
+        "bar.show_labels".into(),
+        Value::Boolean(true),
+    )));
+    assert_eq!(host.bar_windows(), windows);
+    assert_eq!(host.bar_show_labels(windows[0]), Some(true));
+    host.drive(Message::Settings(Action::Set(
+        "bar.show_labels".into(),
+        Value::Boolean(false),
+    )));
+    host.drive_plugin_record("Clock", "labels on");
+    assert_eq!(host.bar_show_labels(window), Some(true));
+    assert_eq!(host.bar_show_labels(windows[0]), Some(false));
+    assert_eq!(host.seen_by_plugin("Clock"), ["labels off", "labels on"]);
     let messages = host.drive(Message::LayerSurfaceResized(window, 1080, 464));
     assert!(messages.iter().any(|message| matches!(message, Message::SetBarInputRegion { id, bottom: true, .. } if *id == window)));
     host.drive(Message::Settings(Action::Set(
@@ -225,4 +245,78 @@ fn output_profiles_control_geometry_without_changing_global_preferences() {
     )));
     assert!(host.settings_error().is_some());
     assert_eq!(host.bar_dimensions(window).unwrap().height, 44);
+}
+
+#[test]
+fn edge_reveal_is_per_output_pins_dropdowns_and_preserves_bar_ids_and_models() {
+    let mut host = TestHost::with_plugins([("Audio", FakePluginOptions::popup())]);
+    all_outputs(&mut host);
+    let bars = host.bar_windows();
+    let profile =
+        toml::from_str::<toml::Table>("position='bottom'\nauto_hide=true\nreveal_zone=6").unwrap();
+    let changed = host.drive(Message::Settings(Action::Set(
+        "bar.profiles.DP-2".into(),
+        Value::Table(profile),
+    )));
+    let bar = bars[1];
+    assert!(host.bar_visible(bars[0]));
+    assert!(!host.bar_visible(bar));
+    assert!(
+        changed
+            .iter()
+            .any(|message| matches!(message, Message::SetExclusiveZone(id, 0) if *id == bar))
+    );
+    let reserve = changed
+        .iter()
+        .find_map(|message| match message {
+            Message::SetBarInputRegion {
+                id,
+                bottom: true,
+                reserve,
+                edge_trigger: Some(6),
+                ..
+            } if *id == bar => Some(*reserve),
+            _ => None,
+        })
+        .unwrap();
+    let revealed = host.drive(Message::OverlayPointer(
+        bar,
+        Some(iced::Point::new(200.0, reserve as f32 + 30.0)),
+    ));
+    assert!(host.bar_visible(bar));
+    assert!(revealed.iter().any(|message| matches!(message, Message::SetBarInputRegion { id, edge_trigger: None, .. } if *id == bar)));
+    host.drive(Message::FromSurface(
+        bar,
+        Box::new(Message::TogglePluginPopup("Audio".into())),
+    ));
+    host.drive(Message::OverlayLeave(bar));
+    assert!(host.bar_visible(bar));
+    host.drive(Message::DropdownEscape(bars[0]));
+    assert!(host.popup_open());
+    let hidden = host.drive(Message::DropdownEscape(bar));
+    assert!(!host.bar_visible(bar));
+    assert!(hidden.iter().any(|message| matches!(message, Message::SetBarInputRegion { id, open: false, edge_trigger: Some(6), .. } if *id == bar)));
+    host.drive(Message::OverlayPointer(
+        IcedId::unique(),
+        Some(iced::Point::new(200.0, reserve as f32 + 30.0)),
+    ));
+    assert!(!host.bar_visible(bar));
+    host.drive_plugin_record("Audio", "retained while hidden");
+    host.drive(Message::Settings(Action::Set(
+        "bar.profiles.DP-2.reveal_zone".into(),
+        Value::Integer(0),
+    )));
+    assert!(host.settings_error().is_some());
+    let restored = host.drive(Message::Settings(Action::Set(
+        "bar.profiles.DP-2.auto_hide".into(),
+        Value::Boolean(false),
+    )));
+    assert!(host.bar_visible(bar));
+    assert!(
+        restored
+            .iter()
+            .any(|message| matches!(message, Message::SetExclusiveZone(id, 31) if *id == bar))
+    );
+    assert_eq!(host.bar_windows(), bars);
+    assert_eq!(host.seen_by_plugin("Audio"), ["retained while hidden"]);
 }

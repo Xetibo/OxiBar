@@ -295,6 +295,15 @@ pub struct DockEntry {
 pub type DockEntriesFn = unsafe extern "Rust" fn(model: PluginModel) -> Arc<Vec<DockEntry>>;
 pub type DesktopViewFn = ContextViewFn;
 
+/// Optional bar rendering with an output-local label preference. The context
+/// layout and legacy view signatures remain unchanged for ABI 6 plugins.
+pub type BarViewFn =
+    unsafe extern "Rust" fn(
+        model: PluginModel,
+        context: PluginViewContext,
+        show_labels: bool,
+    ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
+
 pub use oxiced;
 pub mod fswatch;
 pub mod launch;
@@ -504,6 +513,17 @@ pub type ViewFn =
 /// Optional `control_center_view(model)` body. The host owns scrolling, chrome,
 /// and surface routing; the plugin reuses its existing model and messages.
 pub type ControlCenterViewFn = ViewFn;
+
+#[derive(Debug, Clone)]
+pub struct SessionMenuEntry {
+    pub action: String,
+    pub label: String,
+    pub description: String,
+    pub enabled: bool,
+}
+
+/// Optional cached session actions. Invocation uses the provider's ordinary command hook.
+pub type SessionMenuFn = unsafe extern "Rust" fn(PluginModel) -> Vec<SessionMenuEntry>;
 
 pub type PopupViewFn =
     unsafe extern "Rust" fn(

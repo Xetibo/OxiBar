@@ -7,18 +7,27 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `src/main.rs`: module wiring and binary entry point.
 - `src/app.rs`: iced layershell daemon setup, main application state, update loop, subscriptions, and popup/modal/panel state transitions.
 - `src/layout.rs`: geometry constants, layershell settings, bar dimension config/fallback parsing, popup metrics, popup config parsing, and bar section math.
-- `src/monitor/`: read-only normalized output inventory, precise mode/scale/rotation
-  geometry, Hyprland IPC and generic Wayland wl_output/xdg_output adapters. Focus
-  remains a separate compositor capability.
+- `src/monitor/`: normalized output inventory and validated display configuration.
+  Native Hyprland IPC and wlr-output-management adapters run on one owned controller;
+  geometry/drafts, pure logical edge snapping, the layout diagram and preview/save/rollback
+  remain separate. Drag snapping does not modify exact numeric edits or backend policy.
+  Generic wl_output/xdg_output inventory and focused-output capabilities remain distinct.
 - `src/shell/`: explicit surface registry, per-output bar instances, source-window
   routing, hotplug reconciliation, input regions and auxiliary surface ownership.
 - `src/config/bars.rs`: common/per-output bar profile merging and validation.
+- `src/config/toasts.rs`: validated shared transient placement and layer-shell
+  anchors/margins, independent of provider content and output selection.
+- `src/config/menus.rs`: attached control/inbox and standalone session preferences, with output-bounded
+  popup headroom, separate from visible bar height and its exclusive zone.
 - `src/config/desktop.rs`: typed dock/widget layout, stable instance validation and
   logical-coordinate persistence.
 - `src/compositor.rs`: one cached, event-driven window/workspace broker and bounded,
   version-aware Hyprland activation adapter.
 - `src/dock.rs`: per-output dock composition from the resident application catalog
   and shared compositor snapshot.
+- `src/overview/`: host-owned per-monitor grids, visible-only native toplevel
+  capture, checked SHM pixel conversion and exact-handle activation. Protocol
+  bindings and their pinned upstream XML remain separate from UI state.
 - `src/desktop.rs`: desktop widget surfaces, revision-bound edit drafts, grid
   geometry, input policy and output-removal fallback.
 - `src/single_instance.rs`: config-driven single-instance lock (`[instance]` table), flock acquisition, and the RAII `SingleInstanceGuard`.
@@ -30,29 +39,41 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `src/config/`: source-aware snapshots, typed host/plugin schemas, recursive
   base/GUI merging, atomic override persistence, revision checks and filesystem
   watching. Startup/instance compatibility helpers remain in `mod.rs`.
-- `src/settings/`: settings state/actions, spacious schema-driven views in
-  `view.rs`, and host-side command/application logic in `runtime.rs`.
+- `src/settings/`: settings state/actions, a pure schema-to-page navigation tree in
+  `navigation.rs`, spacious schema-driven views in `view.rs`, and host-side
+  command/application logic in `runtime.rs`. Stable routes and expansion state
+  survive live snapshot changes independently of drafts and persistence; every
+  descriptor has one page, with dedicated content for structured editors.
 - `src/control_center.rs`: host-owned control-center state, capability selection,
-  themed composition and window-scoped keyboard routing.
+  left navigation and window-scoped keyboard routing. Attached mode reuses a bar ID;
+  optional standalone mode owns its own overlay ID.
+- `src/session_menu.rs`: centered host-owned session surface, configured cached
+  action tiles and keyboard navigation, delegated through the provider's ordinary
+  command/confirmation flow.
+- `src/shortcuts.rs`: validated live key bindings, context conflict checks and one
+  surface-scoped keyboard dispatcher for all host-owned interactions.
 - `src/osd.rs`: output-scoped, non-interactive OSD instances and abortable lifetimes.
 - `src/commands.rs`: optional resident provider commands, authoritative completion
   replies and captured-output routing through asynchronous results.
 - `src/background.rs`: runtime-independent bridge for serialized filesystem jobs
   into Iced tasks; rendering uses immutable snapshots without locking the store.
 - `src/launcher.rs`: resident search-overlay state, cached global result ranking, keyboard routing, and themed view.
-- `src/ipc.rs`: bounded, versioned Unix-socket commands for launcher, settings,
+- `src/ipc.rs`: bounded, versioned Unix-socket commands for launcher, session, settings,
   control center, output inventory, configuration queries/mutations, provider
-  actions, OSDs and status. A bounded, owned set of connection handlers prevents
-  slow actions from blocking fast launcher/status requests.
+  actions, overview, OSDs and status. A bounded, owned set of connection handlers
+  prevents slow actions from blocking fast launcher/status requests.
   CLI invocations exit before daemon/font/renderer initialization; an active-endpoint record keeps clients
   connected while socket-setting changes await restart.
 - `src/plugins.rs`: dynamic library discovery, ABI symbol resolution, optional plugin availability checks, plugin model initialization, and safe wrappers for plugin view/update/error calls.
+- `src/plugins/runtime.rs`: serialized background loading, retained inactive models,
+  live consumer reconciliation and file-identity-cached catalog metadata.
 - `crates/oxibar-plugin-api`: shared ABI types used by host and plugins.
 - SDK runner utilities own latest-only cancellable workers, private versioned usage
   state and debounced filesystem watchers with nonrecursive missing-root fallbacks.
 - `crates/oxiced`: local shared theme/widget library imported from the previously
   pinned upstream revision; host/plugins use one workspace dependency and lockfile.
-- `plugins/*`: dynamic plugin crates loaded from `$XDG_CONFIG_HOME/oxibar/plugins/` when their library filename appears in `plugins = [...]`.
+- `plugins/*`: dynamic crates from `$XDG_CONFIG_HOME/oxibar/plugins/`, loaded when
+  their filename appears in either enabled plugin list.
 - `plugins/*/src/system.rs`: command/DBus/sysfs integration, parsing, and domain
   data extracted from plugin ABI/UI files. Audio additionally separates its native
   PulseAudio owner in `native.rs` and runtime-independent job deadlines in `worker.rs`.
@@ -70,7 +91,11 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   correction. Compositor keyboard Enter/Leave owns keyboard routing independently
   of newly created or pointer-active surfaces. Seat capability updates retain
   existing resources, release removed devices and ignore retired keyboard events.
+  Pending repeats are canceled on focus/device removal and are installed only
+  while their keyboard and repeating key still exist.
 - `plugins/clock/src/caldav.rs`: HTTPS-only CalDAV sync, current-month calendar queries, minimal iCalendar parsing, common recurrence expansion, and Nextcloud-compatible calendar query support.
+- Clock calendar refresh/launch jobs run outside the Iced executor through its
+  runtime-independent worker; curl connection and total waits are bounded.
 - `flake.nix` and `nix/*.nix`: Nix packaging for the host and dynamic plugin libraries. Crane builds one workspace dependency artifact derivation and reuses it for every host/plugin package so shared Rust dependencies are not rebuilt per plugin.
 
 ## Runtime Flow
@@ -82,16 +107,27 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   Output selection retains one selected output by default or creates one bar per
   selected connected output. Automatic width uses layer-shell anchors and size
   `0`; configured sizes update only the registered bar for that ID.
+- Optional edge reveal retains that native geometry and provider state. Hidden bars
+  expose only an output-local edge input strip and reserve no desktop space;
+  pointer presence or an owned open dropdown reveals the bar. Visibility, input
+  regions and reservations update without retiring the registered surface.
 - All view routing is through registered surface kinds. Unknown/retired window
   events do not become bars. Output hotplug reconciles surface instances without
   rebuilding plugin models or subscriptions.
-- `OxiBar::new()` loads configured and available plugins in the order listed by `plugins = [...]` and reads `[bar]` section placement for start, center, and end widgets.
+- `OxiBar::new()` loads the deduplicated union of `plugins` and
+  `launcher.default_plugins`, then reads start/center/end bar placement. Installed
+  but disabled providers are still inspected without initializing models.
+  Library discovery prefers the user's XDG plugin directory, then colon-separated
+  `OXIBAR_PLUGIN_DIR` fallbacks. The Nix host bundles its pinned Applications library
+  through that fallback; this does not implicitly enable it.
 - Plugins are keyed by their declared `name()` string, not by filesystem path or load index. Fallback layout order follows config plugin order.
-- Plugin messages are wrapped as `PluginMsg` and mapped to host messages when they carry a known host request string.
-- Host-request mapping is centralized in `map_plugin_message()`, so plugin subscription messages and plugin initialization tasks use the same routing rules.
+- Plugin emissions retain their provider identity before host-request translation.
+  Active providers use the same routing for views, streams and initialization tasks;
+  inactive providers may finish model updates but cannot emit new host actions.
 - The host owns popup, modal, panel, toast and control-center layer-shell surfaces.
-  Plugins render only inner content for those surfaces. Popup open/close layout
-  animation uses the shared theme duration; reduced motion or zero duration bypasses
+  Plugins render only inner content for those surfaces. Popup open/close reveals
+  use the shared theme duration and a fixed full-size child layout, avoiding repeated
+  calendar/form relayout during animation. Reduced motion or zero duration bypasses
   animation builders rather than evaluating a zero-duration transition.
 - Modal retirement invokes an optional provider `modal_closed` hook once for that
   instance, including Escape, replacement, compositor closure and output removal.
@@ -101,37 +137,67 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - Optional runner providers return bounded result data with stable provider-local launch indexes. The host caches a globally ranked list on state updates and dispatches activation only to the selected provider's existing `launch` hook.
 - Per-output bars share one plugin model/subscription per plugin. Optional
   context-aware views receive output name, native scale and an instance identifier;
-  ordinary plugin views remain the fallback. UI/task messages retain their source
+  `bar_view` also receives the output-local label preference and takes precedence
+  over `view_with_context` and ordinary `view`. Existing context/signatures remain
+  unchanged. UI/task messages retain their source
   bar for popup/modal/panel placement. Late task results still update shared models
   after their source surface disappears.
 - Popups are visible/input-active only on their owning bar. Modal/panel/launcher/
-  settings/control-center/toast surfaces carry output ownership; output removal
-  dismisses their surfaces while preserving plugin data. Toast offsets are grouped
-  per output.
+  settings/control-center/session/toast surfaces carry output ownership; output removal
+   dismisses their surfaces while preserving plugin data. Notification toasts and
+   media feedback share a configured per-output stack, with live anchor/margin
+   changes and restacking after notification resize or retirement.
 - The control center composes one selected provider's existing shared model. It
   prefers optional `control_center_view`, then falls back to popup/panel content;
   the host owns scrolling, cards, selection and output placement. Configured order
   is case-insensitive and deduplicated, and unsupported/unavailable providers are
   omitted. Opening/closing a center never initializes another plugin or service.
+- By default the clock and Controls button open that center inside the owning bar,
+   with fixed left navigation and independently scrolling long detail content.
+   Bounded stretch content instead receives the available height without an
+   unbounded scroll ancestor. The clock
+  selects the configured calendar entry. Notification-center requests likewise use
+  the bar inbox by default; a separate panel remains an explicit fallback.
+- Attached menus never register or remove a second surface for their bar ID.
+  Every dropdown temporarily requests exclusive keyboard interaction for that bar;
+  scoped Escape remains effective even when an inner widget captured the event.
+  Dismissal restores the bar policy without
+  deleting the bar or provider data. Session instead owns a centered overlay with
+  output-bounded action tiles. Its window scopes navigation and retirement; selection
+  captures output/owner before removing that surface and invokes cached provider
+  commands. Destructive commands still open the existing confirmation on that output.
+- Actual child layout rectangles and pressed slot identities anchor dropdowns.
+  Rendering, input regions and outside dismissal share one clamped offset. Layout
+  changes prune stale section/index/provider keys before reusing cached bounds.
+  Capture wrappers include logical identity so replacement controls/windows republish
+  bounds even when their recycled widget tree has identical geometry.
 - Settings, launcher and control center dismiss each other's surfaces. Plugin
   task results preserve source routing for password/pairing modals. Hiding a bar
   on a still-connected output detaches ownership and retains open auxiliary
-  surfaces. Viewing the notification inbox dismisses visible toasts and suppresses
-  new notification toasts while retaining stored notifications.
+  standalone surfaces; attached menus close with their bar. Viewing the notification
+  inbox dismisses visible toasts and suppresses new ones while retaining records.
 - Settings writes are serialized behind the config store on background workers.
   Validated sparse overrides are written with owner-only permissions using a
   temporary file, file sync, atomic rename and directory sync. Base/Nix files are
   read-only inputs. External writes and symlink replacement reload snapshots;
   invalid edits retain the last valid state and surface diagnostics.
-- Bar height/width, transparency, layout and launcher settings apply live through
+  Saving/reloading preserves the settings surface and form geometry; bounded status
+  space and stable busy-control trees prevent footer feedback from resizing the body.
+- Bar-layout dragging carries its source section/index/name and starting revision.
+  A valid drop atomically replaces all three layout arrays, preserving other sparse
+  fields; stale gestures cannot reorder a newer configuration.
+- Bar height/width, transparency, labels, layout and launcher settings apply live through
   layer actions and explicit input-region refresh. Effective-value and override
   provenance changes both affect layout: explicit empty GUI arrays suppress the
   legacy all-empty fallback. Control-center geometry/order/enablement also apply
   live. Settings, launcher and control-center focus are window-scoped.
-- Plugin lifecycle/legacy bar-font/timer changes are classified as restart-required. Current
-  plugin libraries/models stay loaded; optional config hooks apply supported live
-  values without losing plugin state. Applications, clock presentation/calendar
-  commands, and notification default timeout currently support live updates.
+- Provider selection applies live. A single background loader initializes missing
+  models, registers optional schemas/validators and reconciles against the latest
+  allowed union. Disable closes consumers/cancels subscriptions and retains the
+  model/code; re-enable reuses state and reapplies current config/theme/compositor
+  snapshots. Queued config changes cannot create duplicate models or revive a
+  disabled provider through a stale completion. Library replacement, legacy bar
+  fonts and unsupported backend timer changes remain restart-only.
 - Live palette, font, density and motion preferences are a separate supported
   theme capability. Configuration validation retains provider library ownership
   while pure callbacks run on background transactions or external reloads.
@@ -143,6 +209,14 @@ The dock reads the Applications provider's immutable `Arc` catalog; it does not
 scan desktop entries or create another provider. Desktop IDs map to persistent
 provider-local launch IDs across reindexing. Rendered activations revalidate both
 IDs, so removal/reordering cannot launch a different application.
+
+Catalog icons render through the shared SVG/raster-aware helper, with a portable
+application icon when none resolves. Automatic icon-theme detection, inherited
+themes, filename aliases and Nix data paths feed the same resident index. Running
+window matches rank explicit class/desktop identity above generic executable matches;
+Steam URI-derived classes keep a game's icon distinct from the shared Steam launcher.
+Executable fallback is still considered below explicit identities when desktop
+entries declare another window class; equally ranked matches prefer a resolved icon.
 
 One host compositor broker subscribes before taking its initial snapshot, coalesces
 window/workspace events, bounds IPC/event data and reconnects with fresh identities.
@@ -175,14 +249,69 @@ Exclusive overlays dismiss on ID-scoped outside clicks using actual configured
 bounds; this releases compositor input grabs without inventing pointer routing or
 replaying an application click.
 
+## Window Overview Ownership
+
+One overview model creates a centered size-bounded modal per enabled named monitor,
+defaulting to at most 1400×900 and 90% of that output's logical dimensions, with
+only the active surface requesting keyboard focus. Grids receive native toplevel
+metadata and memory-only image handles from one visible-owned Wayland thread.
+The existing compositor broker remains the cached metadata source; capture never
+starts a window scanner or service for each card/output.
+
+The legacy Hyprland path captures the exact wlr foreign-toplevel handle with the v2
+export protocol. The modern ext source/copy path uses Hyprland's full 64-bit mapping
+protocol to bridge an exact ext handle to an exact wlr activation/output handle.
+That association is made once and cannot rebind an old ext window after address
+reuse. Titles/app IDs and truncated addresses are never identity bridges. Unsupported
+capture capabilities produce a visible diagnostic while available native activation
+can remain usable.
+
+The worker owns every proxy, wake socket, memfd, mapping and frame. It validates
+shape/stride/format, handles transforms, inversion and premultiplied alpha, and
+limits staging to 64 MiB, thumbnail image data to 96 MiB, windows to 256 and jobs
+to two globally/one per window. Update cadence is configurable up to 8 Hz; modern
+frames honor compositor readiness/damage, while legacy export requests fresh
+frames at that bounded cadence. Constraints may arrive in any order. Frame object
+IDs reject late results, and denial/stopped/closed sources clear their pixels.
+Dropping the subscription wakes and joins its worker; closed overview owns no
+capture session, pixel cache or capture timer.
+
+Rendered cards retain their current native identity. Configurable Tab bindings
+cycle windows within the active monitor; h/j/k/l chooses spatial monitor neighbors
+using output geometry. Grid navigation scrolls the selected card. Actual modal
+origins and visible card bounds
+support cross-monitor clicks redirected by an exclusive layer-shell grab without
+guessing another surface's layout or activating clipped cards. Activation waits for
+every overview native surface's Closed event before invoking the exact toplevel/seat.
+The generation-scoped retirement deadline is abortable; closing/reopening cannot
+activate another incarnation or leave a delayed timer behind.
+
+`WINDOW_OVERVIEW_PLAN.md` records implemented capabilities, verified protocol paths
+and remaining platform extensions. Real private-compositor tests prove changed
+occluded/other-workspace pixels and exact activation; a hermetic modern Wayland
+server proves SHM, constraint ordering, resize/denial and address-reuse behavior.
+
 ## Live Theme and Runner Ownership
 
 `oxiced::theme::snapshot::ThemeSnapshot` carries immutable tokens, font and motion
 metadata. The host explicitly delivers the same `Arc` to every optional
 `theme_changed` hook. Bundled providers install that snapshot into their synchronized
-library-local handle; missing hooks retain the legacy seed. Defaults preserve the
-existing oxiced palette, including an existing oxiced theme file. Presets and GUI
+library-local handle; missing hooks retain the legacy seed. Built-in Catppuccin
+defaults use readable text and neutral surfaces; explicit custom seed roles remain
+authoritative. Presets and GUI
 overrides derive new snapshots rather than mutating shared token objects.
+
+Snapshots carry a complete Base24 scheme (`base00` through `base17`) plus an optional
+accent. Partial schemes inherit the seed; Base16-only inputs derive missing extra
+slots from their base colors. Semantic palette overrides follow scheme
+mapping and the accent override is final. Standalone oxiced files accept flat or
+nested slots, while the host uses `theme.base24`. Preserving explicit seed-role
+overrides keeps legacy theme files exact; a new host scheme replaces that lower
+scheme mapping. Bright states use the extra six slots, not an invented second
+settings palette. Pure contrast helpers make automatic normal/muted and filled
+text readable across opaque idle/hover/pressed backgrounds without changing raw
+scheme slots or explicit role overrides. Forms and menus share mantle chrome, neutral `primary_bg` cards,
+flat navigation and embedded scrollbar gutters with the bar/launcher theme.
 
 Legacy field access remains safe through bounded immutable palette/font interning
 (128 distinct values per library). Previously returned references stay valid;
@@ -218,6 +347,29 @@ selection ownership. Capture/selection epochs prevent old reads surviving opt-ou
 history identities remain monotonic across reconnect. Clipboard text is not stored
 in usage/favorites or the historical intent ledger. Status reports opaque result
 identities, not queries/titles/clipboard contents.
+
+## Native Display Configuration
+
+The settings editor normalizes connector, pixel mode/precise refresh, fractional
+scale, transform, logical position, enablement and supported VRR. Its diagram uses
+the same geometry as numeric drafts and freezes the pointer-to-layout mapping
+during a drag. Configuration validation rejects invalid modes/values, duplicate
+connectors and an all-disabled layout before native application.
+
+One bounded, thread-owned controller handles discovery, preview, keep/save and
+revert. Hyprland uses bounded native IPC with legacy/Lua version adapters;
+wlr-output-management uses proxy-specific state, the advertised manager serial,
+and separate one-shot test/apply configurations. No donor unsafe thread markers,
+global current-head state or rounded refresh-rate identifiers are reused.
+
+Preview records a monotonic 20-second rollback lease in the controller, independent
+of the GUI's event loop. Revert, expiry, failed persistence and orderly owner drop
+restore the connected baseline while preserving newly connected outputs. Keep saves
+one revision-checked sparse profile array before releasing the lease; it retains
+unknown profile fields and never writes Nix/compositor configuration files. Saved
+profiles can apply at startup or through an explicit Apply Saved action. Abrupt
+process termination cannot execute in-process rollback; that limitation and hardware
+policy checks remain documented separately.
 
 ## Native Audio Ownership
 
@@ -280,11 +432,11 @@ capabilities remain follow-ups.
 - Required symbols: `abi_version`, `name`, `model`, `update`, `launch`, `view`, `errors`, and `subscription`.
 - Optional symbols: `availability`, `metadata`, `popup_metrics`, `popup_view`,
   `modal_view`, `panel_view`, `toast_view`, `runner_query`, `runner_entries`,
-  `settings_schema`, `config_changed`, `view_with_context`, and
+  `settings_schema`, `config_changed`, `view_with_context`, `bar_view`, and
   `control_center_view`, `modal_closed`, `command`, `osd_view`, `dock_entries`,
   `desktop_view`, `desktop_interactive`, `compositor_changed` and
   `subscription_policy`, `theme_changed`, `runner_prefixes`, `runner_status`,
-  `runner_cancel`, `runner_favorite` and `config_validate`.
+   `runner_cancel`, `runner_favorite`, `config_validate` and `session_menu`.
 - `availability(config)` lets a plugin skip loading before model initialization, init tasks, and subscriptions when required hardware or system services are unavailable.
 - `ABI_VERSION` in `oxibar-plugin-api` gates host/plugin compatibility.
 - Plugin models are `Arc<RwLock<Box<dyn OxiAny>>>`; plugin messages are `Arc<dyn OxiAny>`.
@@ -296,12 +448,18 @@ capabilities remain follow-ups.
 - `control_center_view(model)` has the ordinary `ViewFn` signature and returns
   inner content without a second full-height scroll surface. The capability is
   optional at ABI 6; existing popup/panel exports remain compatible fallbacks.
+- `bar_view(model, PluginViewContext, bool)` uses the optional `BarViewFn` alias to
+  render output-local labels without mutating a shared provider. Required ABI 6,
+  existing context layout and legacy view exports remain unchanged.
 - `modal_closed(model)` optionally returns a cleanup task. It is idempotent and
   nonblocking; returned work must remain valid after surface retirement. Required
   exports/signatures and ABI 6 remain unchanged.
 - `command(model, verb, arguments)` validates a bounded resident action and returns
   a task whose outcome contains both the ordinary provider message and the actual
   result. The host applies that message before replying to IPC.
+- `session_menu(model)` returns cached enabled actions/descriptions. The host filters
+  configured choices and delegates selection through the existing command capability;
+  it does not introduce another logind owner or bypass confirmation.
 - `osd_view(model, topic)` renders cached, read-only inner content. Cross-library
   OSD requests use `HostOsdRequest::into_message()` string transport, matching the
   existing toast convention; SDK struct `Any` identity can differ between separately
@@ -339,6 +497,9 @@ successful actions retain their captured output, while external changes follow
 current focus. OSDs use no keyboard interactivity, an empty input region and zero
 exclusive zone. Hiding bars retains them; output retirement cancels their timers.
 Geometry, enablement and duration apply live without another provider model.
+Media feedback uses the notification stack's shared placement while retaining the
+same OSD instance, size, generation and expiry policy. Other topics use the ordinary
+OSD placement; changing topics reconfigures the existing surface.
 
 ## Current Plugins
 
@@ -354,7 +515,11 @@ Geometry, enablement and duration apply live without another provider model.
   profile OSD content.
 - `clock`: time display, local calendar popup with event-day tooltips, optional HTTPS CalDAV event sync, and configurable external calendar launcher. `tick_seconds` is the real-clock poll interval; when the format shows seconds the plugin still emits a `Tick` every second, simulating intermediate ticks from a monotonic anchor and only re-reading `Local::now()` every `tick_seconds`.
 - `network`: NetworkManager `nmcli` connection management and password modal; popup and modal surfaces.
-- `notifications`: Freedesktop notification server, toast layers, inline replies, DND state, and side panel. Toast layers start with keyboard interactivity disabled and are switched to `OnDemand` only after user hover intent so incoming notifications do not steal keyboard focus. New toast layers target Hyprland's focused monitor output when available, while the notification panel remains attached to the bar output. Toast timeout closes only the host toast surface; stored notifications remain in the panel until dismissed, cleared, replied to, or actioned.
+- `notifications`: Freedesktop notification server, independent toast layers,
+  inline replies and DND; the inbox uses a bar dropdown by default, with optional
+  separate-panel presentation. Toast hover may enable on-demand reply focus;
+  incoming toasts do not steal it. Inbox visibility suppresses toasts without
+  deleting records, and toast expiry removes only its surface.
 - `tray`: StatusNotifier watcher, dynamically sized tray item popup, activation, and DBusMenu-backed detached context menu rendering. Item registration publishes a fallback row immediately and refreshes DBus metadata asynchronously so registering applications are not blocked by property queries.
 - `workspaces`: output-aware workspace display and dispatch from the shared host broker.
 - `applications`: resident OxiRun application/icon index, fuzzy matching, terminal
@@ -404,7 +569,9 @@ smoke checks and named presentation-time release gate are implemented and verifi
 `PLUGIN_SDK.md` defines required ABI 6 signatures, optional capabilities and owned
 resource rules. Installed catalog inspection resolves ABI/name/capability metadata
 without model or subscription initialization; availability precedes factories and
-duplicate names instantiate once. GUI enablement remains restart-classified.
+duplicate names instantiate once. GUI enablement loads missing providers on a
+serialized background worker; disable/re-enable retains the resident model and code.
+Host requests from disabled providers are rejected, and code replacement requires restart.
 
 SDK application handoff prefers a native user-manager transient service in
 `app.slice`, separate from the shell service's termination cgroup. It subscribes to
@@ -432,14 +599,22 @@ Normal runtime has no tracing protocol/writes. `RELEASE_CHECKS.md` records the n
 reference, query/idle/wakeup-proxy/RSS/worker gates and repeatable commands.
 
 The roadmap identifies selective ReSet audio/BlueZ and monitor backend patterns.
-Audio, BlueZ and read-only monitor adapters follow these boundaries.
+Audio, BlueZ and native display-configuration adapters follow these boundaries.
 No donor daemon/GTK architecture is required by the Rust/Iced host or plugin API.
+
+Window overview is implemented in `WINDOW_OVERVIEW_PLAN.md`: exact-window content
+thumbnails grouped per monitor, capability-gated capture and identity-safe mouse/
+keyboard activation. Dock icon rendering and first-open calendar/control-center
+responsiveness are verified alongside the existing shell flows.
 
 ## Nix Packaging
 
 - `inputs.crane` provides Cargo derivations for Nix builds.
 - `flake.nix` creates one cleaned Cargo source, one vendored dependency set, and one `buildDepsOnly` workspace artifact derivation with `--workspace` package selection.
 - `nix/default.nix` builds only the host package from those shared Cargo artifacts.
+- Cargo source cleaning retains the vendored overview protocol XML. Host checks
+  receive their declared Wayland runtime library paths before the final wrapper,
+  so private native protocol tests also execute inside the Nix sandbox.
 - `nix/plugin.nix` builds only the requested plugin package from the same shared Cargo artifacts and installs the resulting `lib*.so` under `$out/lib/`.
 - The local layershellev patch is shared by every host/plugin graph. Crane's dummy
   dependency build preserves that backend's real public source for external

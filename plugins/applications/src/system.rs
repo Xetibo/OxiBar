@@ -35,10 +35,40 @@ pub(crate) struct Match {
 
 pub(crate) fn data_dirs() -> Vec<PathBuf> {
     let base = xdg::BaseDirectories::new();
-    base.get_data_home()
+    let mut dirs: Vec<_> = base
+        .get_data_home()
         .into_iter()
         .chain(base.get_data_dirs())
-        .collect()
+        .collect();
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(PathBuf::from(&home).join(".nix-profile/share"));
+        dirs.push(PathBuf::from(home).join(".local/state/nix/profile/share"));
+    }
+    if let Some(state) = std::env::var_os("XDG_STATE_HOME") {
+        dirs.push(PathBuf::from(state).join("nix/profile/share"));
+    }
+    if let Some(profiles) = std::env::var_os("NIX_PROFILES") {
+        dirs.extend(
+            profiles
+                .to_string_lossy()
+                .split_whitespace()
+                .map(|profile| PathBuf::from(profile).join("share")),
+        );
+    }
+    if let Ok(user) = std::env::var("USER")
+        && !user.is_empty()
+        && !user.contains('/')
+    {
+        dirs.push(
+            PathBuf::from("/etc/profiles/per-user")
+                .join(user)
+                .join("share"),
+        );
+    }
+    dirs.push(PathBuf::from("/run/current-system/sw/share"));
+    let mut seen = HashSet::new();
+    dirs.retain(|dir| seen.insert(dir.canonicalize().unwrap_or_else(|_| dir.clone())));
+    dirs
 }
 
 pub(crate) fn load_entries_cancellable(config: &Config, cancel: &CancelToken) -> Vec<Entry> {
@@ -256,7 +286,15 @@ fn parse_values(
         window_class: values
             .get("StartupWMClass")
             .map(|value| unescape_value(value))
-            .unwrap_or_default(),
+            .unwrap_or_else(|| {
+                argv.iter()
+                    .find_map(|arg| {
+                        arg.strip_prefix("steam://rungameid/")
+                            .filter(|id| !id.is_empty() && id.bytes().all(|c| c.is_ascii_digit()))
+                            .map(|id| format!("steam_app_{id}"))
+                    })
+                    .unwrap_or_default()
+            }),
         executable,
         name,
         description: localized(values, "Comment", &config.locale)
@@ -487,6 +525,14 @@ fn load_icons(
         return icons;
     }
     let roots = icon_roots(dirs);
+    let detected = if theme == "auto" {
+        detected_icon_theme()
+    } else {
+        None
+    };
+    let theme = detected
+        .as_deref()
+        .unwrap_or(if theme == "auto" { "hicolor" } else { theme });
     let mut themes = Vec::new();
     let mut seen = HashSet::new();
     theme_order(theme, &roots, &mut seen, &mut themes);
@@ -554,6 +600,26 @@ fn load_icons(
     icons
 }
 
+fn detected_icon_theme() -> Option<String> {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    ["gtk-4.0/settings.ini", "gtk-3.0/settings.ini", "kdeglobals"]
+        .into_iter()
+        .find_map(|file| {
+            let contents = read_small_file(&config.join(file)).ok()?;
+            let (group, key) = if file == "kdeglobals" {
+                ("[Icons]", "Theme")
+            } else {
+                ("[Settings]", "gtk-icon-theme-name")
+            };
+            group_values(&contents, group)
+                .get(key)
+                .filter(|name| valid_theme(name))
+                .map(|name| (*name).to_owned())
+        })
+}
+
 fn collect_icons(
     dir: &Path,
     wanted: &HashSet<&str>,
@@ -587,12 +653,20 @@ fn collect_icons(
             continue;
         }
         if let Some(name) = path.file_stem().and_then(|name| name.to_str())
-            && wanted.contains(name)
             && path
                 .metadata()
                 .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= 16 * 1024 * 1024)
         {
-            icons.entry(name.to_owned()).or_insert(path);
+            for alias in [Some(name), path.file_name().and_then(|name| name.to_str())]
+                .into_iter()
+                .flatten()
+            {
+                if wanted.contains(alias) {
+                    icons
+                        .entry(alias.to_owned())
+                        .or_insert_with(|| path.clone());
+                }
+            }
         }
     }
 }
@@ -735,6 +809,14 @@ mod tests {
         );
         assert!(!search(&[entry], "notes", 7).is_empty());
     }
+    #[test]
+    fn steam_class_and_icon_filename_preserve_specific_application_identity() {
+        let value=parse_entry("[Desktop Entry]\nType=Application\nName=Private game\nExec=steam steam://rungameid/435150\nIcon=private-game.svg\n",Path::new("game.desktop"),&config(),&[]).unwrap();
+        assert_eq!(value.window_class, "steam_app_435150");
+        assert_eq!(value.executable, "steam");
+        let explicit=parse_entry("[Desktop Entry]\nType=Application\nName=Private game\nExec=steam steam://rungameid/435150\nStartupWMClass=ExactClass\n",Path::new("game.desktop"),&config(),&[]).unwrap();
+        assert_eq!(explicit.window_class, "ExactClass");
+    }
 
     #[test]
     fn empty_query_is_useful_and_results_are_bounded() {
@@ -831,6 +913,15 @@ mod tests {
                 &wanted,
                 &CancelToken::default()
             )["oxibar-fixture"],
+            child
+        );
+        assert_eq!(
+            load_icons(
+                std::slice::from_ref(&root),
+                "child",
+                &HashSet::from(["oxibar-fixture.svg"]),
+                &CancelToken::default()
+            )["oxibar-fixture.svg"],
             child
         );
         fs::remove_dir_all(root).unwrap();
