@@ -1,5 +1,28 @@
 # Decisions
 
+## 2026-10-12: Authentication stage 3 — fullscreen greetd greeter
+
+- Added the standalone `oxisession` xdg-shell Iced frontend, trusted system Wayland
+  session catalog and root-peer-validated greetd client. No locker/PAM worker or
+  shell plugin is loaded for greeter authentication; greetd owns user privileges.
+- The client uses native-endian length framing, bounded full/partial I/O and one
+  pending operation. Password responses serialize from borrowed zeroizing storage
+  directly into preallocated zeroized frames, with no secret request Debug/Clone.
+- Conversation state handles visible/secret/info/error/MFA prompts. Cancellation
+  invalidates the attempt and drains its reply before cancelling/retrying. Rejected
+  starts retain the authenticated session choice; only an acknowledged start exits.
+- Session entries/executables resolve through administrator-owned system paths;
+  direct argv expansion supplies explicit XDG session metadata. No arbitrary launch
+  command textbox or child user compositor runs inside the active kiosk.
+- Username focus, raw masked prompt input and redacted keyboard messages provide
+  keyboard interaction. Normal window-close events cannot report successful login.
+- Private fragmented-socket fixtures cover MFA, cancellation, changed identity,
+  authentication failure, malformed frames and rejected/accepted starts. Actual
+  kiosk teardown and seat/UID handoff are the following integration stage.
+- Session tests, strict all-auth-crate Clippy and the standalone greeter build pass
+  in the pinned Nix shell. Catalog checks include lexical symlink ancestors so an
+  untrusted link cannot borrow ownership from an administrator-owned target.
+
 ## 2026-10-12: Authentication stage 2 — PAM worker and masked lock interaction
 
 - Add fixed-service current-UID PAM authentication and account checks in a private

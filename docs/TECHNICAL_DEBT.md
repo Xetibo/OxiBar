@@ -289,11 +289,11 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 - Status: implementation in progress. Tested protocol/state boundaries and the
   owned multi-output lock adapter, authenticated frontend and private PAM worker
-  are present. The locker requires a dedicated administrator-owned PAM service.
+  and fullscreen greetd greeter are present. The locker requires a dedicated administrator-owned PAM service.
   Existing session actions still launch the configured external locker.
 - The separate Rust/Iced protocol locker and kiosk greeter design is in
   `LOCK_SCREEN_SESSION_MANAGER_PLAN.md`. Protocol readiness/hotplug, PAM
-  conversations and greetd handoff require dedicated fixtures and NixOS VM checks
+  conversations and greetd handoff have private fixtures and still require NixOS VM checks
   before implementation can replace the external command. Authentication polish,
   key repeat, rendering wake scheduling, kiosk integration and suspend readiness
   belong to subsequent implementation stages.

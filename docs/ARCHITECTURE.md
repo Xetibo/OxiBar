@@ -30,6 +30,15 @@ storage; ordinary Iced messages/widgets receive masks instead of password string
 The PAM conversation owns native response allocations until PAM consumes them.
 Both processes disable core dumps and debugger attachment before handling input.
 
+The greeter is a standard fullscreen xdg-shell Iced application, independent of
+layer-shell and the locker. Its root-peer-validated greetd client serializes one
+bounded request at a time, drains cancelled replies before retry, and holds response
+serialization in zeroized storage. A system-only desktop catalog resolves trusted
+executables to argument arrays and explicit XDG environment values. Authentication,
+session selection and start acknowledgement remain separate states; only accepted
+start permits normal frontend exit. The surrounding kiosk owner then releases the
+seat before greetd starts the authenticated user's session.
+
 Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, and dynamic plugin crates.
 
 ## Workspace Structure

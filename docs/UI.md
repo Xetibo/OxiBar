@@ -17,6 +17,10 @@
   submits, Escape clears/cancels, and only authenticated completion unlocks.
   Use opaque themed backgrounds and centered bounded cards with explicit progress
   and failure feedback.
+- Greeters offer a trusted session picker and username field before authentication,
+  then reuse masked multi-prompt interaction. Preserve failure feedback and session
+  choice on rejected starts; show explicit starting state until the login manager
+  acknowledges handoff. Generic window-close events cannot accept a login.
 
 - Use `oxiced::theme::theme_impl::OXITHEME` for colors and theme-derived styling.
 - `OXITHEME` is the safe compatibility handle for the explicitly delivered

@@ -16,6 +16,11 @@ the real PAM library, information/error/visible/secret MFA prompts, wrong answer
 account-policy rejection, identity remapping, cancellation/reaping and partial
 bounded IPC. No system PAM file or real account password is changed. Run in the
 flake development shell for the PAM library/headers and pinned C compiler.
+`oxi-session` tests use private Unix socket pairs, fragmented native-endian JSON
+frames and multi-prompt conversations. They cover cancelled in-flight replies,
+retry identities, malformed/truncated/oversized frames, rejected starts and final
+acknowledged handoff. Catalog fixtures verify direct argv/field-code expansion,
+hidden/unavailable entries and administrator ownership rules.
 Authentication integration must use private fixtures or the dedicated VM, never
 the current user's desktop session or credentials.
 

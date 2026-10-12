@@ -12,7 +12,22 @@ pub enum Message {
     Cancel,
 }
 
+#[derive(Clone, Copy)]
+pub enum Purpose {
+    Lock,
+    Login,
+}
+
 pub fn prompt<'a>(identity: &str, interaction: &Interaction, ready: bool) -> Element<'a, Message> {
+    prompt_for(identity, interaction, ready, Purpose::Lock)
+}
+
+pub fn prompt_for<'a>(
+    identity: &str,
+    interaction: &Interaction,
+    ready: bool,
+    purpose: Purpose,
+) -> Element<'a, Message> {
     let label = interaction
         .prompt
         .as_ref()
@@ -39,7 +54,11 @@ pub fn prompt<'a>(identity: &str, interaction: &Interaction, ready: bool) -> Ele
             oxi_plugin::text(if ready {
                 label.to_owned()
             } else {
-                "Securing outputs…".into()
+                match purpose {
+                    Purpose::Lock => "Securing outputs…",
+                    Purpose::Login => "Connecting to login service…",
+                }
+                .into()
             })
             .size(OXITHEME.font_md),
         )
@@ -57,7 +76,14 @@ pub fn prompt<'a>(identity: &str, interaction: &Interaction, ready: bool) -> Ele
             Row::new()
                 .spacing(OXITHEME.padding_md)
                 .push(
-                    oxi_plugin::surface_button(oxi_plugin::text("Unlock"), true).on_press_maybe(
+                    oxi_plugin::surface_button(
+                        oxi_plugin::text(match purpose {
+                            Purpose::Lock => "Unlock",
+                            Purpose::Login => "Continue",
+                        }),
+                        true,
+                    )
+                    .on_press_maybe(
                         (ready && interaction.phase != Phase::Waiting).then_some(Message::Submit),
                     ),
                 )

@@ -3329,6 +3329,16 @@ dependencies = [
 [[package]]
 name = "oxi-session"
 version = "0.1.0"
+dependencies = [
+ "iced",
+ "libc",
+ "oxi-auth-ui",
+ "oxiced",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "zeroize",
+]
 
 [[package]]
 name = "oxibar"

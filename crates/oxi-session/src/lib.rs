@@ -73,3 +73,10 @@ mod tests {
         assert_eq!(handoff.phase(), Phase::Handoff);
     }
 }
+
+pub mod catalog;
+#[cfg(test)]
+mod flow_tests;
+pub mod frontend;
+pub mod ipc;
+pub mod model;

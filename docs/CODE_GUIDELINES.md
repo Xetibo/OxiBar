@@ -25,6 +25,10 @@
 - PAM is a fixed administrator-owned current-user policy, never a user-selected
   service. Keep blocking conversations in the private cancellable worker, reject
   missing service configuration, and never map errors or cancellation to unlock.
+- Greeter IPC authenticates its root peer, bounds complete frames and serializes
+  requests. Drain cancellation before reusing an authentication conversation. Parse
+  administrator-owned session metadata into argv without shell re-interpretation;
+  only an acknowledged authenticated start permits successful kiosk exit.
 
 - Keep changes small and aligned with existing module boundaries.
 - Prefer pure helper functions for parsing, state transitions, and config extraction so behavior is unit-testable without DBus, Wayland, Hyprland, or shell commands.

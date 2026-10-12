@@ -4,3 +4,17 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
 description = "Greetd-backed Rust/Iced kiosk session manager"
+
+[dependencies]
+iced = { version = "0.14", features = ["advanced", "tokio"] }
+libc = "0.2"
+oxi-auth-ui = { path = "../oxi-auth-ui" }
+oxiced.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+shell-words = "1.1"
+zeroize = "1.8"
+
+[[bin]]
+name = "oxisession"
+path = "src/main.rs"
