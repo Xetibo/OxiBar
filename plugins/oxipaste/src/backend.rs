@@ -6,7 +6,7 @@ use iced::futures::{
 };
 
 pub const MAX_ITEM_BYTES: usize = 16 * 1024 * 1024;
-const MAX_HISTORY_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_HISTORY_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
@@ -79,12 +79,12 @@ async fn bounded<T>(operation: impl Future<Output = Result<T, String>>) -> Resul
     pin_mut!(operation, timeout);
     match select(operation, timeout).await {
         Either::Left((result, _)) => result,
-        Either::Right(_) => Err("OxiPaste service timed out. Check oxipaste_daemon.".into()),
+        Either::Right(_) => Err("OxiPaste clipboard backend timed out.".into()),
     }
 }
 
 fn error(error: zbus::Error) -> String {
-    format!("OxiPaste: {error}. Start the updated oxipaste_daemon.")
+    format!("OxiPaste clipboard backend: {error}")
 }
 
 pub async fn read() -> Result<Vec<Arc<Item>>, String> {

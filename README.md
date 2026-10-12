@@ -72,17 +72,21 @@ explicit `programs.oxibar.config.plugins` list replaces that enabled set;
 
 ### Persistent clipboard widget
 
-The [OxiPaste provider](plugins/oxipaste/README.md) shares the updated OxiPaste
-daemon's persistent text/image history. It is installed and enabled by default
-through the module. For a manual installation, build `.#oxibar-oxipaste`, install
-`liboxipaste.so` and enable it. Open the centered picker with `oxibar oxipaste`.
+The [OxiPaste provider](plugins/oxipaste/README.md) includes its own persistent
+text/image clipboard backend. Enabling the plugin starts capture with Oxibar,
+including while the picker is closed or the bar is hidden. Disabling it stops
+capture and preserves saved history. No separate clipboard daemon is required.
+It is installed and enabled by default through the module. For a manual
+installation, build `.#oxibar-oxipaste`, install `liboxipaste.so` and enable it.
+Open the centered picker with `oxibar oxipaste`.
 It also supports **OxiPaste** in the bar, control center or desktop layout.
 Row clicks paste into the application below after native keyboard
 focus release; a separate **Copy** button keeps the picker open. Use
 `oxipaste.paste_shortcut = "ctrl+shift+v"` for terminals that require it.
-The clipboard daemon's startup is configured separately.
+History remains compatible with `$XDG_CONFIG_HOME/oxipaste/items`. An already
+running updated OxiPaste daemon can still supply the shared history service.
 
-With the daemon running:
+With Oxibar running:
 
 ```sh
 oxibar launcher

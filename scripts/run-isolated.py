@@ -48,7 +48,9 @@ def main():
         modern = "0.56" in version_text
         config = root / ("hyprland.lua" if modern else "hyprland.conf")
         config.write_text('hl.monitor({output="",mode="1920x1080@60",scale="1"})\n' if modern else 'monitor=,1920x1080@60,auto,1\ndebug:disable_logs=false\nmisc:disable_hyprland_logo=true\n')
-        env = dict(os.environ, XDG_RUNTIME_DIR=str(root), XDG_CACHE_HOME=str(root/"cache"), HYPRLAND_NO_SD_VARS="1", HYPRLAND_NO_SD_NOTIFY="1", OXIBAR_TEST_ISOLATED="1", OXIBAR_TEST_PRIVATE_BUS="1", OXIBAR_TEST_PRIVATE_WAYLAND="1")
+        home = root / "home"
+        home.mkdir()
+        env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home/".config"), XDG_DATA_HOME=str(home/".local/share"), XDG_STATE_HOME=str(home/".local/state"), XDG_RUNTIME_DIR=str(root), XDG_CACHE_HOME=str(root/"cache"), HYPRLAND_NO_SD_VARS="1", HYPRLAND_NO_SD_NOTIFY="1", OXIBAR_TEST_ISOLATED="1", OXIBAR_TEST_PRIVATE_BUS="1", OXIBAR_TEST_PRIVATE_WAYLAND="1")
         env["DBUS_SYSTEM_BUS_ADDRESS"] = env["DBUS_SESSION_BUS_ADDRESS"]
         env.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
         env.pop("WAYLAND_SOCKET", None)

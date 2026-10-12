@@ -95,11 +95,12 @@ Home Manager, private app-lifetime, compositor smoke and performance verificatio
 
 ## `[oxipaste]` — persistent clipboard history
 
-The `liboxipaste.so` provider, named **OxiPaste**, reads the updated
-`org.Xetibo.OxiPasteDaemon` session service. Install the separately packaged
-OxiPaste daemon and start it in the same Wayland session. The Home Manager module,
-also exported as `nixosModules.home-manager`, installs and enables the
-`oxibar-oxipaste` package by default. If you replace `programs.oxibar.config.plugins`
+The `liboxipaste.so` provider, named **OxiPaste**, starts its own persistent
+clipboard backend when enabled. It captures text/images through native Wayland
+data-control while the picker is closed, without a separate daemon or visible
+bar. Disabling the plugin stops capture but retains saved history. The Home
+Manager module, also exported as `nixosModules.home-manager`, installs and enables
+`oxibar-oxipaste` by default. If you replace `programs.oxibar.config.plugins`
 with your own enabled package list, include
 `inputs.oxibar.packages.${pkgs.system}.oxibar-oxipaste` to retain it. `extraPlugins`
 can instead install it as a disabled catalog entry when it is absent from that
@@ -117,12 +118,14 @@ widgets = ["OxiPaste"]
 [oxipaste]
 paste_shortcut = "ctrl+v"
 poll_seconds = 2
+max_items = 100
 ```
 
 | Key | Default | Description |
 | --- | --- | --- |
 | `paste_shortcut` | `"ctrl+v"` | `"ctrl+v"` or `"ctrl+shift+v"`; choose the target application's paste shortcut. Restart-only. |
-| `poll_seconds` | `2` | Visible history refresh interval, from 1 to 3,600 seconds. Restart-only. |
+| `poll_seconds` | `2` | Refresh interval for an already running external OxiPaste service, from 1 to 3,600 seconds. Bundled capture is event-driven. Restart-only. |
+| `max_items` | `100` | Bundled backend's retained history limit, from 1 to 5,000 items, also bounded by 16 MiB per item and 64 MiB total. Restart-only. |
 
 Open the shell's centered, search-focused picker with `oxibar oxipaste open`.
 `oxibar oxipaste` toggles it; explicit `close` and `toggle` are also supported.
@@ -134,13 +137,19 @@ dismisses the picker. `oxibar status` reports `oxipaste_open` and `oxipaste_outp
 Clicking a row copies its exact bytes/MIME, then dismisses the shell's interactive
 surfaces and waits for native keyboard focus release before invoking `wtype`.
 **Copy** changes the clipboard without dismissal or key injection. Failed writes
-keep the picker open and show the actual service error; unavailable services can be
-retried with Refresh. Search uses text/MIME and preserves original payloads.
+keep the picker open and show the actual backend error. Startup/unavailable status
+is distinct from a healthy empty history. Search uses text/MIME and preserves
+original payloads.
 
 The provider also supports an interactive desktop widget through the layout editor.
-Daemon history/configuration remains under `$XDG_CONFIG_HOME/oxipaste/`, independently
-of Oxibar's sparse settings. This provider does not opt into Tools' separate
-ephemeral launcher clipboard history. See the [plugin setup guide](plugins/oxipaste/README.md).
+History is stored atomically with private permissions in
+`$XDG_CONFIG_HOME/oxipaste/items`, compatible with existing OxiPaste history. The
+bundled backend uses Oxibar's `[oxipaste]` settings. It serves the existing
+`org.Xetibo.OxiPasteDaemon` session API; if an updated external daemon already owns
+that name, the plugin uses it instead. Native capture prefers ext-data-control
+and falls back to wlr-data-control; unsupported compositors show an inline error.
+This provider does not opt into Tools' separate ephemeral launcher clipboard
+history. See the [plugin setup guide](plugins/oxipaste/README.md).
 
 ## `[bar]` — bar surface
 

@@ -1,4 +1,5 @@
 mod backend;
+mod service;
 mod view;
 
 use backend::{Action, Item};
@@ -16,6 +17,7 @@ use std::{
 };
 
 static INTERVAL: OnceLock<Duration> = OnceLock::new();
+static HISTORY_LIMIT: OnceLock<usize> = OnceLock::new();
 
 #[derive(Debug)]
 struct Model {
@@ -23,9 +25,11 @@ struct Model {
     search: String,
     shortcut: String,
     refreshing: bool,
+    backend_revision: u64,
     busy: bool,
     status: Option<String>,
     health: Option<String>,
+    backend_health: Option<String>,
     errors: Vec<String>,
 }
 
@@ -33,7 +37,8 @@ struct Model {
 enum Message {
     Open,
     Refresh,
-    Snapshot(Result<Vec<Arc<Item>>, String>),
+    Snapshot(Result<Vec<Arc<Item>>, String>, u64),
+    Backend(service::Snapshot),
     Search(String),
     Act(Action, bool),
     Finished(Result<(), String>, bool),
@@ -83,18 +88,27 @@ pub extern "Rust" fn model(config: Table) -> (PluginModel, Option<Task<PluginMsg
         .and_then(Value::as_str)
         .unwrap_or("ctrl+v")
         .to_owned();
+    HISTORY_LIMIT.get_or_init(|| {
+        settings
+            .and_then(|table| table.get("max_items"))
+            .and_then(Value::as_integer)
+            .unwrap_or(100)
+            .clamp(1, 5000) as usize
+    });
     (
         plugin_model(Model {
             items: Vec::new(),
             search: String::new(),
             shortcut,
             refreshing: false,
+            backend_revision: 0,
             busy: false,
             status: None,
             health: None,
+            backend_health: Some("Starting clipboard backend…".into()),
             errors: Vec::new(),
         }),
-        Some(Task::done(msg(Message::Refresh))),
+        None,
     )
 }
 
@@ -115,12 +129,16 @@ pub extern "Rust" fn update(model: PluginModel, message: PluginMsg) -> Option<Ta
                 return None;
             }
             model.refreshing = true;
-            Some(Task::perform(backend::read(), |result| {
-                msg(Message::Snapshot(result))
+            let revision = model.backend_revision;
+            Some(Task::perform(backend::read(), move |result| {
+                msg(Message::Snapshot(result, revision))
             }))
         }
-        Message::Snapshot(result) => {
+        Message::Snapshot(result, revision) => {
             model.refreshing = false;
+            if revision != model.backend_revision {
+                return None;
+            }
             match result {
                 Ok(items) => {
                     model.items = items;
@@ -128,6 +146,20 @@ pub extern "Rust" fn update(model: PluginModel, message: PluginMsg) -> Option<Ta
                 }
                 Err(error) => problem(model, error),
             }
+            None
+        }
+        Message::Backend(snapshot) => {
+            model.backend_revision = model.backend_revision.wrapping_add(1);
+            if let Some(items) = snapshot.items {
+                model.items = items;
+            }
+            if let Some(error) = &snapshot.error
+                && model.backend_health.as_ref() != Some(error)
+            {
+                model.errors.push(error.clone());
+            }
+            model.backend_health = snapshot.error;
+            model.health = None;
             None
         }
         Message::Search(query) => {
@@ -200,17 +232,18 @@ pub extern "Rust" fn metadata() -> PluginMetadata {
 }
 #[unsafe(no_mangle)]
 pub extern "Rust" fn subscription() -> *mut PluginStream {
-    let stream = iced::futures::stream::unfold(true, |first| async move {
-        if !first {
-            async_io::Timer::after(INTERVAL.get().copied().unwrap_or(Duration::from_secs(2))).await;
-        }
-        Some((msg(Message::Refresh), false))
-    });
-    Box::into_raw(Box::new(Box::pin(stream))) as *mut PluginStream
+    use iced::futures::StreamExt;
+    let stream = service::events(
+        INTERVAL.get().copied().unwrap_or(Duration::from_secs(2)),
+        HISTORY_LIMIT.get().copied().unwrap_or(100),
+    )
+    .map(|snapshot| msg(Message::Backend(snapshot)))
+    .boxed();
+    Box::into_raw(Box::new(stream)) as *mut PluginStream
 }
 #[unsafe(no_mangle)]
 pub extern "Rust" fn subscription_policy() -> SubscriptionPolicy {
-    SubscriptionPolicy::WhenVisible
+    SubscriptionPolicy::Always
 }
 #[unsafe(no_mangle)]
 pub extern "Rust" fn view(
@@ -265,6 +298,13 @@ pub extern "Rust" fn config_validate(config: Table) -> Result<(), String> {
         {
             return Err("oxipaste.poll_seconds must be 1–3600".into());
         }
+        if let Some(value) = settings.get("max_items")
+            && !value
+                .as_integer()
+                .is_some_and(|count| (1..=5000).contains(&count))
+        {
+            return Err("oxipaste.max_items must be 1–5000".into());
+        }
     }
     Ok(())
 }
@@ -280,9 +320,16 @@ pub extern "Rust" fn settings_schema() -> Vec<SettingDescriptor> {
         ),
         SettingDescriptor::new(
             "oxipaste.poll_seconds",
-            "Clipboard history refresh",
+            "External clipboard history refresh",
             SettingKind::Integer { min: 1, max: 3600 },
             Some(Value::Integer(2)),
+            ApplyMode::Restart,
+        ),
+        SettingDescriptor::new(
+            "oxipaste.max_items",
+            "Clipboard history limit",
+            SettingKind::Integer { min: 1, max: 5000 },
+            Some(Value::Integer(100)),
             ApplyMode::Restart,
         ),
     ]
@@ -291,3 +338,60 @@ pub extern "Rust" fn settings_schema() -> Vec<SettingDescriptor> {
 const _: oxibar_plugin_api::ModelFn = model;
 const _: oxibar_plugin_api::UpdateFn = update;
 const _: oxibar_plugin_api::SubscriptionFn = subscription;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resident_backend_updates_win_over_in_flight_manual_refreshes() {
+        let (model, initial) = model(Table::new());
+        assert!(initial.is_none());
+        assert_eq!(subscription_policy(), SubscriptionPolicy::Always);
+        let selected = Arc::new(Item {
+            bytes: b"captured while picker closed".to_vec(),
+            mime: "text/plain".into(),
+        });
+        update(
+            model.clone(),
+            msg(Message::Backend(service::Snapshot {
+                items: Some(vec![selected.clone()]),
+                error: None,
+            })),
+        );
+        update(model.clone(), msg(Message::Snapshot(Ok(Vec::new()), 0)));
+        update(
+            model.clone(),
+            msg(Message::Backend(service::Snapshot {
+                items: None,
+                error: Some("Clipboard service unavailable".into()),
+            })),
+        );
+        with_model_read::<Model, _>(&model, |model| {
+            assert_eq!(model.items, vec![selected]);
+            assert_eq!(
+                model.backend_health.as_deref(),
+                Some("Clipboard service unavailable")
+            );
+        })
+        .unwrap();
+        update(
+            model.clone(),
+            msg(Message::Backend(service::Snapshot {
+                items: Some(Vec::new()),
+                error: None,
+            })),
+        );
+        with_model_read::<Model, _>(&model, |model| {
+            assert!(model.items.is_empty());
+            assert!(model.backend_health.is_none());
+        })
+        .unwrap();
+        assert!(
+            config_validate(
+                oxibar_plugin_api::toml::from_str("[oxipaste]\nmax_items=5001").unwrap()
+            )
+            .is_err()
+        );
+    }
+}

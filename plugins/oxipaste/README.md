@@ -1,8 +1,10 @@
 # OxiPaste provider
 
-Optional ABI 6 provider for the updated OxiPaste daemon's persistent clipboard
-history. One shared model serves the shell picker, bar popup, control center and
-interactive desktop widget. The daemon retains text and common images across sessions.
+ABI 6 provider with a plugin-owned persistent clipboard backend. Enabling OxiPaste
+starts native text/image capture with Oxibar; it continues while all clipboard
+views are closed. One shared model serves the shell picker, bar popup, control
+center and interactive desktop widget. Disabling the plugin stops capture and
+retains saved history. No separate daemon or systemd service is required.
 
 ## Install
 
@@ -14,9 +16,8 @@ nix build .#oxibar .#oxibar-oxipaste
 
 Install the plugin package's `lib/liboxipaste.so` in
 `$XDG_CONFIG_HOME/oxibar/plugins/`. For Cargo development, build the workspace and
-use `scripts/install-plugins.sh`. Run the updated, separately packaged
-`oxipaste_daemon` in the same session; the provider uses its payload-addressed
-`CopyContent`/`DeleteContent` D-Bus methods. An old daemon shows an actionable error.
+use `scripts/install-plugins.sh`. Enable the library to start its backend; bar,
+control-center and desktop placement are optional.
 
 ```toml
 plugins = ["liboxipaste.so"] # Include your other enabled libraries.
@@ -30,6 +31,7 @@ widgets = ["OxiPaste"]
 [oxipaste]
 paste_shortcut = "ctrl+v"
 poll_seconds = 2
+max_items = 100
 ```
 
 The Home Manager module, also exported as `nixosModules.home-manager`, installs
@@ -51,20 +53,30 @@ An explicit `programs.oxibar.config.plugins` list replaces the defaults; include
 provider enabled. `extraPlugins` installs disabled catalog entries, which can be
 enabled through Settings → Plugins.
 
-The daemon is configured separately. After importing OxiPaste's Home Manager
-module, enable its package and opt-in service:
-
-```nix
-programs.oxipaste = {
-  enable = true;
-  systemd.enable = true;
-};
-```
-
 Import the compositor environment into the user manager before starting the
-configured graphical session target.
+configured Oxibar graphical session target.
 Restart Oxibar after replacing loaded libraries or changing restart-only plugin
 settings. Place a desktop widget through Oxibar's desktop layout editor.
+
+## Backend and persistence
+
+The enabled provider owns one resident subscription, native Wayland connection
+and joined worker. It prefers ext-data-control and falls back to wlr-data-control.
+Capture does not depend on a visible bar or picker. Unsupported protocol/session
+errors appear in the shared view instead of silently showing an empty history.
+
+History uses `$XDG_CONFIG_HOME/oxipaste/items` (or `~/.config/oxipaste/items`), reads
+existing binary and legacy text history, and saves atomically with mode `0600`.
+Corrupt files are reported and preserved. The bundled backend uses Oxibar's
+`[oxipaste]` settings, including `max_items` (default 100, range 1–5,000); encoded
+data is also bounded to 16 MiB per item and 64 MiB total.
+
+The backend serves `org.Xetibo.OxiPasteDaemon` with payload-addressed
+`CopyContent`/`DeleteContent` and the standalone OxiPaste compatibility methods.
+An already running updated external daemon retains ownership; the provider reads
+it using `poll_seconds` (default 2, range 1–3,600). Bundled capture is event-driven.
+The standalone daemon's `ShutDown` method cannot terminate the plugin-owned
+backend or Oxibar: disable the provider to stop it.
 
 ## Interaction
 
@@ -80,26 +92,26 @@ oxibar oxipaste toggle
 The resident shell opens a centered, keyboard-focused overlay on the focused
 output, with search focused immediately. Bar/control-center/desktop placement is
 optional; the command works with the bar disabled. The provider must be installed
-and enabled; the daemon must run separately. Escape (or configured
-`shortcuts.close`) and the footer's Close button dismiss the picker. Other
+and enabled. Escape (or configured `shortcuts.close`) and the footer's Close button
+dismiss the picker. Other
 exclusive overlays dismiss it, and disabling the provider closes it. Command
 status includes `oxipaste_open` and `oxipaste_output`.
 
 - Click the content preview to paste into the application receiving focus below.
-  The daemon confirms a successful clipboard write before Oxibar dismisses its
+  The backend confirms a successful clipboard write before Oxibar dismisses its
   interactive surfaces, waits for native keyboard focus release and sends the
   configured paste shortcut.
 - **Copy** only changes the clipboard and retains the picker.
 - **Delete** targets the exact displayed payload; concurrent history reordering
-  cannot retarget a row. **Clear all** clears the daemon's persistent history.
-- Search text/MIME, inspect image previews, or Refresh after restarting the daemon.
+  cannot retarget a row. **Clear all** clears the persistent history.
+- Search text/MIME, inspect image previews, or request a fresh history snapshot.
   Service/action errors remain visible and failed copies never inject a shortcut.
 
-`paste_shortcut` accepts `ctrl+v` or `ctrl+shift+v`. `poll_seconds` accepts 1–3,600,
-default 2, and only runs while visible. Paste requires compositor virtual-keyboard
-support; the Nix host includes `wtype`. Copies preserve exact binary bytes/MIME and
-newlines independently of display previews. Encoded data is limited to 16 MiB per
-item and 64 MiB aggregate, matching the daemon.
+`paste_shortcut` accepts `ctrl+v` or `ctrl+shift+v`. Paste requires compositor
+virtual-keyboard support; the Nix host includes `wtype`. Copies preserve binary bytes/MIME and
+newlines independently of display previews. Backend writes do not recapture or
+reorder their own copied items; PasteAndDelete removes an item only after a
+successful clipboard acknowledgement.
 
 See [Testing](../../docs/TESTING.md#persistent-clipboard-and-native-paste) for the
 private-service, actual-dylib and real native receiver regressions.

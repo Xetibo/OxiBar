@@ -196,16 +196,19 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ### Persistent Clipboard Integration
 
-- OxiPaste's external daemon owns persistent history and original payloads; the
-  optional provider shares one visible-only refresh stream and bounded D-Bus jobs.
+- Resolved: clipboard views depended on a separately installed/running daemon and
+  could appear empty when only the provider was enabled. The provider now owns
+  native persistent capture in one resident, cancellable stream, including while
+  its views/bar are hidden. Disable stops capture without deleting saved data.
 - Direct shell access uses a registered provider-backed picker and window-command
   IPC; it no longer depends on a visible bar or a provider command ABI export.
 - Resolved: the shared Home Manager/NixOS module default omitted the clipboard
   provider. It now installs the library and enables it in the generated base;
-  explicit plugin selections remain authoritative and daemon startup is separate.
-- Remaining: history polling transfers complete snapshots, and image preview
-  decoding/allocation is delegated to Iced. Revision/signal snapshots and bounded
-  cached thumbnails are future optimizations for large image-heavy histories.
+  explicit plugin selections remain authoritative. Its backend ships in that library.
+- Remaining: external-service polling and manual Refresh transfer complete D-Bus
+  snapshots, and image preview decoding/allocation is delegated to Iced. Remote
+  revision/signal snapshots and bounded cached thumbnails are future optimizations
+  for large image-heavy histories. Bundled capture is already event-driven.
 - Paste relies on compositor virtual-keyboard support, native focus restoration
   and the configured application shortcut. Unsupported injection returns an error
   after copy; no compositor-specific focus heuristic is substituted.

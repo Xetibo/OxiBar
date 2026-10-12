@@ -67,10 +67,14 @@
   Reuse provider content with host chrome; bar placement is not a prerequisite.
 - Empty asynchronous searches do not flash a no-results message. Retain explicit
   indexing and missing/unavailable-provider status.
+- Distinguish backend startup/unavailability, a healthy empty history and an
+  unmatched search. Healthy empty history explains how copying adds items; backend
+  errors must remain visible alongside useful cached content.
 - Show provider prefixes, indexing/unavailable status and separate favorite actions.
   A row or input submission captures its displayed provider/local identity; a later
-  result reorder must not change what that activation executes. Clipboard history
-  is explicitly opt-in and clears when disabled; calculator copy does not need it.
+  result reorder must not change what that activation executes. Ephemeral launcher
+  clipboard history is explicitly opt-in and clears when disabled; calculator copy
+  does not need it. Persistent picker history survives provider disable.
 - Settings fields display their effective value, base/default value, source and
   live/surface/restart classification, with individual reset actions. Invalid edits
   remain visible without losing the running configuration. Continuous text edits

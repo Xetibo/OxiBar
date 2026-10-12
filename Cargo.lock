@@ -3417,6 +3417,11 @@ dependencies = [
  "iced_runtime",
  "oxibar-plugin-api",
  "oxiced",
+ "rustix 1.1.4",
+ "tempfile",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
  "zbus",
 ]
 

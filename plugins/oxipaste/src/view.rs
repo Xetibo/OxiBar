@@ -92,7 +92,12 @@ pub(super) fn body(model: &Model, scroll: bool) -> Element<'static, PluginMsg> {
                 .size(OXITHEME.font_sm)
                 .style(oxi_plugin::text_muted),
         );
-    if let Some(status) = model.health.as_ref().or(model.status.as_ref()) {
+    if let Some(status) = model
+        .health
+        .as_ref()
+        .or(model.backend_health.as_ref())
+        .or(model.status.as_ref())
+    {
         body = body.push(
             text(status.clone())
                 .size(OXITHEME.font_sm)
@@ -128,7 +133,14 @@ pub(super) fn body(model: &Model, scroll: bool) -> Element<'static, PluginMsg> {
         );
     }
     if count == 0 {
-        items = items.push(text("No matching clipboard items").style(oxi_plugin::text_muted));
+        let empty = if !query.is_empty() {
+            "No matching clipboard items"
+        } else if model.health.is_some() || model.backend_health.is_some() {
+            "Clipboard backend unavailable or starting"
+        } else {
+            "Clipboard history is empty. Copy text or an image to add it."
+        };
+        items = items.push(text(empty).style(oxi_plugin::text_muted));
     }
     if scroll {
         body = body

@@ -158,6 +158,11 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   refresh stream shared by all displays.
 - `plugins/tools/`: pure typed configuration/calculator/search, cached PATH/file
   indexes and one owned native data-control clipboard connection.
+- `plugins/oxipaste/src/service/`: persistent clipboard ownership lives in the
+  enabled provider's resident stream, independently of UI visibility. `history.rs`
+  owns compatible bounded atomic storage, `native.rs` owns cancellable Wayland
+  capture/transfers, and `mod.rs` owns the session D-Bus interface and external-owner
+  compatibility. Views share snapshots without creating additional workers.
 - `crates/layershellev`: the published 0.17.1 backend with a local keyboard-focus
   correction. Compositor keyboard Enter/Leave owns keyboard routing independently
   of newly created or pointer-active surfaces. Seat capability updates retain
@@ -178,6 +183,15 @@ clipboard ownership, then requests a host-managed focus handoff. The host never
 substitutes a sleep for native focus release, rejects concurrent/disabled-provider
 requests and cancels injection if a host surface regains focus. Clipboard payloads
 stay in their owning service/provider rather than host status or request strings.
+
+Persistent clipboard capture starts with the enabled provider, including when no
+bar or picker is visible. Stream cancellation wakes and joins the native worker,
+rejects pending actions and releases the D-Bus name before another stream claims
+ownership. Re-enable reloads saved history and the current selection. Native
+ext-data-control/wlr-data-control writes await a display acknowledgement; an
+owner marker prevents self-copy from reordering history or undoing deletion.
+Already running compatible external services retain their name and use the
+provider's bounded refresh path instead of a second local history owner.
 
 Command-driven provider pickers are registered, output-scoped host surfaces. They
 share provider state/subscriptions with embedded views, survive hiding a bar on a
@@ -679,8 +693,9 @@ Filesystem watchers retain unchanged watches, track directory device/inode/mode
 and filter unrelated events from missing-root parent watches, preventing idle
 reindex feedback loops.
 
-`scripts/run-isolated.py` owns a private bus/compositor/runtime for repeatable GUI
-checks. `scripts/performance.py` uses optional `wp_presentation` feedback before
+`scripts/run-isolated.py` owns a private HOME/XDG config/data/state/cache, session
+bus, compositor and runtime for repeatable GUI checks. `scripts/performance.py`
+uses optional `wp_presentation` feedback before
 the next drawn buffer, actual presented timestamps and native surface retirement.
 Normal runtime has no tracing protocol/writes. `RELEASE_CHECKS.md` records the named
 reference, query/idle/wakeup-proxy/RSS/worker gates and repeatable commands.
@@ -699,8 +714,8 @@ responsiveness are verified alongside the existing shell flows.
 - The shared Home Manager module and `nixosModules.home-manager` export install
   and enable the default provider set, including the persistent clipboard provider.
   Explicit `config.plugins` selections replace that set; `extraPlugins` remains an
-  installed-only catalog. External daemon packages and startup belong to their own
-  modules, rather than the shell's provider installation.
+  installed-only catalog. The persistent clipboard backend ships inside its
+  provider library and needs no separately installed or started daemon.
 - `inputs.crane` provides Cargo derivations for Nix builds.
 - `flake.nix` creates one cleaned Cargo source, one vendored dependency set, and one `buildDepsOnly` workspace artifact derivation with `--workspace` package selection.
 - `nix/default.nix` builds only the host package from those shared Cargo artifacts.

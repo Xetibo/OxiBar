@@ -466,41 +466,57 @@ milestone 7, rather than being inferred from layer configuration or sleeps.
 
 `nix develop -c env -u HYPRLAND_INSTANCE_SIGNATURE cargo test -p oxibar --test oxipaste_flow`
 checks command errors, idempotence/toggle, native layer settings, output bounds,
-shared visible-only subscriptions, exclusive-overlay dismissal, captured/scoped
+shared subscriptions, exclusive-overlay dismissal, captured/scoped
 Escape, outside bounds, native closure, hidden bars, output removal, provider
 disable/re-enable and retained late results without a live desktop service.
 IPC parser tests validate all three clipboard window verbs and reject invalid actions.
 
-Build the updated OxiPaste binaries separately, and build Oxibar with its OxiPaste
-dylib from one workspace graph. The following opt-in checks require owned services:
+Build Oxibar and its OxiPaste dylib from one workspace graph. Normal plugin tests
+cover exact binary/MIME persistence, legacy migration, corrupt-file preservation,
+private permissions, failed-save rollback, bounded offline worker cancellation,
+cached-history retention on unavailable snapshots and stale manual snapshots
+losing to resident capture updates. The following opt-in checks require owned services:
 
 ```sh
 nix develop -c nix develop --impure --file nix/gui-tests.nix -c \
   dbus-run-session --config-file=scripts/private-bus.conf -- \
   env OXIBAR_TEST_PRIVATE_BUS=1 \
-      OXIBAR_OXIPASTE_PLUGIN="$PWD/target/debug/liboxipaste.so" \
   cargo test -p oxipaste private_bus -- --ignored
-# In another identical private-bus invocation:
-# cargo test -p oxibar --test clipboard_dylib -- --ignored
+
+nix develop -c nix develop --impure --file nix/gui-tests.nix -c \
+  python scripts/run-isolated.py -- \
+  env OXIBAR_OXIPASTE_PLUGIN="$PWD/target/debug/liboxipaste.so" \
+  cargo test -p oxibar --test clipboard_dylib -- --ignored
 
 nix develop -c nix develop --impure --file nix/gui-tests.nix -c \
   python scripts/run-isolated.py -- \
   python scripts/clipboard-smoke.py \
-    "$PWD/target/debug/oxibar" "$PWD/target/debug/liboxipaste.so" \
-    /path/to/OxiPaste/target/debug
+    "$PWD/target/debug/oxibar" "$PWD/target/debug/liboxipaste.so"
 ```
 
 Use the filtered working-source shell in Expected Commands while source files are
 untracked. The outer development shell supplies graphics library paths for
 Cargo-built GUIs. The private D-Bus fixture checks delayed actual write completion,
 byte-exact payload identity and failed-write propagation; the real dylib fixture
-checks tasks and visible-only timers without a host Tokio reactor.
+checks resident startup, duplicate-stream exclusion and pending replacement taking
+ownership after cancellation without a host Tokio reactor. It requires both
+private-bus and private-Wayland guards; the isolated runner sets these flags and
+private HOME/XDG roots so automatic capture cannot touch the user's history.
 
-The smoke owns HOME/XDG directories, bus, compositor, daemon, host, standalone
-picker and raw terminal receiver. It compares receiver bytes for both Ctrl+V and
-Ctrl+Shift+V after native focus release; screenshots are optional diagnostics.
-It also proves original watcher stdin/trailing newlines, exact Copy after history
-reordering, Copy retaining the picker without typing, failed writes retaining
+The default smoke starts only Oxibar and proves its PID owns the clipboard service.
+It captures exact text/trailing newlines and binary images with all views closed,
+continues after hiding the bar, copies exact MIME bytes, keeps Copy open and pastes
+into a raw terminal only after native focus release. It also checks payload-based
+deletion, no self-copy recapture/reorder, acknowledged PasteAndDelete, private
+atomic persistence, history restoration after restart, and capture/name cleanup
+on disable followed by current-selection capture on re-enable.
+
+To run external-daemon and standalone-UI compatibility coverage, build the updated
+OxiPaste binaries separately and add their directory as a third positional
+argument to the same smoke command. This mode owns the daemon, host, standalone
+picker and raw terminal receiver and compares receiver bytes for both Ctrl+V and
+Ctrl+Shift+V. It proves original watcher stdin/trailing newlines, exact Copy after
+history reordering, Copy retaining the picker without typing, failed writes retaining
 picker/history, keyboard-device removal without Leave, standalone Copy/Enter,
 shell-command open/close/toggle/idempotence and centered placement, automatic
 search focus, mutual launcher dismissal, Copy retention and native paste with the
@@ -509,6 +525,7 @@ permissions and restart persistence. The same
 suite accepts Nix host/plugin/OxiPaste package paths; normal writes use the
 packaged helper wrappers, with the unwrapped daemon isolated for failed-write
 injection. `--trace-focus` records native keyboard/focus transitions.
+Screenshots are optional diagnostics in both modes.
 Never run these keyboard/clipboard checks against the user's session.
 
 ## Settings Runtime Verification

@@ -1,5 +1,45 @@
 # Decisions
 
+## 2026-10-13: Plugin-owned persistent clipboard backend
+
+- Empty history was caused by an enabled view-only provider without a running
+  external daemon. Make OxiPaste self-contained: its enabled `Always` subscription
+  starts the backend with Oxibar, captures with views/bar hidden and owns cleanup
+  on disable. This supersedes the earlier separately configured daemon requirement.
+- Keep the backend inside `liboxipaste.so`, already bundled by the shared module.
+  Split compatible atomic history storage, native Wayland ownership and D-Bus
+  compatibility into `service/history.rs`, `service/native.rs` and `service/mod.rs`.
+  Reuse the existing locked Wayland/rustix/tempfile graph; no extra daemon binary,
+  module service, host ABI capability or flake input is needed.
+- Preserve `$XDG_CONFIG_HOME/oxipaste/items`, binary/legacy formats, mode `0600`,
+  exact bytes/MIME and bounded history. Reject corrupt files without overwriting,
+  roll back failed mutations and add restart-only `oxipaste.max_items` (default 100).
+- Prefer ext-data-control with wlr fallback. Bound queues, offers, sources and
+  pipe transfers; use wakeable deadlines and joined cancellation. A display sync
+  acknowledges native clipboard ownership before host focus handoff. An owner
+  marker prevents self-copy from reordering or reinserting deleted history.
+- Own the existing `org.Xetibo.OxiPasteDaemon` API for standalone compatibility.
+  An existing updated external owner remains authoritative and uses bounded
+  polling. Duplicate streams wait for the previous owner; cancellation releases
+  native/D-Bus resources before ownership can restart, including retained models.
+  Legacy `ShutDown` cannot terminate Oxibar or bypass plugin enablement.
+- Native snapshots update the shared model immediately and supersede stale manual
+  refreshes. Unavailable snapshots retain cached data; a confirmed empty snapshot
+  clears it. Views distinguish backend startup/unavailability from empty history
+  and retain action failures across healthy capture updates.
+- Extend the isolated runner with private HOME/XDG config/data/state as well as
+  bus/compositor/runtime/cache. The real dylib now auto-captures and must never use
+  inherited user history or clipboard. Extend the clipboard smoke with a daemon-free
+  default scenario while retaining external-daemon/standalone compatibility mode.
+- Verified normal workspace tests and strict Clippy; private D-Bus acknowledgement,
+  real dylib cancellation/replacement without host Tokio, and native daemon-free
+  capture/copy/paste/persistence/disable/re-enable checks pass. The external-daemon
+  and standalone compatibility smoke also passes in the owned compositor/session.
+- Final Nix host/provider builds use the filtered working source so new service
+  modules are included. Both native smoke modes pass against the packaged binaries
+  without focus tracing, and the packaged dylib passes owned cancellation/replacement
+  with no host Tokio reactor. Formatting and diff whitespace checks pass.
+
 ## 2026-10-12: Bundle the clipboard provider in module defaults
 
 - The shell clipboard command exposed a packaging gap: the shared Home Manager
