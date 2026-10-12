@@ -1,6 +1,7 @@
 # Native Lock Screen and Kiosk Session Manager
 
-**Status:** implementation plan; neither executable is implemented yet.
+**Status:** implementation in progress. Stage 0 (backend audit and tested state
+boundaries) is complete; executable/integration stages are committed separately.
 
 ## Product and process boundaries
 
@@ -40,10 +41,10 @@ credentials travel through Oxibar's general-purpose control socket.
 
 ### Backend selection spike
 
-Evaluate and pin `iced_sessionlock` / `sessionlockev` from the same upstream family
-as the current `iced_layershell` backend. Version `0.17.1` is an initial candidate
-matching Iced `0.14`; select the exact version after checking its APIs and dependency
-graph. This is a planned dependency, not a dependency added by this document.
+Audited `iced_sessionlock` / `sessionlockev` 0.17.1, matching the existing Iced 0.14
+family. The selected implementation is an owned `wayland-client` adapter with Iced
+CPU rendering: the candidate does not expose lock-state events and treats generic
+window close as unlock. See `AUTH_BACKEND_AUDIT.md`; no candidate dependency is added.
 
 The spike must expose lock acquisition/readiness, exact configure/ack handling,
 all output lifecycle events, authentication-gated unlock and final display sync.

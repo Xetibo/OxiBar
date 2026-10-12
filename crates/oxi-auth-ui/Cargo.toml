@@ -1,0 +1,9 @@
+[package]
+name = "oxi-auth-ui"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "Shared authentication interaction state for Oxi lock and greeter"
+
+[dependencies]
+zeroize = "1.8"

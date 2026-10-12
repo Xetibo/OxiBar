@@ -1,5 +1,13 @@
 # Testing
 
+## Authentication state checks
+
+`cargo test -p oxi-auth-ui -p oxi-lock -p oxi-session` checks bounded/redacted
+response storage, single-flight attempts, stale/cancelled result rejection,
+protocol readiness/destructor state and acknowledged greeter handoff.
+Authentication integration must use private fixtures or the dedicated VM, never
+the current user's desktop session or credentials.
+
 ## Strategy
 
 - Unit tests cover host main-loop helpers and every plugin crate.

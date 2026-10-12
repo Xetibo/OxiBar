@@ -1,5 +1,14 @@
 # Decisions
 
+## 2026-10-12: Authentication stage 0 — boundaries and backend audit
+
+- Audited Iced session-lock 0.17.1; rejected its no-op lock lifecycle and generic
+  Close-to-unlock behavior. Use an owned Wayland adapter with Iced CPU rendering.
+- Added reusable redacted, bounded response and attempt state plus explicit lock
+  readiness/destructor and greetd start-acknowledgment state machines.
+- Keep PAM in a cancellable private worker and greetd as the privileged login
+  manager. No authentication secrets enter shell plugins or general shell IPC.
+
 ## 2026-10-12 — Native lock/session implementation authorization
 
 - User requested committing the completed shell/UI work, then implementing all

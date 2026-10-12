@@ -1,5 +1,14 @@
 # Architecture
 
+## Authentication applications
+
+Authentication is isolated from the shell and its dynamically loaded plugins.
+`crates/oxi-auth-ui` owns bounded prompt/attempt state; `crates/oxi-lock` owns the
+Wayland lock lifecycle; `crates/oxi-session` owns acknowledged greeter handoff.
+The backend selection and privilege boundaries are recorded in
+`AUTH_BACKEND_AUDIT.md`. Lock readiness follows the protocol `locked` event,
+and greeter exit follows an authenticated, acknowledged greetd start request.
+
 Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, and dynamic plugin crates.
 
 ## Workspace Structure
