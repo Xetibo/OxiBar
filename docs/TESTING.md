@@ -5,6 +5,11 @@
 `cargo test -p oxi-auth-ui -p oxi-lock -p oxi-session` checks bounded/redacted
 response storage, single-flight attempts, stale/cancelled result rejection,
 protocol readiness/destructor state and acknowledged greeter handoff.
+`oxi-lock` integration tests create a private Wayland socket pair/server and render
+actual Iced CPU frames. They check latest configure acknowledgement, non-NULL
+opaque SHM pixels, integer/fractional geometry, output hotplug/removal, denied and
+external-finish destruction, readiness-before-callback, authenticated final sync,
+missing-protocol refusal, malformed configure and crash-without-unlock.
 Authentication integration must use private fixtures or the dedicated VM, never
 the current user's desktop session or credentials.
 

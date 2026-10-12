@@ -287,12 +287,16 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ### Native Locking and Login Handoff
 
-- Status: planned, not implemented. Existing session actions still launch the
-  configured external locker.
+- Status: implementation in progress. Tested protocol/state boundaries and the
+  owned multi-output lock adapter are present; the standalone frontend currently
+  exposes only a non-locking protocol check until PAM wiring is committed.
+  Existing session actions still launch the configured external locker.
 - The separate Rust/Iced protocol locker and kiosk greeter design is in
   `LOCK_SCREEN_SESSION_MANAGER_PLAN.md`. Protocol readiness/hotplug, PAM
   conversations and greetd handoff require dedicated fixtures and NixOS VM checks
-  before implementation can replace the external command.
+  before implementation can replace the external command. Authentication UI,
+  key repeat, rendering wake scheduling, kiosk integration and suspend readiness
+  belong to subsequent implementation stages.
 
 ### Selectable Search Result Row
 

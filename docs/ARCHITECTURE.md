@@ -9,6 +9,16 @@ The backend selection and privilege boundaries are recorded in
 `AUTH_BACKEND_AUDIT.md`. Lock readiness follows the protocol `locked` event,
 and greeter exit follows an authenticated, acknowledged greetd start request.
 
+The locker owns its Wayland event queue rather than reusing generic window Close
+actions. Each registered output has a lock role, configure/ack state, two
+release-aware opaque SHM buffers and an Iced CPU-renderer/cache. Integer scaling
+and fractional-scale/viewport destinations preserve exact surface-local geometry.
+Output removal retires its input focus and resources. Input uses per-seat contexts,
+rejects retired devices and supplies no clipboard service. Authentication is an
+application capability; only its explicit success action can request unlock.
+Readiness follows `locked`, and successful/external unlock is followed by display
+sync before returning. Renderer errors and process loss never send unlock.
+
 Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, and dynamic plugin crates.
 
 ## Workspace Structure

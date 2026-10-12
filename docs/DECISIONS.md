@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-10-12: Authentication stage 1 — owned lock protocol and CPU frames
+
+- Implement `oxi-lock` with direct staging Wayland lock roles, configure coalescing,
+  explicit lifecycle/readiness and final display sync. No generic close/unlock path.
+- Give each output two release-aware XRGB8888 SHM buffers and an Iced tiny-skia
+  renderer/cache. Keep integer/fractional geometry exact; retire hot-unplug input.
+- Translate native seat keyboard/pointer events with device identity guards and
+  a null clipboard. Input repeats/render wake policy follow in the polish stage.
+- Gate the executable to `--check` until the PAM frontend stage; production does
+  not expose a fake-authentication or button-to-unlock mode.
+- Private Wayland tests render real opaque frames and verify latest ack, scaling,
+  hotplug/removal, denied/external finish, authenticated sync, malformed configure,
+  missing protocol and compositor-owned lock after a simulated client crash.
+
 ## 2026-10-12: Authentication stage 0 — boundaries and backend audit
 
 - Audited Iced session-lock 0.17.1; rejected its no-op lock lifecycle and generic

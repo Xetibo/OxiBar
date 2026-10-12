@@ -3299,6 +3299,18 @@ dependencies = [
 [[package]]
 name = "oxi-lock"
 version = "0.1.0"
+dependencies = [
+ "iced",
+ "iced_runtime",
+ "iced_tiny_skia",
+ "memmap2",
+ "rustix 1.1.4",
+ "tiny-skia",
+ "waycrate_xkbkeycode",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-server",
+]
 
 [[package]]
 name = "oxi-session"

@@ -1,7 +1,9 @@
 # Native Lock Screen and Kiosk Session Manager
 
-**Status:** implementation in progress. Stage 0 (backend audit and tested state
-boundaries) is complete; executable/integration stages are committed separately.
+**Status:** implementation in progress. Stages 0 (backend audit/state boundaries)
+and 1 (owned protocol backend with private rendering/lifecycle fixtures) are
+complete. The non-locking `oxilock --check` frontend is available; authenticated
+interactive locking is wired in stage 2. Integration stages are committed separately.
 
 ## Product and process boundaries
 

@@ -4,3 +4,22 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
 description = "Protocol-owned Wayland session locker"
+
+[dependencies]
+iced = { version = "0.14", features = ["advanced", "image", "svg"] }
+iced_runtime = "0.14"
+iced_tiny_skia = { version = "0.14", features = ["image", "svg"] }
+memmap2 = "0.9"
+rustix = { version = "1", features = ["event", "fs"] }
+tiny-skia = "0.11"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+waycrate_xkbkeycode = "0.17.1"
+
+[dev-dependencies]
+wayland-server = "0.31"
+wayland-protocols = { version = "0.32", features = ["server", "staging"] }
+
+[[bin]]
+name = "oxilock"
+path = "src/main.rs"
