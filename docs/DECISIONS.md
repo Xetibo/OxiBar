@@ -66,6 +66,24 @@
   and `/nix/store/z1a9h9jfaqrcq6cyndxgl9388arm7096-vm-test-run-oxisession-hyprland-handoff`.
 - Keep concurrent settings-sidebar changes out of this authentication stage commit.
 
+## 2026-10-12: Settings sidebar pointer clipping
+
+- Sidebar actions already carry stable page IDs. The shared full-layout reveal
+  passed an available cursor to clipped submenu buttons; Iced buttons hit-test their
+  full layout bounds, so invisible entries intercepted later roots such as Dock.
+- Mask the child cursor outside the reveal/parent viewport intersection for update,
+  hover and draw. Continue forwarding releases with an unavailable cursor so a press
+  canceled outside the reveal cannot activate later. Keep full-size child layout.
+- Three actual-widget regressions reproduced the wrong submenu action, clipped hits
+  and release bug before the fix. The owned compositor smoke now clicks every root
+  and Dock children under normal, reduced and zero-duration motion.
+- Verification passes in Nix: 16 oxiced tests, 76 host unit tests and six settings-flow
+  tests; host build, workspace formatting and strict host/oxiced Clippy. The complete
+  isolated UI smoke passes, including all sidebar pointer selections.
+- Local Cargo smoke binaries need the outer development shell's dynamic library
+  paths. Preserve daemon logs on timeout even if status is unavailable, and refresh
+  the fixture's retained monitor draft before editing after unrelated config writes.
+
 ## 2026-10-12: Authentication stage 3 — fullscreen greetd greeter
 
 - Added the standalone `oxisession` xdg-shell Iced frontend, trusted system Wayland

@@ -24,6 +24,13 @@ pub struct Reveal<'a, M> {
 fn content_limits(limits: &layout::Limits, full: f32) -> layout::Limits {
     layout::Limits::new(Size::ZERO, Size::new(limits.max().width, full))
 }
+fn clipped_cursor(cursor: mouse::Cursor, viewport: Rectangle) -> mouse::Cursor {
+    if cursor.is_over(viewport) {
+        cursor
+    } else {
+        mouse::Cursor::Unavailable
+    }
+}
 impl<M> Widget<M, iced::Theme, iced::Renderer> for Reveal<'_, M> {
     fn children(&self) -> Vec<Tree> {
         vec![Tree::new(&self.content)]
@@ -79,11 +86,12 @@ impl<M> Widget<M, iced::Theme, iced::Renderer> for Reveal<'_, M> {
         viewport: &Rectangle,
     ) {
         if let Some(viewport) = viewport.intersection(&l.bounds()) {
+            // Buttons hit-test their full layout bounds, ignoring the clipped viewport.
             self.content.as_widget_mut().update(
                 &mut tree.children[0],
                 event,
                 l.children().next().unwrap(),
-                cursor,
+                clipped_cursor(cursor, viewport),
                 r,
                 clipboard,
                 shell,
@@ -105,7 +113,7 @@ impl<M> Widget<M, iced::Theme, iced::Renderer> for Reveal<'_, M> {
                 self.content.as_widget().mouse_interaction(
                     &tree.children[0],
                     l.children().next().unwrap(),
-                    cursor,
+                    clipped_cursor(cursor, viewport),
                     &viewport,
                     r,
                 )
@@ -130,7 +138,7 @@ impl<M> Widget<M, iced::Theme, iced::Renderer> for Reveal<'_, M> {
                     theme,
                     style,
                     l.children().next().unwrap(),
-                    cursor,
+                    clipped_cursor(cursor, viewport),
                     &viewport,
                 )
             });
@@ -161,11 +169,186 @@ impl<'a, M: 'a> From<Reveal<'a, M>> for Element<'a, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::advanced::renderer::Headless;
+    use iced::widget::{Column, Space, button};
+    use iced::{Font, Pixels, Point};
+    use iced_layershell::reexport::core::clipboard;
+
+    fn renderer() -> iced::Renderer {
+        iced::futures::executor::block_on(iced::Renderer::new(
+            Font::default(),
+            Pixels(16.),
+            Some("tiny-skia"),
+        ))
+        .expect("headless CPU renderer")
+    }
+
+    fn child(visible: f32) -> Element<'static, &'static str> {
+        reveal(
+            button(Space::new())
+                .width(100)
+                .height(80)
+                .on_press("submenu"),
+            80.,
+            visible,
+        )
+        .into()
+    }
+
+    fn pointer_event(
+        widget: &mut Element<'_, &'static str>,
+        tree: &mut Tree,
+        node: &layout::Node,
+        renderer: &iced::Renderer,
+        event: mouse::Event,
+        point: Point,
+        viewport: &Rectangle,
+    ) -> Vec<&'static str> {
+        let mut messages = Vec::new();
+        widget.as_widget_mut().update(
+            tree,
+            &Event::Mouse(event),
+            Layout::new(node),
+            mouse::Cursor::Available(point),
+            renderer,
+            &mut clipboard::Null,
+            &mut Shell::new(&mut messages),
+            viewport,
+        );
+        messages
+    }
+
+    fn click(
+        widget: &mut Element<'_, &'static str>,
+        tree: &mut Tree,
+        node: &layout::Node,
+        renderer: &iced::Renderer,
+        point: Point,
+        viewport: &Rectangle,
+    ) -> Vec<&'static str> {
+        [
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ]
+        .into_iter()
+        .flat_map(|event| pointer_event(widget, tree, node, renderer, event, point, viewport))
+        .collect()
+    }
+
     #[test]
     fn child_layout_remains_full_size_during_reveal() {
         for height in [1., 30., 120., 760.] {
             let limits = layout::Limits::new(Size::ZERO, Size::new(960., height));
             assert_eq!(content_limits(&limits, 760.).max(), Size::new(960., 760.));
         }
+    }
+
+    #[test]
+    fn hidden_submenu_does_not_intercept_clicks_on_following_rows() {
+        let renderer = renderer();
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(100., 200.));
+        for visible in [0., 20.] {
+            let mut sidebar: Element<'_, &'static str> = Column::new()
+                .push(child(visible))
+                .push(button(Space::new()).width(100).height(40).on_press("dock"))
+                .into();
+            let mut tree = Tree::new(&sidebar);
+            let node = sidebar.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, viewport.size()),
+            );
+            let dock = Layout::new(&node).children().nth(1).unwrap().bounds();
+            assert_eq!(
+                click(
+                    &mut sidebar,
+                    &mut tree,
+                    &node,
+                    &renderer,
+                    dock.center(),
+                    &viewport
+                ),
+                ["dock"],
+                "visible submenu height: {visible}",
+            );
+        }
+    }
+
+    #[test]
+    fn only_visible_child_region_accepts_clicks_and_hover() {
+        let renderer = renderer();
+        let viewport = Rectangle::new(Point::new(0., 10.), Size::new(100., 100.));
+        let mut widget = child(20.);
+        let mut tree = Tree::new(&widget);
+        let node = widget.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(100., 200.)),
+        );
+        for (y, expected) in [(5., Vec::new()), (15., vec!["submenu"]), (30., Vec::new())] {
+            let point = Point::new(50., y);
+            assert_eq!(
+                click(&mut widget, &mut tree, &node, &renderer, point, &viewport),
+                expected,
+                "cursor y: {y}",
+            );
+            assert_eq!(
+                widget.as_widget().mouse_interaction(
+                    &tree,
+                    Layout::new(&node),
+                    mouse::Cursor::Available(point),
+                    &viewport,
+                    &renderer,
+                ),
+                if expected.is_empty() {
+                    mouse::Interaction::None
+                } else {
+                    mouse::Interaction::Pointer
+                },
+                "cursor y: {y}",
+            );
+        }
+    }
+
+    #[test]
+    fn releasing_outside_reveal_cancels_child_press() {
+        let renderer = renderer();
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(100., 200.));
+        let mut widget = child(20.);
+        let mut tree = Tree::new(&widget);
+        let node = widget.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        for (event, y) in [
+            (mouse::Event::ButtonPressed(mouse::Button::Left), 10.),
+            (mouse::Event::ButtonReleased(mouse::Button::Left), 30.),
+            (mouse::Event::ButtonReleased(mouse::Button::Left), 10.),
+        ] {
+            assert!(
+                pointer_event(
+                    &mut widget,
+                    &mut tree,
+                    &node,
+                    &renderer,
+                    event,
+                    Point::new(50., y),
+                    &viewport,
+                )
+                .is_empty()
+            );
+        }
+        assert_eq!(
+            click(
+                &mut widget,
+                &mut tree,
+                &node,
+                &renderer,
+                Point::new(50., 10.),
+                &viewport,
+            ),
+            ["submenu"],
+        );
     }
 }

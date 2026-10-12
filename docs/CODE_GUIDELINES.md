@@ -171,6 +171,8 @@
 - Animate reveal bounds independently of full child layout. Calendar/form content
   must not relayout to each intermediate animation height; external refresh/launch
   work stays off the UI executor.
+  Mask the child cursor outside the visible/parent viewport intersection in update,
+  hover and draw; still forward releases with an unavailable cursor to clear presses.
 - Persist requested logical geometry, not clamped fallback placement. Keep unknown
   instance fields and starting-revision conflicts intact when saving drafts.
 - Capture drag press coordinates from the actual widget event; a separately queued

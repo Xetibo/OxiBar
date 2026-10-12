@@ -195,7 +195,11 @@ timeout_ms=10000
                     if value: return value
                 except (OSError, ValueError, subprocess.SubprocessError): pass
                 time.sleep(.025)
-            raise AssertionError(label + "\n" + json.dumps(status()) + "\n" + "".join(logs))
+            try:
+                current = json.dumps(status())
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                current = "status unavailable: " + str(error)
+            raise AssertionError(label + "\n" + current + "\n" + "".join(logs))
         def layers():
             raw = json.loads(subprocess.check_output(["hyprctl", "-j", "layers"], env=env))
             return [dict(layer, output=output) for output, groups in raw.items() for group in groups["levels"].values() for layer in group if layer.get("pid") == daemon.pid]
@@ -374,6 +378,16 @@ timeout_ms=10000
             wait(lambda: bounds("appearance/typography")["height"] >= initial_height - 1, "sidebar expands")
             time.sleep(1.1)
             cli("config", "reset", "theme.animation_ms")
+            for motion in ("normal", "reduced", "instant"):
+                cli("config", "set", "theme.reduced_motion", "true" if motion == "reduced" else "false")
+                cli("config", "set", "theme.animation_ms", "0" if motion == "instant" else "150")
+                time.sleep(.3)
+                for route in ("dock", "desktop", "theme", "shortcuts", "appearance", "bar", "launcher", "plugins", "advanced", "monitors", "controls", "dock", "dock/placement", "dock/applications", "appearance"):
+                    control(route)
+                    wait(lambda: status()["settings_navigation"]["page"] == route, f"{motion} sidebar click selects {route}")
+                    time.sleep(.3)
+            cli("config", "reset", "theme.reduced_motion")
+            cli("config", "reset", "theme.animation_ms")
             page("appearance/feedback/notifications")
             picture("nested-notifications")
             settings_geometry = {key: layer("OxiBar settings")[key] for key in ("address", "x", "y", "w", "h")}
@@ -448,6 +462,8 @@ timeout_ms=10000
             layer("OxiBar settings")
             time.sleep(.3)
             page("monitors/arrangement")
+            # Earlier sidebar visits retained a draft across unrelated config writes.
+            control("@monitor/refresh")
             wait(lambda: status()["monitor_editor"]["draft"] and not status()["monitor_editor"]["busy"], "native editable monitor inventory")
             wait(lambda: len(status()["monitor_editor"]["diagram"]) >= 2, "two-display snap diagram")
             displays = sorted(status()["monitor_editor"]["draft"], key=lambda value: value["x"])
@@ -537,7 +553,7 @@ timeout_ms=10000
             cli("config", "set", "bar.auto_hide", "false")
             wait(bar_visible, "disabling auto-hide restores bar")
             assert layer("OxiBar", output)["address"] == bar_address
-            print(json.dumps(dict(icon_only_bar_and_live_labels=True, oxishut_session_tiles=True, clock_controls_attached=True, left_navigation=True, system_controls_without_duplicate_session=True, button_anchor=True, inbox_in_bar=True, session_confirmation=True, session_commands=True, larger_settings=True, animated_nested_settings=True, reduced_motion_and_narrow_navigation=True, header_reset_and_compact_stable_footer=True, gui_live_default_providers=True, live_application_search_and_activation=True, actual_three_column_layout_drag=True, base24_accent=True, native_monitor_snapping_and_overlap_restore=True, native_monitors_preview_save_revert=True, bottom_bar_geometry=True, audio_dropdown_escape=True, shared_live_music_notification_placement=True, pointer_reveal_and_dropdown_pinning=True)), flush=True)
+            print(json.dumps(dict(icon_only_bar_and_live_labels=True, oxishut_session_tiles=True, clock_controls_attached=True, left_navigation=True, system_controls_without_duplicate_session=True, button_anchor=True, inbox_in_bar=True, session_confirmation=True, session_commands=True, larger_settings=True, animated_nested_settings=True, sidebar_pointer_selection_all_motion_modes=True, reduced_motion_and_narrow_navigation=True, header_reset_and_compact_stable_footer=True, gui_live_default_providers=True, live_application_search_and_activation=True, actual_three_column_layout_drag=True, base24_accent=True, native_monitor_snapping_and_overlap_restore=True, native_monitors_preview_save_revert=True, bottom_bar_geometry=True, audio_dropdown_escape=True, shared_live_music_notification_placement=True, pointer_reveal_and_dropdown_pinning=True)), flush=True)
         finally:
             stop(hover_pointer)
             stop(daemon)

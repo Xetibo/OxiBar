@@ -180,6 +180,8 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Resolved: animation constrained calendar/form layout on every frame, and calendar
   refresh/launch calls blocked the Iced executor. Stable reveal layout and bounded
   off-executor jobs are privately measured while a two-second CalDAV sync is blocked.
+- Resolved: full-layout reveal children could capture clicks beyond their visible
+  clip. Shared pointer/hover clipping now preserves neighboring controls' hit targets.
 - Remaining desktop-entry coverage such as DBusActivatable-only entries stays in the
   launcher section; this fix does not claim every application ships a usable icon.
 - Resolved: provider switches now load Applications immediately, and Nix profile

@@ -190,6 +190,8 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   use the shared theme duration and a fixed full-size child layout, avoiding repeated
   calendar/form relayout during animation. Reduced motion or zero duration bypasses
   animation builders rather than evaluating a zero-duration transition.
+  Shared reveals clip child pointer input and hover to the same visible bounds and
+  parent viewport as drawing, despite retaining the full child layout.
 - Modal retirement invokes an optional provider `modal_closed` hook once for that
   instance, including Escape, replacement, compositor closure and output removal.
   Nonblocking cleanup tasks still update the model after their window disappears.

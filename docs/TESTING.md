@@ -127,6 +127,8 @@ Deployment examples are in `AUTH_DEPLOYMENT.md`.
   fallback despite alternate declared classes, library-path precedence, SVG filename aliases and
   portable format-aware icons; blocked calendar work stays off the UI executor.
   Shared reveal tests keep expensive child layout full-sized throughout animation.
+  Actual Iced buttons with the headless CPU renderer cover hidden/partly revealed
+  click-through, parent-viewport clipping, visible hover and canceled child presses.
   Drag-preview tests reconcile an empty/previous surface tree and preview insertion/
   removal while preserving the content's widget state.
   Bounds-capture tests invalidate equal geometry when logical widget identity changes.
@@ -167,6 +169,9 @@ nix develop --impure --file nix/gui-tests.nix -c \
     "$AUDIO" "$BLUETOOTH" "$STATS" "$APPLICATIONS" "$TOOLS"
 ```
 
+For unwrapped local Cargo binaries/libraries, prefix this command with
+`nix develop -c` to retain the flake's dynamic Wayland/graphics library paths.
+
 It checks actual clicked-button geometry, icon-only host/provider bars and live label
 width changes, attached clock/left navigation/inbox, centered 800×480 OxiShut-style
 session tiles and native confirmation, 1440×960 settings, live default-provider enablement without
@@ -184,6 +189,8 @@ removing the seat's only pointer emits Leave and must not masquerade as hovering
 The fixture also creates a second owned headless output. It checks nested page
 selection, sidebar folding/expansion, reduced motion, the narrow full-path picker,
 header reset placement and a compact footer that retains its bounds across saves.
+Pointer clicks select every sidebar root and Dock children with normal, reduced and
+zero-duration motion, after transitions settle.
 Real pointer drags exercise edge snapping and overlap restoration on both outputs
 before the existing native preview/Keep/Revert flow. Dedicated session tiles remain;
 embedded System content omits duplicate session actions.
