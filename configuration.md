@@ -120,6 +120,13 @@ poll_seconds = 2
 | `paste_shortcut` | `"ctrl+v"` | `"ctrl+v"` or `"ctrl+shift+v"`; choose the target application's paste shortcut. Restart-only. |
 | `poll_seconds` | `2` | Visible history refresh interval, from 1 to 3,600 seconds. Restart-only. |
 
+Open the shell's centered, search-focused picker with `oxibar oxipaste open`.
+`oxibar oxipaste` toggles it; explicit `close` and `toggle` are also supported.
+The picker uses the focused output and works with `bar.enabled = false`, without
+placing OxiPaste in a layout. The installed provider must be enabled. Escape uses
+the shared `shortcuts.close` binding; opening other exclusive shell overlays
+dismisses the picker. `oxibar status` reports `oxipaste_open` and `oxipaste_output`.
+
 Clicking a row copies its exact bytes/MIME, then dismisses the shell's interactive
 surfaces and waits for native keyboard focus release before invoking `wtype`.
 **Copy** changes the clipboard without dismissal or key injection. Failed writes

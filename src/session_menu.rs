@@ -81,6 +81,7 @@ impl OxiBar {
                 }
                 let dismiss = Task::batch([
                     self.close_overview(),
+                    self.close_oxipaste(),
                     self.close_control_center(),
                     self.close_bar_dropdown(),
                     self.close_modal(),

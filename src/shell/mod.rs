@@ -14,6 +14,7 @@ pub(crate) mod runtime;
 pub enum SurfaceKind {
     Bar(String),
     Launcher,
+    OxiPaste,
     Settings,
     ControlCenter,
     Session,
@@ -95,6 +96,7 @@ pub struct BarInstance {
 }
 
 pub(crate) struct Shell {
+    pub oxipaste_window: Option<IcedId>,
     pub session_window: Option<IcedId>,
     pub session_focused: usize,
     pub session_error: Option<String>,
@@ -118,6 +120,7 @@ impl Shell {
             .and_then(OutputSnapshot::focused)
             .map(|output| output.name.clone());
         Self {
+            oxipaste_window: None,
             session_window: None,
             session_focused: 0,
             session_error: None,

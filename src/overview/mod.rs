@@ -187,6 +187,7 @@ impl OxiBar {
                 self.overview.active = self.overlay_output();
                 self.overview.closing = false;
                 let dismiss = Task::batch([
+                    self.close_oxipaste(),
                     self.close_launcher(),
                     self.close_settings(),
                     self.close_control_center(),

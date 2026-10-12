@@ -464,6 +464,13 @@ milestone 7, rather than being inferred from layer configuration or sleeps.
 
 ## Persistent Clipboard and Native Paste
 
+`nix develop -c env -u HYPRLAND_INSTANCE_SIGNATURE cargo test -p oxibar --test oxipaste_flow`
+checks command errors, idempotence/toggle, native layer settings, output bounds,
+shared visible-only subscriptions, exclusive-overlay dismissal, captured/scoped
+Escape, outside bounds, native closure, hidden bars, output removal, provider
+disable/re-enable and retained late results without a live desktop service.
+IPC parser tests validate all three clipboard window verbs and reject invalid actions.
+
 Build the updated OxiPaste binaries separately, and build Oxibar with its OxiPaste
 dylib from one workspace graph. The following opt-in checks require owned services:
 
@@ -495,8 +502,11 @@ Ctrl+Shift+V after native focus release; screenshots are optional diagnostics.
 It also proves original watcher stdin/trailing newlines, exact Copy after history
 reordering, Copy retaining the picker without typing, failed writes retaining
 picker/history, keyboard-device removal without Leave, standalone Copy/Enter,
-binary MIME bytes, private file permissions and restart persistence. The same
-suite passes against the Nix host/plugin/OxiPaste packages; normal writes use the
+shell-command open/close/toggle/idempotence and centered placement, automatic
+search focus, mutual launcher dismissal, Copy retention and native paste with the
+bar disabled, provider-disable cleanup/errors, binary MIME bytes, private file
+permissions and restart persistence. The same
+suite accepts Nix host/plugin/OxiPaste package paths; normal writes use the
 packaged helper wrappers, with the unwrapped daemon isolated for failed-write
 injection. `--trace-focus` records native keyboard/focus transitions.
 Never run these keyboard/clipboard checks against the user's session.

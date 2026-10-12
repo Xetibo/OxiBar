@@ -1,8 +1,8 @@
 # OxiPaste provider
 
 Optional ABI 6 provider for the updated OxiPaste daemon's persistent clipboard
-history. One shared model serves the bar popup, control center and interactive
-desktop widget. The daemon retains text and common images across sessions.
+history. One shared model serves the shell picker, bar popup, control center and
+interactive desktop widget. The daemon retains text and common images across sessions.
 
 ## Install
 
@@ -54,6 +54,23 @@ Restart Oxibar after replacing loaded libraries or changing restart-only plugin
 settings. Place a desktop widget through Oxibar's desktop layout editor.
 
 ## Interaction
+
+Open directly from the shell or a compositor keybind:
+
+```sh
+oxibar oxipaste        # Toggle the picker.
+oxibar oxipaste open   # Open, or keep the current picker open.
+oxibar oxipaste close
+oxibar oxipaste toggle
+```
+
+The resident shell opens a centered, keyboard-focused overlay on the focused
+output, with search focused immediately. Bar/control-center/desktop placement is
+optional; the command works with the bar disabled. The provider must be installed
+and enabled; the daemon must run separately. Escape (or configured
+`shortcuts.close`) and the footer's Close button dismiss the picker. Other
+exclusive overlays dismiss it, and disabling the provider closes it. Command
+status includes `oxipaste_open` and `oxipaste_output`.
 
 - Click the content preview to paste into the application receiving focus below.
   The daemon confirms a successful clipboard write before Oxibar dismisses its

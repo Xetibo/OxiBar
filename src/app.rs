@@ -668,6 +668,23 @@ impl OxiBar {
                     Task::none()
                 }
             }
+            Message::OxiPasteEscape(id) => {
+                if self.shell.oxipaste_window == Some(id) {
+                    self.close_oxipaste()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::OxiPasteFocus(id, forward) => {
+                if self.shell.oxipaste_window != Some(id) {
+                    return Task::none();
+                }
+                if forward {
+                    iced::widget::operation::focus_next()
+                } else {
+                    iced::widget::operation::focus_previous()
+                }
+            }
             Message::SettingsSearchFocus(id) => {
                 if self.settings.window_id == Some(id) {
                     iced::widget::operation::focus(settings::SEARCH_ID)
@@ -706,6 +723,7 @@ impl OxiBar {
             | Message::OpenOsdLayer(_, _)
             | Message::OpenOverviewLayer(_, _, _)
             | Message::OpenSessionLayer(_, _)
+            | Message::OpenOxiPasteLayer(_, _)
             | Message::OpenDockLayer(_, _, _, _, _)
             | Message::OpenDesktopLayer(_, _, _, _)
             | Message::SetLayerAnchor(_, _)
@@ -846,6 +864,7 @@ impl OxiBar {
                 let query = self.query_runner_plugins();
                 Task::batch([
                     self.close_overview(),
+                    self.close_oxipaste(),
                     close_modal,
                     close_panel,
                     close_settings,
@@ -1043,6 +1062,9 @@ impl OxiBar {
             }
             return iced::widget::operation::focus(launcher::SEARCH_ID);
         }
+        if self.shell.oxipaste_window == Some(id) {
+            return iced::widget::operation::focus(crate::oxipaste::SEARCH_ID);
+        }
         let Some(bar) = self.shell.bar_mut(id) else {
             return Task::none();
         };
@@ -1130,6 +1152,7 @@ impl OxiBar {
         }
         let notifications = plugin_id.eq_ignore_ascii_case("Notifications");
         let dismiss = Task::batch([
+            self.close_oxipaste(),
             self.close_control_center(),
             self.close_bar_dropdown(),
             self.close_panel(),
@@ -1190,6 +1213,7 @@ impl OxiBar {
         self.modal_window_id = Some(id);
         Task::batch([
             close_existing,
+            self.close_oxipaste(),
             self.close_bar_dropdown(),
             Task::done(Message::OnOutput(
                 output,
@@ -1244,7 +1268,7 @@ impl OxiBar {
         }
         self.panel_plugin = Some(plugin_id);
         self.panel_window_id = Some(id);
-        let close_toasts = self.close_all_toasts();
+        let close_toasts = Task::batch([self.close_all_toasts(), self.close_oxipaste()]);
 
         if let Some(existing) = close_existing {
             close_toasts
@@ -1526,6 +1550,7 @@ impl OxiBar {
             || self.control_center.window_id.is_some()
             || self.modal_window_id.is_some()
             || self.shell.session_window.is_some()
+            || self.shell.oxipaste_window.is_some()
             || self.popup_open
             || self.shell.bars.values().any(|bar| bar.config.auto_hide)
         {
@@ -1688,6 +1713,7 @@ impl OxiBar {
                         .any(|widget| widget.enabled && matches(&widget.plugin))
                 }))
             || (self.popup_open && self.popup_plugin.as_deref().is_some_and(matches))
+            || (self.shell.oxipaste_window.is_some() && matches("OxiPaste"))
             || self.modal_plugin.as_deref().is_some_and(matches)
             || self.panel_plugin.as_deref().is_some_and(matches)
             || (self.control_center.window_id.is_some()

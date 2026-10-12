@@ -88,6 +88,7 @@ impl OxiBar {
             self.close_modal(),
             self.close_panel(),
             self.close_launcher(),
+            self.close_oxipaste(),
             self.close_settings(),
             self.close_overview(),
             self.close_session(),

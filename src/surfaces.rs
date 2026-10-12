@@ -101,6 +101,7 @@ impl OxiBar {
             SurfaceKind::Launcher => self.launcher.size,
             SurfaceKind::ControlCenter => self.config.snapshot.host.control_center_size,
             SurfaceKind::Session => crate::session_menu::SIZE,
+            SurfaceKind::OxiPaste => crate::layout::DEFAULT_POPUP_SIZE,
             SurfaceKind::Modal(_) => MODAL_SIZE,
             _ => return iced::Task::none(),
         };
@@ -117,6 +118,7 @@ impl OxiBar {
             SurfaceKind::Launcher => self.close_launcher(),
             SurfaceKind::ControlCenter => self.close_control_center(),
             SurfaceKind::Session => self.close_session(),
+            SurfaceKind::OxiPaste => self.close_oxipaste(),
             SurfaceKind::Modal(_) => self.close_modal(),
             _ => iced::Task::none(),
         }
@@ -131,6 +133,7 @@ impl OxiBar {
             Some(SurfaceKind::DesktopEditor) => self.desktop_editor_view(id),
             Some(SurfaceKind::ControlCenter) => self.control_center_view(),
             Some(SurfaceKind::Session) => self.session_menu_view(),
+            Some(SurfaceKind::OxiPaste) => self.oxipaste_view(id),
             Some(SurfaceKind::Overview) => self.overview_view(id),
             Some(SurfaceKind::Launcher) => self.launcher.view(format!(
                 "{}: select · {}: launch · {}: close",

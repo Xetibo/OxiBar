@@ -14,6 +14,7 @@ pub mod messages;
 pub mod monitor;
 pub mod osd;
 pub mod overview;
+mod oxipaste;
 mod paste;
 pub mod plugins;
 pub mod session_menu;

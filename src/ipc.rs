@@ -57,6 +57,7 @@ pub enum Command {
     CloseOsds,
     Outputs,
     Launcher(WindowCommand),
+    OxiPaste(WindowCommand),
     Settings(WindowCommand),
     ControlCenter(WindowCommand),
     Session(WindowCommand),
@@ -161,7 +162,7 @@ fn parse_request(text: &str) -> Result<Command, String> {
             },
             _ => return Err("Unknown OSD action".to_owned()),
         },
-        "launcher" | "settings" | "control-center" | "overview" | "session" => {
+        "launcher" | "oxipaste" | "settings" | "control-center" | "overview" | "session" => {
             let action = match string("action")? {
                 "toggle" => WindowCommand::Toggle,
                 "open" => WindowCommand::Open,
@@ -170,6 +171,8 @@ fn parse_request(text: &str) -> Result<Command, String> {
             };
             if string("command")? == "launcher" {
                 Command::Launcher(action)
+            } else if string("command")? == "oxipaste" {
+                Command::OxiPaste(action)
             } else if string("command")? == "settings" {
                 Command::Settings(action)
             } else if string("command")? == "overview" {
@@ -302,7 +305,7 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
     {
         ["--help"] | ["-h"] => {
             println!(
-                "Usage: oxibar [launcher|settings|control-center|overview|session [toggle|open|close]]\n\
+                "Usage: oxibar [launcher|oxipaste|settings|control-center|overview|session [toggle|open|close]]\n\
                  oxibar config get [path]\n\
                  oxibar config set <path> <TOML value>\n\
                  oxibar config reset <path> | reset-all | reload | schema\n\
@@ -339,16 +342,21 @@ pub fn run_cli(args: &[String]) -> Result<bool, Box<dyn std::error::Error>> {
                 let arguments: Vec<_> = args.iter().map(String::as_str).collect();
                 let mut request = serde_json::json!({"version": PROTOCOL_VERSION});
                 match arguments.as_slice() {
-                    [command @ ("settings" | "control-center" | "overview" | "session")]
+                    [
+                        command @ ("oxipaste" | "settings" | "control-center" | "overview"
+                        | "session"),
+                    ]
                     | [
-                        command @ ("settings" | "control-center" | "overview" | "session"),
+                        command @ ("oxipaste" | "settings" | "control-center" | "overview"
+                        | "session"),
                         "toggle",
                     ] => {
                         request["command"] = (*command).into();
                         request["action"] = "toggle".into();
                     }
                     [
-                        command @ ("settings" | "control-center" | "overview" | "session"),
+                        command @ ("oxipaste" | "settings" | "control-center" | "overview"
+                        | "session"),
                         action @ ("open" | "close"),
                     ] => {
                         request["command"] = (*command).into();
@@ -664,6 +672,17 @@ mod tests {
             );
         }
         assert!(parse_request(r#"{"version":1,"command":"session","action":"logout"}"#).is_err());
+        for (action, expected) in [
+            ("open", WindowCommand::Open),
+            ("close", WindowCommand::Close),
+            ("toggle", WindowCommand::Toggle),
+        ] {
+            let request = serde_json::json!({"version":1,"command":"oxipaste","action":action});
+            assert!(
+                matches!(parse_request(&request.to_string()).unwrap(), Command::OxiPaste(command) if command == expected)
+            );
+        }
+        assert!(parse_request(r#"{"version":1,"command":"oxipaste","action":"paste"}"#).is_err());
     }
 
     #[test]

@@ -16,6 +16,7 @@ enum Context {
     Overview,
     Settings,
     Launcher,
+    OxiPaste,
     Controls,
     Session,
     Desktop,
@@ -325,7 +326,7 @@ fn applies(binding: Context, current: Context) -> bool {
         || binding == Context::Forms
             && matches!(
                 current,
-                Context::Settings | Context::Controls | Context::Modal
+                Context::Settings | Context::Controls | Context::Modal | Context::OxiPaste
             )
 }
 
@@ -429,6 +430,8 @@ impl OxiBar {
             Context::Settings
         } else if self.launcher.window_id == Some(id) {
             Context::Launcher
+        } else if self.shell.oxipaste_window == Some(id) {
+            Context::OxiPaste
         } else if self.control_center.window_id == Some(id) {
             Context::Controls
         } else if self.shell.session_window == Some(id) {
@@ -498,6 +501,8 @@ impl OxiBar {
                 },
             ),
             (Context::Modal, Close) => Message::ModalEscape(id),
+            (Context::OxiPaste, Close) => Message::OxiPasteEscape(id),
+            (Context::OxiPaste, Focus(forward)) => Message::OxiPasteFocus(id, forward),
             (Context::Modal, Focus(forward)) => Message::ModalFocus(id, forward),
             (Context::Dropdown, Close) => Message::DropdownEscape(id),
             (Context::Desktop, Close) => Message::Desktop(crate::desktop::Action::Escape(id)),

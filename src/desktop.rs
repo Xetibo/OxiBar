@@ -359,6 +359,7 @@ impl OxiBar {
             let mut tasks = vec![
                 self.close_settings(),
                 self.close_launcher(),
+                self.close_oxipaste(),
                 self.close_control_center(),
                 self.close_modal(),
                 self.close_panel(),

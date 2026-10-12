@@ -91,6 +91,9 @@ impl OxiBar {
             .collect();
         let mut tasks = Vec::new();
         for name in disabled {
+            if name.eq_ignore_ascii_case("OxiPaste") {
+                tasks.push(self.close_oxipaste());
+            }
             if self.popup_plugin.as_deref() == Some(&name) {
                 tasks.push(self.close_bar_dropdown());
             }

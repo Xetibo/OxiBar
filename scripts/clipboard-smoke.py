@@ -59,7 +59,8 @@ async def main():
         bus = await MessageBus().connect()
 
         def run(*command, **options):
-            return subprocess.run(command, env=env, timeout=12, check=True, capture_output=True, **options)
+            options.setdefault("check", True)
+            return subprocess.run(command, env=env, timeout=12, capture_output=True, **options)
 
         def start(*command, child_env=None):
             process = subprocess.Popen(command, env=child_env or env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -258,6 +259,61 @@ paste_shortcut="ctrl+v"
             await asyncio.sleep(.15)
             await click(bar, "OxiBar", x + 160, y + 186)
             await wait(lambda: received() == selected * 2, "Ctrl+Shift+V pastes into owned terminal")
+
+            # Shell commands own a centered picker, independent of a visible bar.
+            start("wtype", "-s", "120000")
+            run(host, "oxipaste")
+            await wait(lambda: status()["oxipaste_open"], "bare clipboard command opens picker")
+            picker = await layer(bar, "OxiBar clipboard")
+            monitor = next(value for value in hypr("monitors") if value["name"] == picker["output"])
+            assert status()["oxipaste_output"] == output
+            assert abs(picker["x"] - monitor["x"] - (monitor["width"] / monitor["scale"] - picker["w"]) / 2) <= 1
+            assert abs(picker["y"] - monitor["y"] - (monitor["height"] / monitor["scale"] - picker["h"]) / 2) <= 1
+            run(host, "oxipaste", "open")
+            assert (await layer(bar, "OxiBar clipboard"))["address"] == picker["address"], "open must reuse visible picker"
+            await asyncio.sleep(.2)
+            run("wtype", "missing clipboard query")
+            run("wtype", "-k", "Escape")
+            await wait(lambda: not status()["oxipaste_open"], "captured search Escape closes picker")
+            run(host, "oxipaste", "toggle")
+            await layer(bar, "OxiBar clipboard")
+            run(host, "launcher", "open")
+            await wait(lambda: status()["launcher_open"] and not status()["oxipaste_open"], "launcher dismisses clipboard picker")
+            run(host, "oxipaste", "open")
+            await wait(lambda: status()["oxipaste_open"] and not status()["launcher_open"], "clipboard picker dismisses launcher")
+            run(host, "oxipaste")
+            await wait(lambda: not status()["oxipaste_open"], "bare clipboard command closes picker")
+            run(host, "oxipaste", "close")
+            run(host, "oxipaste", "close")
+
+            run(host, "config", "set", "bar.enabled", "false")
+            await wait(lambda: not status()["bars"], "bar hidden before clipboard command")
+            sentinel = b"command copy sentinel"
+            await call("Capture", "ays", [sentinel, "text/plain;charset=utf-8"])
+            await call("CopyContent", "ays", [sentinel, "text/plain;charset=utf-8"])
+            run("hyprctl", "dispatch", "focuswindow", "address:" + target["address"])
+            run(host, "oxipaste", "open")
+            await layer(bar, "OxiBar clipboard")
+            await asyncio.sleep(.2)
+            run("wtype", "-M", "ctrl", "-k", "a", "-m", "ctrl", "-k", "BackSpace", "clipboard selected")
+            await asyncio.sleep(.2)
+            await picture("clipboard-command-search", bar, "OxiBar clipboard")
+            await click(bar, "OxiBar clipboard", 480, 210)
+            await wait(lambda: run("wl-paste", "--no-newline").stdout == selected, "command picker Copy selects filtered history")
+            assert status()["oxipaste_open"] and received() == selected * 2
+            await asyncio.sleep(.2)
+            await picture("clipboard-command-copy", bar, "OxiBar clipboard")
+            await click(bar, "OxiBar clipboard", 160, 235)
+            await wait(lambda: received() == selected * 3, "command picker row pastes into owned terminal with bar hidden")
+            await wait(lambda: not status()["oxipaste_open"] and not any(value["namespace"] == "OxiBar clipboard" for value in layers(bar)), "native clipboard picker closes after paste")
+            await wait(lambda: hypr("activewindow").get("address") == target["address"], "command paste returns application focus")
+            run(host, "oxipaste", "open")
+            await layer(bar, "OxiBar clipboard")
+            run(host, "config", "set", "plugins", "[]")
+            await wait(lambda: not status()["oxipaste_open"], "disabling provider retires command picker")
+            missing = run(host, "oxipaste", "open", check=False)
+            assert missing.returncode != 0 and b"not enabled" in missing.stderr, missing
+            run(host, "oxipaste", "close")
             stop(bar)
 
             # Standalone Copy stays open; Enter pastes only after native focus release.
@@ -269,10 +325,10 @@ paste_shortcut="ctrl+v"
             await picture("clipboard-standalone", ui, "OxiPaste")
             await click(ui, "OxiPaste", 378, 236)
             await asyncio.sleep(.2)
-            assert ui.poll() is None and received() == selected * 2
+            assert ui.poll() is None and received() == selected * 3
             assert run("wl-paste", "--no-newline").stdout == selected
             run("wtype", "-k", "Return")
-            await wait(lambda: received() == selected * 3, "standalone Enter pastes into focused application")
+            await wait(lambda: received() == selected * 4, "standalone Enter pastes into focused application")
             await wait(lambda: ui.poll() == 0, "standalone closes only after successful paste")
 
             binary = b"\x00\xffbinary<>:<>\n"
@@ -285,7 +341,7 @@ paste_shortcut="ctrl+v"
             daemon = start(str(binaries / "oxipaste_daemon"), child_env=daemon_env)
             await wait(lambda: contains(binary), "binary history survives daemon restart")
             assert await contains(selected)
-            print(json.dumps(dict(original_watch_payload=True, trailing_newlines=True, content_addressed_copy=True, copy_keeps_open=True, native_focus_handoff=True, keyboard_device_loss=True, row_click_paste=True, terminal_shortcut=True, failed_copy_preserves_picker_and_history=True, standalone_copy_and_paste=True, binary_copy_and_private_persistence=True)), flush=True)
+            print(json.dumps(dict(original_watch_payload=True, trailing_newlines=True, content_addressed_copy=True, copy_keeps_open=True, native_focus_handoff=True, keyboard_device_loss=True, row_click_paste=True, terminal_shortcut=True, shell_clipboard_commands=True, clipboard_without_bar=True, failed_copy_preserves_picker_and_history=True, standalone_copy_and_paste=True, binary_copy_and_private_persistence=True)), flush=True)
         finally:
             bus.disconnect()
             for process in reversed(processes):

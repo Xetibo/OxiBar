@@ -111,6 +111,9 @@ pub enum Message {
     Session(crate::session_menu::Action),
     SessionKey(IcedId, crate::session_menu::Action),
     OpenSessionLayer(IcedId, (u32, u32)),
+    OpenOxiPasteLayer(IcedId, (u32, u32)),
+    OxiPasteEscape(IcedId),
+    OxiPasteFocus(IcedId, bool),
     LocalCommandFinished {
         provider: String,
         source: Option<IcedId>,
@@ -166,6 +169,21 @@ impl TryInto<LayershellCustomActionWithId> for Message {
 
     fn try_into(self) -> Result<LayershellCustomActionWithId, Self::Error> {
         match self {
+            Message::OpenOxiPasteLayer(id, size) => Ok(LayershellCustomActionWithId::new(
+                None,
+                LayershellCustomAction::NewLayerShell {
+                    settings: NewLayerShellSettings {
+                        size: Some(size),
+                        layer: Layer::Overlay,
+                        anchor: Anchor::empty(),
+                        exclusive_zone: Some(-1),
+                        keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                        namespace: Some("OxiBar clipboard".into()),
+                        ..Default::default()
+                    },
+                    id,
+                },
+            )),
             Message::OpenSessionLayer(id, size) => Ok(LayershellCustomActionWithId::new(
                 None,
                 LayershellCustomAction::NewLayerShell {

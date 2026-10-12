@@ -106,6 +106,7 @@ impl OxiBar {
                 };
                 Task::batch([
                     self.close_overview(),
+                    self.close_oxipaste(),
                     close_launcher,
                     close_modal,
                     close_panel,
@@ -818,6 +819,13 @@ impl OxiBar {
             "monitor_backend": self.shell.inventory.as_ref().map(|inventory| &inventory.backend), "monitor_error": self.shell.inventory_error,
             "outputs": self.shell.inventory.as_ref().map(|inventory| inventory.outputs.iter().map(|output| output.json()).collect::<Vec<_>>()).unwrap_or_default(),
             "bars": self.shell.bars.iter().map(|(instance, bar)| json!({"instance": instance, "output": bar.output, "width": bar.size.width, "height": bar.size.height, "position": format!("{:?}", bar.config.position), "auto_hide":bar.config.auto_hide, "visible":self.bar_is_visible(bar.id)})).collect::<Vec<_>>()});
+        data["oxipaste_open"] = json!(self.shell.oxipaste_window.is_some());
+        data["oxipaste_output"] = json!(
+            self.shell
+                .oxipaste_window
+                .and_then(|id| self.shell.registry.get(id))
+                .and_then(|record| record.output.as_ref())
+        );
         data["control_center_attached"] = json!(self.control_center.attached_to.is_some());
         data["plugins_loading"] = json!(self.plugin_runtime.loading);
         data["settings_navigation"] = json!({
@@ -938,6 +946,15 @@ impl OxiBar {
                     .reply
                     .send(ipc::response(snapshot.revision, data, None));
                 Task::none()
+            }
+            Command::OxiPaste(action) => {
+                let result = self.update_oxipaste(action);
+                request.reply.send(ipc::response(
+                    self.config.snapshot.revision,
+                    self.status_data(),
+                    result.as_ref().err().map(String::as_str),
+                ));
+                result.unwrap_or_else(|_| Task::none())
             }
             Command::Launcher(action) => {
                 let disabled = !self.launcher.enabled && !matches!(action, WindowCommand::Close);

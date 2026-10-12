@@ -1,5 +1,31 @@
 # Decisions
 
+## 2026-10-12: Shell clipboard picker command
+
+- Add `oxibar oxipaste [open|close|toggle]`; a bare command toggles the running
+  shell's picker, using the same versioned window IPC as other exclusive overlays.
+  Close is idempotent; missing/disabled providers or absent popup capability return
+  an actionable error before dismissing any existing surface.
+- Host-owned `src/oxipaste.rs` centers a bounded exclusive layer on the selected
+  output and renders the existing provider popup body. Retain the one shared
+  model, history/search state and visible-only subscription; no command ABI export
+  or independent daemon/clipboard owner is needed. Layout placement is optional.
+- Mirror the stable `oxibar-oxipaste-search` widget ID in the host and optional
+  provider so native configure focuses the search. Shared form traversal and close
+  bindings stay surface-scoped. Host chrome adds a configured close hint/footer.
+- Register before native creation, retain auxiliary ownership when a bar is
+  hidden, retire on provider disable/output removal/native closure and dismiss
+  alongside other exclusive overlays. Include this surface in the acknowledged
+  paste path's native focus-release barrier.
+- Add focused host lifecycle/IPC regressions and extend the owned clipboard smoke
+  with the real shell CLI, keyboard search, centered geometry, bar-independent
+  Copy/Paste and provider-disable handling.
+- Verified Rust formatting, all normal workspace tests, strict workspace Clippy
+  and host/provider builds through the flake development shell. The extended
+  native smoke passes with the real dylib and separately Nix-built OxiPaste daemon
+  and UI in an owned compositor/session bus, including all clipboard command and
+  hidden-bar Copy/Paste checks.
+
 ## 2026-10-12: OxiPaste widget and acknowledged native paste
 
 - Add optional `plugins/oxipaste` / `liboxipaste.so`, packaged as `oxibar-oxipaste`.

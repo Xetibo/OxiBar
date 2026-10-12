@@ -72,8 +72,9 @@ installed catalog through `extraPlugins`.
 
 The optional [OxiPaste provider](plugins/oxipaste/README.md) shares the updated
 OxiPaste daemon's persistent text/image history. Build `.#oxibar-oxipaste`, install
-`liboxipaste.so`, enable it and place **OxiPaste** in the bar, control center or
-desktop layout. Row clicks paste into the application below after native keyboard
+`liboxipaste.so`, enable it and open the centered picker with `oxibar oxipaste`.
+It also supports **OxiPaste** in the bar, control center or desktop layout.
+Row clicks paste into the application below after native keyboard
 focus release; a separate **Copy** button keeps the picker open. Use
 `oxipaste.paste_shortcut = "ctrl+shift+v"` for terminals that require it.
 The clipboard daemon's startup is configured separately.
@@ -82,6 +83,7 @@ With the daemon running:
 
 ```sh
 oxibar launcher
+oxibar oxipaste
 oxibar session
 oxibar settings
 oxibar control-center
@@ -99,12 +101,14 @@ They control the resident shell through IPC. For compositor keybinds:
 ```ini
 # Hyprland
 bind = SUPER, SPACE, exec, oxibar launcher toggle
+bind = SUPER, V, exec, oxibar oxipaste toggle
 bind = SUPER, ESCAPE, exec, oxibar session toggle
 ```
 
 ```conf
 # Sway
 bindsym $mod+space exec oxibar launcher toggle
+bindsym $mod+v exec oxibar oxipaste toggle
 bindsym $mod+Escape exec oxibar session toggle
 ```
 

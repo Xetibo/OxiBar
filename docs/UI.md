@@ -61,6 +61,10 @@
   region. Hidden children must let pointer events reach neighboring controls.
 - Do not introduce arbitrary palettes or random RGB colors. If `oxiced` cannot express a needed style, track the exception in `docs/TECHNICAL_DEBT.md`.
 - Search/task overlays take exclusive keyboard focus only while visible. Scope navigation to the overlay window; Escape and activation dismiss the overlay rather than terminate the daemon. Selected rows must differ from hover, and long result lists must scroll.
+- Command-driven provider pickers center on the selected output and clamp their
+  size to its logical bounds. Focus search on native configure, keep shared form
+  traversal and configured close hints, and dismiss mutually exclusive overlays.
+  Reuse provider content with host chrome; bar placement is not a prerequisite.
 - Empty asynchronous searches do not flash a no-results message. Retain explicit
   indexing and missing/unavailable-provider status.
 - Show provider prefixes, indexing/unavailable status and separate favorite actions.

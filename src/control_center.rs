@@ -93,6 +93,7 @@ impl OxiBar {
                 };
                 Task::batch([
                     self.close_overview(),
+                    self.close_oxipaste(),
                     self.close_launcher(),
                     self.close_settings(),
                     self.close_modal(),
@@ -168,6 +169,7 @@ impl OxiBar {
         let close_popup = self.close_bar_dropdown();
         let dismiss = Task::batch([
             self.close_overview(),
+            self.close_oxipaste(),
             close,
             close_popup,
             self.close_launcher(),

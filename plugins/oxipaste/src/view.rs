@@ -81,11 +81,12 @@ pub(super) fn body(model: &Model, scroll: bool) -> Element<'static, PluginMsg> {
                 .push(refresh)
                 .push(clear),
         )
-        .push(oxi_text_input::text_input(
-            "Search clipboard…",
-            &model.search,
-            |query| msg(Message::Search(query)),
-        ))
+        .push(
+            oxi_text_input::text_input("Search clipboard…", &model.search, |query| {
+                msg(Message::Search(query))
+            })
+            .id("oxibar-oxipaste-search"),
+        )
         .push(
             text("Click an item to paste · Copy keeps this view open")
                 .size(OXITHEME.font_sm)

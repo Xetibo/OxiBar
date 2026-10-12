@@ -127,7 +127,9 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `src/background.rs`: runtime-independent bridge for serialized filesystem jobs
   into Iced tasks; rendering uses immutable snapshots without locking the store.
 - `src/launcher.rs`: resident search-overlay state, cached global result ranking, keyboard routing, and themed view.
-- `src/ipc.rs`: bounded, versioned Unix-socket commands for launcher, session, settings,
+- `src/oxipaste.rs`: command-driven clipboard overlay composed from the enabled
+  provider's existing popup capability, model and visible-only refresh stream.
+- `src/ipc.rs`: bounded, versioned Unix-socket commands for launcher, clipboard, session, settings,
   control center, output inventory, configuration queries/mutations, provider
   actions, overview, OSDs and status. A bounded, owned set of connection handlers
   prevents slow actions from blocking fast launcher/status requests.
@@ -176,6 +178,12 @@ clipboard ownership, then requests a host-managed focus handoff. The host never
 substitutes a sleep for native focus release, rejects concurrent/disabled-provider
 requests and cancels injection if a host surface regains focus. Clipboard payloads
 stay in their owning service/provider rather than host status or request strings.
+
+Command-driven provider pickers are registered, output-scoped host surfaces. They
+share provider state/subscriptions with embedded views, survive hiding a bar on a
+connected output and retire on output removal or provider disable. Opening checks
+capabilities before dismissing existing UI. Exclusive overlays and acknowledged
+paste handoff use the same scoped surface cleanup.
 
 - `main()` configures tracing, layershell settings, font loading, theme, subscription, update, and view callbacks.
 - `run()` takes an optional single-instance lock via `single_instance::acquire()` from the `[instance]` config table; when another oxibar holds the lock the new process prints an error and exits non-zero (`allow_multiple_instances = true` skips the lock). The guard is held for the process lifetime.

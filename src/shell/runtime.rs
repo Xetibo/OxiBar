@@ -463,6 +463,9 @@ impl OxiBar {
     pub(crate) fn forget_surface(&mut self, id: IcedId) -> Task<Message> {
         let mut callback = Task::none();
         self.shell.registry.remove(id);
+        if self.shell.oxipaste_window == Some(id) {
+            self.shell.oxipaste_window = None;
+        }
         if self.shell.session_window == Some(id) {
             self.shell.session_window = None;
         }

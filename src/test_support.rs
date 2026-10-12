@@ -568,6 +568,10 @@ impl TestHost {
         self.bar.shell.session_window
     }
 
+    pub fn oxipaste_window(&self) -> Option<IcedId> {
+        self.bar.shell.oxipaste_window
+    }
+
     pub fn modal_plugin(&self) -> Option<&str> {
         self.bar.modal_plugin.as_deref()
     }
