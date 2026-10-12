@@ -177,11 +177,28 @@
             pkgs.callPackage ./nix/plugin.nix {
               inherit craneLib src cargoVendorDir cargoArtifacts lockFile plugin;
             };
+          authArtifacts = craneLib.buildDepsOnly (commonCraneArgs // {
+            postPatch = ''cp -R ${layershellevSource}/. crates/layershellev/src/'';
+            cargoBuildExtraArgs = "-p oxi-lock -p oxi-session";
+            cargoTestExtraArgs = "-p oxi-lock -p oxi-session --no-run";
+          });
+          authPackage = package: binary: pkgs.callPackage ./nix/auth-package.nix {
+            inherit craneLib src cargoVendorDir lockFile package binary;
+            cargoArtifacts = authArtifacts;
+            cage = pkgs.cage.overrideAttrs (old: {
+              patches = (old.patches or []) ++ [./nix/cage-initial-fullscreen.patch];
+              postPatch = (old.postPatch or "") + ''
+                substituteInPlace cage.c --replace-fail 'wlr_xdg_shell_create(server.wl_display, 5)' 'wlr_xdg_shell_create(server.wl_display, 6)'
+              '';
+            });
+          };
         in rec {
           oxibar = pkgs.callPackage ./nix/default.nix {
             inherit inputs craneLib src cargoVendorDir cargoArtifacts lockFile;
             applicationsPlugin = oxibar-applications;
           };
+          oxilock = authPackage "oxi-lock" "oxilock";
+          oxisession = authPackage "oxi-session" "oxisession";
           oxibar-audio = pluginPackage "audio";
           oxibar-applications = pluginPackage "applications";
           oxibar-battery = pluginPackage "battery";
@@ -197,11 +214,17 @@
           oxibar-workspaces = pluginPackage "workspaces";
           default = oxibar;
         };
+        checks = { authentication-clippy = self'.packages.oxisession.clippy; } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          authentication-cage = import ./nix/auth-vm-tests.nix { inherit pkgs; self = inputs.self; backend = "cage"; };
+          authentication-hyprland = import ./nix/auth-vm-tests.nix { inherit pkgs; self = inputs.self; backend = "hyprland"; };
+        };
       };
       flake = _: rec {
         nixosModules.home-manager = homeManagerModules.default;
+        nixosModules.authentication = import ./nix/auth-nixos.nix self;
         homeManagerModules = rec {
           oxibar = import ./nix/hm.nix inputs.self;
+          oxilock = import ./nix/auth-hm.nix self;
           default = oxibar;
         };
       };

@@ -1,11 +1,12 @@
 # Native Lock Screen and Kiosk Session Manager
 
 **Status:** implementation in progress. Stages 0 (backend audit/state boundaries)
-through 3 (owned protocol backend, PAM locker and fullscreen greetd frontend)
+through 4 (owned protocol backend, PAM locker, fullscreen greetd and verified kiosk deployment)
 are complete. `oxilock` requires an administrator-owned `/etc/pam.d/oxilock` policy;
 `--check` probes protocol support without locking. `oxisession` uses a root-peer
-greetd socket and trusted system Wayland sessions. Packaging/VM integration
-and visual/suspend stages follow in separate commits.
+greetd socket and trusted system Wayland sessions. Both Nix packages, Cage/Hyprland
+UID/seat/VT handoff VMs and strict authentication Clippy pass. Visual/suspend work
+is the final stage. Deployment is documented in `AUTH_DEPLOYMENT.md`.
 
 ## Product and process boundaries
 

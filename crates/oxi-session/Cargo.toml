@@ -18,3 +18,7 @@ zeroize = "1.8"
 [[bin]]
 name = "oxisession"
 path = "src/main.rs"
+
+[[bin]]
+name = "oxisession-kiosk"
+path = "src/kiosk_main.rs"

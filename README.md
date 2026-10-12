@@ -20,6 +20,10 @@ provider process or rescan the application catalog.
 
 ## Build and run
 
+Standalone [protocol locker and kiosk greeter](docs/AUTH_DEPLOYMENT.md) packages:
+`nix build .#oxilock .#oxisession`. The NixOS authentication module supplies PAM and
+greetd integration; the user-only Home Manager module installs the locker.
+
 ```sh
 nix build .#oxibar .#oxibar-applications .#oxibar-tools .#oxibar-clock
 nix run .#oxibar

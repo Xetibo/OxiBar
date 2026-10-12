@@ -293,10 +293,10 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   Existing session actions still launch the configured external locker.
 - The separate Rust/Iced protocol locker and kiosk greeter design is in
   `LOCK_SCREEN_SESSION_MANAGER_PLAN.md`. Protocol readiness/hotplug, PAM
-  conversations and greetd handoff have private fixtures and still require NixOS VM checks
-  before implementation can replace the external command. Authentication polish,
-  key repeat, rendering wake scheduling, kiosk integration and suspend readiness
-  belong to subsequent implementation stages.
+  conversations and greetd handoff have private fixtures. Independent Nix packages,
+  owned Cage/Hyprland kiosk integration and real NixOS UID/seat/VT, logout, failed-auth
+  and crash-recovery checks now pass. Authentication polish, key repeat, rendering
+  wake scheduling and suspend readiness belong to the final implementation stage.
 
 ### Selectable Search Result Row
 

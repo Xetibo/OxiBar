@@ -24,6 +24,17 @@ hidden/unavailable entries and administrator ownership rules.
 Authentication integration must use private fixtures or the dedicated VM, never
 the current user's desktop session or credentials.
 
+`nix build .#oxilock .#oxisession` builds independent authentication packages and
+runs their selected Cargo tests. `checks.<system>.authentication-clippy` runs strict
+all-targets Clippy for all four authentication crates. On x86-64,
+`checks.x86_64-linux.authentication-cage` and `authentication-hyprland` boot real
+NixOS VMs with disposable credentials, greetd, PAM and virtio DRM. They assert
+failed-auth retention, retry, old greeter/compositor retirement, UID 1000,
+Wayland environment isolation, seat0/VT1 ownership, logout and different-PID crash
+recovery. Use raw-frame OCR for initial UI readiness; PAM results and process/seat
+state, not OCR or sleeps alone, gate authentication assertions. Deployment examples
+are in `AUTH_DEPLOYMENT.md`.
+
 ## Strategy
 
 - Unit tests cover host main-loop helpers and every plugin crate.

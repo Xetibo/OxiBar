@@ -79,4 +79,5 @@ pub mod catalog;
 mod flow_tests;
 pub mod frontend;
 pub mod ipc;
+pub mod kiosk;
 pub mod model;

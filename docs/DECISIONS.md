@@ -1,5 +1,28 @@
 # Decisions
 
+## 2026-10-12: Authentication stage 4 — packages and real kiosk handoff
+
+- Package locker/greeter separately from the host/DLL artifact graph, with pinned
+  runtime/font/PAM paths also supplied during sandbox tests. Export root NixOS
+  authentication policy and a user-only Home Manager locker module.
+- Own compositor process groups and nonce-protected runtime directories. Cage runs
+  only the greeter; Hyprland uses a minimal private config and PID/signature-bound
+  exit. Accepted frontend status plus successful compositor exit gates handoff.
+- Patch pinned Cage's xdg-shell global to version 6 and defer initial fullscreen
+  requests until the surface is initialized. Native VM startup located the upstream
+  pre-commit configure assertion; replaying requested state fixes fullscreen startup.
+- Enter-to-retry reconnects to a freshly root-peer-validated greetd connection after
+  a rejected cancellation of an already-ended PAM attempt. No failed auth or generic
+  window exit can start the selected user session.
+- Both real KVM/NixOS fixtures pass private wrong-password/retry, authenticated UID
+  1000 and seat0/VT1 handoff, old greeter/compositor retirement, logout and SIGKILL
+  recovery with a different PID. Use raw initial OCR and actual PAM/process/seat
+  gates; default variant OCR preprocessing was too slow and small prompt OCR unreliable.
+- Packaged Cargo tests and strict all-auth-crate Clippy pass. Verified VM outputs:
+  `/nix/store/mrpnz3knnnadig13rrp7vbnhn0z4a6p4-vm-test-run-oxisession-cage-handoff`
+  and `/nix/store/z1a9h9jfaqrcq6cyndxgl9388arm7096-vm-test-run-oxisession-hyprland-handoff`.
+- Keep concurrent settings-sidebar changes out of this authentication stage commit.
+
 ## 2026-10-12: Authentication stage 3 — fullscreen greetd greeter
 
 - Added the standalone `oxisession` xdg-shell Iced frontend, trusted system Wayland

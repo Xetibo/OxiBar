@@ -74,6 +74,9 @@ impl Model {
         }
     }
     pub fn submit(&mut self) {
+        if self.client.is_none() {
+            self.reconnect();
+        }
         if self.cancelling || self.busy() || self.client.is_none() {
             return;
         }

@@ -39,6 +39,14 @@ session selection and start acknowledgement remain separate states; only accepte
 start permits normal frontend exit. The surrounding kiosk owner then releases the
 seat before greetd starts the authenticated user's session.
 
+Authentication packages use a separate Cargo artifact graph from the dynamic shell
+plugins. The kiosk supervisor owns a private compositor process group and runtime
+directory; an acknowledged start must be followed by successful compositor teardown
+before it returns success to greetd. Instance-specific exit binds both signature
+and owned PID. NixOS supplies root PAM/greetd policy and the greeter account; Home
+Manager only configures the per-user application. Real VM tests verify that both
+kiosk processes retire before a new UID acquires the active seat/VT.
+
 Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, and dynamic plugin crates.
 
 ## Workspace Structure
