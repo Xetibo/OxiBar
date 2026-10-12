@@ -32,24 +32,37 @@ paste_shortcut = "ctrl+v"
 poll_seconds = 2
 ```
 
-Home Manager can install a disabled catalog entry while preserving its default
-enabled providers:
+The Home Manager module, also exported as `nixosModules.home-manager`, installs
+and enables OxiPaste by default. Configure optional layout placement and the paste
+shortcut alongside the shell:
 
 ```nix
-programs.oxibar.extraPlugins = [
-  inputs.oxibar.packages.${pkgs.system}.oxibar-oxipaste
-];
-programs.oxibar.config.plugin_config = {
-  bar.end = [ "OxiPaste" ];
-  oxipaste.paste_shortcut = "ctrl+v";
+programs.oxibar = {
+  enable = true;
+  config.plugin_config = {
+    bar.end = [ "OxiPaste" ]; # Optional for the shell picker command.
+    oxipaste.paste_shortcut = "ctrl+v";
+  };
 };
 ```
 
-Enable **OxiPaste** in Settings → Plugins. Alternatively, include its package in
-`programs.oxibar.config.plugins` to enable it in the immutable base. Configure
-OxiPaste's daemon service separately, for example its Home Manager
-`programs.oxipaste.systemd.enable = true` option. Import the compositor environment
-into the user manager before starting the configured graphical session target.
+An explicit `programs.oxibar.config.plugins` list replaces the defaults; include
+`inputs.oxibar.packages.${pkgs.system}.oxibar-oxipaste` in that list to keep the
+provider enabled. `extraPlugins` installs disabled catalog entries, which can be
+enabled through Settings → Plugins.
+
+The daemon is configured separately. After importing OxiPaste's Home Manager
+module, enable its package and opt-in service:
+
+```nix
+programs.oxipaste = {
+  enable = true;
+  systemd.enable = true;
+};
+```
+
+Import the compositor environment into the user manager before starting the
+configured graphical session target.
 Restart Oxibar after replacing loaded libraries or changing restart-only plugin
 settings. Place a desktop widget through Oxibar's desktop layout editor.
 

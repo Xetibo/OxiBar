@@ -696,6 +696,11 @@ responsiveness are verified alongside the existing shell flows.
 
 ## Nix Packaging
 
+- The shared Home Manager module and `nixosModules.home-manager` export install
+  and enable the default provider set, including the persistent clipboard provider.
+  Explicit `config.plugins` selections replace that set; `extraPlugins` remains an
+  installed-only catalog. External daemon packages and startup belong to their own
+  modules, rather than the shell's provider installation.
 - `inputs.crane` provides Cargo derivations for Nix builds.
 - `flake.nix` creates one cleaned Cargo source, one vendored dependency set, and one `buildDepsOnly` workspace artifact derivation with `--workspace` package selection.
 - `nix/default.nix` builds only the host package from those shared Cargo artifacts.

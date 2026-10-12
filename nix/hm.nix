@@ -15,6 +15,7 @@ self: {
     oxibar-clock
     oxibar-network
     oxibar-notifications
+    oxibar-oxipaste
     oxibar-system
     oxibar-stats
     oxibar-tools
@@ -89,20 +90,24 @@ in {
     lib.mkIf
     cfg.enable
     {
-      assertions = [{
-        assertion = !cfg.systemd.enable || cfg.package != null;
-        message = "programs.oxibar.systemd.enable requires a non-null package.";
-      }];
+      assertions = [
+        {
+          assertion = !cfg.systemd.enable || cfg.package != null;
+          message = "programs.oxibar.systemd.enable requires a non-null package.";
+        }
+      ];
       home.packages = lib.optional (cfg.package != null) cfg.package ++ cfg.config.plugins ++ cfg.extraPlugins;
-      xdg.configFile = plugin_files // {
-        "oxibar/config.toml".source =
-        (pkgs.formats.toml {}).generate "oxibar"
-        (lib.recursiveUpdate
-          {
-            plugins = fetchedPlugins;
-          }
-          cfg.config.plugin_config);
-      };
+      xdg.configFile =
+        plugin_files
+        // {
+          "oxibar/config.toml".source =
+            (pkgs.formats.toml {}).generate "oxibar"
+            (lib.recursiveUpdate
+              {
+                plugins = fetchedPlugins;
+              }
+              cfg.config.plugin_config);
+        };
       systemd.user.services.oxibar = lib.mkIf cfg.systemd.enable {
         Unit = {
           Description = "Oxibar Rust/Iced widget shell";

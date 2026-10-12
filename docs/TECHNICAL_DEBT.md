@@ -200,6 +200,9 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   optional provider shares one visible-only refresh stream and bounded D-Bus jobs.
 - Direct shell access uses a registered provider-backed picker and window-command
   IPC; it no longer depends on a visible bar or a provider command ABI export.
+- Resolved: the shared Home Manager/NixOS module default omitted the clipboard
+  provider. It now installs the library and enables it in the generated base;
+  explicit plugin selections remain authoritative and daemon startup is separate.
 - Remaining: history polling transfers complete snapshots, and image preview
   decoding/allocation is delegated to Iced. Revision/signal snapshots and bounded
   cached thumbnails are future optimizations for large image-heavy histories.

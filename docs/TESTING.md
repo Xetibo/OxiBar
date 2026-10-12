@@ -744,7 +744,11 @@ nix develop --impure --file nix/gui-tests.nix -c \
 `RELEASE_CHECKS.md` supplies real loader, example, module-evaluation and compositor
 commands. `nix/hm-test.nix` verifies startup defaults to no user unit, deliberate
 session-target ownership, disabled installed catalog packages, enabled-only base
-generation and unmanaged GUI overrides. No activation is involved.
+generation and unmanaged GUI overrides. It also evaluates the default
+`nixosModules.home-manager` export, checking that the clipboard provider is enabled,
+present in `home.packages` and linked under the configured XDG directory. An
+explicit enabled list still replaces the defaults. Use a Home Manager release
+aligned with the pinned nixpkgs; no activation is involved.
 
 Repository tooling owns its private runtime, bus and compositor:
 

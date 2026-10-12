@@ -95,11 +95,15 @@ Home Manager, private app-lifetime, compositor smoke and performance verificatio
 
 ## `[oxipaste]` — persistent clipboard history
 
-The optional `liboxipaste.so` provider, named **OxiPaste**, reads the updated
+The `liboxipaste.so` provider, named **OxiPaste**, reads the updated
 `org.Xetibo.OxiPasteDaemon` session service. Install the separately packaged
-OxiPaste daemon and start it in the same Wayland session. The plugin package is
-`oxibar-oxipaste`; it is selectable through Home Manager's `config.plugins` or
-installable as a disabled catalog entry through `extraPlugins`.
+OxiPaste daemon and start it in the same Wayland session. The Home Manager module,
+also exported as `nixosModules.home-manager`, installs and enables the
+`oxibar-oxipaste` package by default. If you replace `programs.oxibar.config.plugins`
+with your own enabled package list, include
+`inputs.oxibar.packages.${pkgs.system}.oxibar-oxipaste` to retain it. `extraPlugins`
+can instead install it as a disabled catalog entry when it is absent from that
+enabled list.
 
 ```toml
 plugins = ["liboxipaste.so"] # Retain your other enabled libraries.

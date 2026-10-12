@@ -1,5 +1,24 @@
 # Decisions
 
+## 2026-10-12: Bundle the clipboard provider in module defaults
+
+- The shell clipboard command exposed a packaging gap: the shared Home Manager
+  module, also exported as `nixosModules.home-manager`, omitted `oxibar-oxipaste`
+  from its default enabled packages. Add it so enabling the module installs
+  `liboxipaste.so` in the configured XDG plugin directory and enables it in the
+  generated immutable base. This supersedes the earlier default-set exclusion.
+- Explicit `programs.oxibar.config.plugins` lists remain authoritative;
+  `extraPlugins` continues to install disabled catalog entries. The separately
+  packaged OxiPaste daemon and its opt-in service remain configured by its own
+  module. No shell/daemon dependency or automatic session startup is introduced.
+- Expand `nix/hm-test.nix` to exercise default packages through the NixOS alias,
+  generated clipboard enablement, package installation and custom XDG library
+  source/target alongside the existing explicit-list and service checks. The new
+  regression failed before the default-list fix and passes afterward.
+- Verified all ten module checks with Home Manager release 25.11 aligned to the
+  pinned nixpkgs, pinned Alejandra formatting, and Nix host/provider package builds.
+  Packaged CLI help includes the clipboard command; no activation was required.
+
 ## 2026-10-12: Shell clipboard picker command
 
 - Add `oxibar oxipaste [open|close|toggle]`; a bare command toggles the running

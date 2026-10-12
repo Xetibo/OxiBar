@@ -89,8 +89,9 @@ nix eval --impure --json --expr \
 
 Use a Home Manager release aligned with the pinned nixpkgs. The test checks all
 module assertions, no startup unit by default, deliberate session-target startup,
-disabled installed example catalog, enabled-only base, unmanaged overrides and
-separate shell cgroup ownership.
+default clipboard provider installation/enablement through the NixOS module alias,
+custom XDG library paths, disabled installed example catalog, explicit enabled-only
+base generation, unmanaged overrides and separate shell cgroup ownership.
 
 ## Actual presentation/performance gate
 

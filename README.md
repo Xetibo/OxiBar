@@ -65,14 +65,17 @@ a release build. Restart Oxibar after replacing initialized plugin libraries.
 The compositor session must import `WAYLAND_DISPLAY` and its session environment
 into the user manager before starting that target. See
 [Home Manager](examples/home-manager.nix) and [Sway](examples/sway.conf) examples.
-The module supplies separately selectable plugin packages, including a disabled
-installed catalog through `extraPlugins`.
+The module installs and enables its default providers, including OxiPaste. An
+explicit `programs.oxibar.config.plugins` list replaces that enabled set;
+`extraPlugins` supplies additional installed but disabled catalog entries. The
+`nixosModules.home-manager` export uses the same module and defaults.
 
 ### Persistent clipboard widget
 
-The optional [OxiPaste provider](plugins/oxipaste/README.md) shares the updated
-OxiPaste daemon's persistent text/image history. Build `.#oxibar-oxipaste`, install
-`liboxipaste.so`, enable it and open the centered picker with `oxibar oxipaste`.
+The [OxiPaste provider](plugins/oxipaste/README.md) shares the updated OxiPaste
+daemon's persistent text/image history. It is installed and enabled by default
+through the module. For a manual installation, build `.#oxibar-oxipaste`, install
+`liboxipaste.so` and enable it. Open the centered picker with `oxibar oxipaste`.
 It also supports **OxiPaste** in the bar, control center or desktop layout.
 Row clicks paste into the application below after native keyboard
 focus release; a separate **Copy** button keeps the picker open. Use
