@@ -1,5 +1,48 @@
 # Decisions
 
+## 2026-10-12: Authentication stage 5 — visuals, input and ready-aware sleep
+
+- Complete the isolated Rust/Iced authentication delivery. Shared read-only settings
+  install existing theme tokens, clock/date, bounded PNG/JPEG/WebP assets and opaque
+  fallback composition. System greeter assets retain lexical/canonical ownership
+  checks; user locker appearance remains separate from shell/plugin configuration.
+- Keep avatars beside the clock and bounded scrolling outside the centered content
+  width. Empty feedback does not consume vertical rows; power controls remain visible
+  at 800p. Greeter Ctrl+Shift+P/R opens permission-gated confirmation without typing
+  into Username, and Escape/mouse cancellation restores username focus.
+- Enforce the Nix kiosk layout through the greeter command environment: greetd clears
+  service-level environment. Locker indicators use native XKB; generic Iced greeter
+  Caps starts unknown and derives only observed state. Repeat stores physical keys,
+  retires on focus/keymap/device loss and regenerates text from current XKB state.
+- Honor per-output Iced redraw deadlines. Correct CPU BGRA-to-native-XRGB packing;
+  a real rendered-frame corner check catches red/blue inversion, and final native
+  avatar/after-resume screenshots show the requested blue palette.
+- Add `oxilock-sleep --watch` and `--suspend`. Delay inhibition starts after signal
+  subscription, remains held through exact live-child protocol readiness, is bounded
+  by logind policy and is reacquired on resume. Explicit suspend refuses readiness
+  failure. Watcher KillMode=process preserves active locker/PAM on unit stop; PAM
+  worker parent-death handling retires it when the authentication frontend crashes.
+  Pre-exec failures return native errno without allocating after fork.
+- Standard polkit is supplied by the NixOS integration; no custom authorization
+  bypass. Explicit suspend must run in the active desktop's policy context. HM
+  remains user-only. Add independent all-auth `authentication-unit` flake checks.
+- Native S3 diagnostics located guest virtio-GPU fence/logind stalls. Cage's sleep
+  fixture uses legacy VGA/pixman and an EROFS store with protected sticky overlay;
+  Hyprland keeps virtio-GPU. No production auth policy changes for VM failures.
+- Verification passes: 28 auth tests, strict all-targets Clippy, both packages and
+  real Cage/Hyprland VM gates for power-dialog cancellation/focus, PAM failure/retry,
+  UID/seat0/VT1 handoff, retired kiosk processes, fractional/hotplug locker input,
+  held Backspace, crash protection, logout and fresh greeter recovery. Cage also
+  verifies watcher and explicit S3, actual visible locked resume, reacquired delay
+  leases, watcher-stop child preservation and authenticated unlock after resume.
+- Final checks/images: unit `c5mjnk3sw94894i19c7y7pb427f0clpn`, Clippy
+  `9q3b6y5wmx7kj19s13ya5kgv4mfq1nrc`, Cage VM `g51ql6gbqyh0v502kkbr8xh2jy1bfhgx`,
+  Hyprland VM `saqyw2xb1x6ggcmxbfcikwlwq9v67ggv` under `/nix/store/`.
+- Both architecture package/check derivations evaluate. The actual pinned Home
+  Manager module evaluates appearance generation and the process-preserving watcher
+  unit; activation stays outside the test. Native VM execution remains x86-64.
+- Preserve concurrent staged settings-sidebar work outside the authentication commit.
+
 ## 2026-10-12: Authentication stage 4 — packages and real kiosk handoff
 
 - Package locker/greeter separately from the host/DLL artifact graph, with pinned

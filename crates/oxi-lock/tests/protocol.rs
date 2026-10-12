@@ -446,6 +446,10 @@ impl Dispatch<wl_surface::WlSurface, SurfaceData> for Server {
                 }
                 let mut pixels = vec![0; (data.stride * data.height) as usize];
                 data.file.read_exact_at(&mut pixels, data.offset).unwrap();
+                assert_eq!(
+                    u32::from_ne_bytes(pixels[..4].try_into().unwrap()),
+                    0xff2266bb
+                );
                 assert!(
                     pixels
                         .chunks_exact(4)
@@ -572,7 +576,7 @@ impl Application for App {
             .into()
     }
     fn background(&self) -> Color {
-        Color::from_rgb(0.2, 0.3, 0.4)
+        Color::from_rgb8(0x22, 0x66, 0xbb)
     }
 }
 fn app() -> App {

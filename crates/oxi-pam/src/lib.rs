@@ -65,14 +65,21 @@ impl Worker {
         }
         let (stream, worker) = UnixStream::pair()?;
         let fd = worker.as_raw_fd();
+        let parent = std::process::id() as libc::pid_t;
         command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .process_group(0);
-        // Only async-signal-safe descriptor operations run between fork and exec.
+        // Only async-signal-safe descriptor and parent-death operations run before exec.
         unsafe {
             command.pre_exec(move || {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if libc::getppid() != parent {
+                    return Err(io::Error::from_raw_os_error(libc::ECHILD));
+                }
                 if fd != 3 && libc::dup2(fd, 3) < 0 {
                     return Err(io::Error::last_os_error());
                 }

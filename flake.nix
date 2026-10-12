@@ -214,7 +214,10 @@
           oxibar-workspaces = pluginPackage "workspaces";
           default = oxibar;
         };
-        checks = { authentication-clippy = self'.packages.oxisession.clippy; } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+        checks = {
+          authentication-clippy = self'.packages.oxisession.clippy;
+          authentication-unit = self'.packages.oxisession.authenticationTests;
+        } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
           authentication-cage = import ./nix/auth-vm-tests.nix { inherit pkgs; self = inputs.self; backend = "cage"; };
           authentication-hyprland = import ./nix/auth-vm-tests.nix { inherit pkgs; self = inputs.self; backend = "hyprland"; };
         };

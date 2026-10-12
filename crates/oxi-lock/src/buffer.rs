@@ -98,10 +98,11 @@ impl Buffer {
             .chunks_exact(4)
             .zip(self.map.chunks_exact_mut(4))
         {
+            // Iced's CPU renderer emits BGRA; Wayland XRGB uses native-endian words.
             let pixel = 0xff000000
-                | (u32::from(source[0]) << 16)
+                | (u32::from(source[2]) << 16)
                 | (u32::from(source[1]) << 8)
-                | u32::from(source[2]);
+                | u32::from(source[0]);
             target.copy_from_slice(&pixel.to_ne_bytes());
         }
         Ok(())

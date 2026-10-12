@@ -6,6 +6,7 @@ use iced::{
 use oxi_auth_ui::{
     Interaction, Phase,
     view::{self, Message},
+    visuals::{KeyboardStatus, Visuals},
 };
 use oxiced::theme::theme_impl::OXITHEME;
 
@@ -14,6 +15,8 @@ pub struct LockScreen {
     interaction: Interaction,
     worker: Option<oxi_pam::Worker>,
     locked: bool,
+    visuals: Visuals,
+    keyboard: KeyboardStatus,
 }
 impl LockScreen {
     pub fn new() -> std::io::Result<Self> {
@@ -22,6 +25,8 @@ impl LockScreen {
             interaction: Interaction::default(),
             worker: None,
             locked: false,
+            visuals: Visuals::load(view::Purpose::Lock),
+            keyboard: KeyboardStatus::default(),
         })
     }
     fn start(&mut self) {
@@ -59,6 +64,7 @@ impl Application for LockScreen {
                 self.locked = true;
                 self.start();
             }
+            Event::KeyboardStatus(status) => self.keyboard = status,
             Event::Message(Message::Submit) => self.submit(),
             Event::Message(Message::Cancel) => {
                 self.worker = None;
@@ -95,7 +101,7 @@ impl Application for LockScreen {
                 _ => return Action::None,
             },
             Event::Tick(_) => {
-                let mut changed = false;
+                let mut changed = self.visuals.tick();
                 loop {
                     let event = match self.worker.as_mut().map(oxi_pam::Worker::poll) {
                         Some(Ok(Some(event))) => event,
@@ -129,7 +135,37 @@ impl Application for LockScreen {
         Action::Redraw
     }
     fn view(&self, _output: &Output) -> Element<'_, Message> {
-        view::prompt(&self.identity, &self.interaction, self.locked)
+        use iced::{
+            Length,
+            widget::{Column, container},
+        };
+        let mut content = Column::new()
+            .spacing(OXITHEME.padding_lg)
+            .align_x(iced::Alignment::Center)
+            .push(self.visuals.heading())
+            .push(view::prompt_card(
+                &self.identity,
+                &self.interaction,
+                self.locked,
+                view::Purpose::Lock,
+            ))
+            .push(self.keyboard.view());
+        if !self.visuals.notice.is_empty() {
+            content = content.push(
+                oxiced::widgets::oxi_plugin::text(self.visuals.notice.clone())
+                    .size(OXITHEME.font_sm),
+            );
+        }
+        self.visuals.scene(
+            container(oxiced::widgets::oxi_plugin::scroll_panel(content).height(Length::Shrink))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .padding(OXITHEME.padding_lg)
+                .into(),
+        )
+    }
+    fn theme(&self) -> iced::Theme {
+        oxiced::theme::theme_impl::get_derived_iced_theme()
     }
     fn background(&self) -> Color {
         Color {
@@ -149,14 +185,16 @@ mod tests {
             interaction: Interaction::default(),
             worker: None,
             locked: false,
+            visuals: Visuals::default(),
+            keyboard: KeyboardStatus::default(),
         };
         assert_eq!(app.update(Event::Message(Message::Submit)), Action::Redraw);
         assert!(app.worker.is_none());
         assert!(app.interaction.attempt.is_none());
         assert_eq!(app.update(Event::Message(Message::Cancel)), Action::Redraw);
-        assert_eq!(
+        assert_ne!(
             app.update(Event::Tick(std::time::Instant::now())),
-            Action::None
+            Action::AuthenticatedUnlock
         );
         assert!(!app.locked);
     }

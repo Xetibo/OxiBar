@@ -30,6 +30,20 @@ storage; ordinary Iced messages/widgets receive masks instead of password string
 The PAM conversation owns native response allocations until PAM consumes them.
 Both processes disable core dumps and debugger attachment before handling input.
 
+Authentication appearance is read-only and independent of shell configuration:
+system-owned greeter settings/assets and per-user locker settings feed shared theme
+tokens, bounded image decoding and opaque fallback composition. Native seat state
+supplies locker Caps/layout indicators. Repeat retains physical key identity, not
+text, and is retired with focus/devices; per-output widget wake deadlines preserve
+idle rendering. The CPU backend explicitly converts Iced BGRA to native XRGB.
+
+The separate sleep owner subscribes to logind before taking a delay inhibitor.
+Its private child pipe opens the readiness gate only for a complete protocol-ready
+token from a live locker. Resume reacquires the lease and reuses a live locked child;
+watcher shutdown leaves authentication available. Explicit lock-then-suspend holds
+a block inhibitor through readiness and cannot call Suspend on refusal/timeout.
+Delay leases remain bounded by logind policy and report failed readiness.
+
 The greeter is a standard fullscreen xdg-shell Iced application, independent of
 layer-shell and the locker. Its root-peer-validated greetd client serializes one
 bounded request at a time, drains cancelled replies before retry, and holds response

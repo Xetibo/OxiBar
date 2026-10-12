@@ -657,7 +657,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -3293,8 +3295,12 @@ dependencies = [
 name = "oxi-auth-ui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "iced",
+ "image",
  "oxiced",
+ "serde",
+ "toml",
  "zeroize",
 ]
 
@@ -3305,6 +3311,7 @@ dependencies = [
  "iced",
  "iced_runtime",
  "iced_tiny_skia",
+ "libc",
  "memmap2",
  "oxi-auth-ui",
  "oxi-pam",
@@ -3315,6 +3322,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-server",
+ "zbus",
 ]
 
 [[package]]
@@ -3337,6 +3345,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shell-words",
+ "zbus",
  "zeroize",
 ]
 
@@ -4871,6 +4880,7 @@ version = "1.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
 dependencies = [
+ "getrandom 0.4.2",
  "js-sys",
  "serde_core",
  "wasm-bindgen",

@@ -36,4 +36,7 @@ in craneLib.buildPackage (args // {
   passthru.clippy = craneLib.cargoClippy (args // {
     cargoClippyExtraArgs = "-p oxi-lock -p oxi-session -p oxi-auth-ui -p oxi-pam --all-targets -- -D warnings";
   });
+  passthru.authenticationTests = craneLib.cargoTest ((builtins.removeAttrs args [ "postFixup" "meta" ]) // {
+    cargoTestExtraArgs = "-p oxi-lock -p oxi-session -p oxi-auth-ui -p oxi-pam";
+  });
 })

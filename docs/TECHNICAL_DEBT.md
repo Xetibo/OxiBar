@@ -287,16 +287,20 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ### Native Locking and Login Handoff
 
-- Status: implementation in progress. Tested protocol/state boundaries and the
-  owned multi-output lock adapter, authenticated frontend and private PAM worker
-  and fullscreen greetd greeter are present. The locker requires a dedicated administrator-owned PAM service.
-  Existing session actions still launch the configured external locker.
-- The separate Rust/Iced protocol locker and kiosk greeter design is in
-  `LOCK_SCREEN_SESSION_MANAGER_PLAN.md`. Protocol readiness/hotplug, PAM
-  conversations and greetd handoff have private fixtures. Independent Nix packages,
-  owned Cage/Hyprland kiosk integration and real NixOS UID/seat/VT, logout, failed-auth
-  and crash-recovery checks now pass. Authentication polish, key repeat, rendering
-  wake scheduling and suspend readiness belong to the final implementation stage.
+- Status: planned stages implemented and verified. Independent protocol/PAM locker,
+  fullscreen greetd greeter, kiosk packages, bounded themed assets, native input/wake
+  scheduling and readiness-aware sleep paths have private and real VM checks.
+  Existing shell actions use the configured locker; system PAM/greetd policy remains
+  administrator-owned. Deployment and current verification are in `AUTH_DEPLOYMENT.md`.
+- Actual DRM/firmware behavior beyond the tested virtual devices still needs hardware
+  coverage. The pinned virtio-GPU fence queue stalls after QEMU S3; the sleep fixture
+  uses legacy VGA/pixman while Hyprland retains normal virtio-GPU tests. No production
+  authentication or ownership policy is weakened for that fixture.
+- Generic Iced greeter input exposes no initial exact Caps state or compositor group
+  name: it displays the enforced kiosk layout and unknown Caps until observable key
+  state establishes it. The locker uses native XKB state. Dedicated IME integration,
+  uniform assistive semantics, X11 sessions and optional media/notification UI remain
+  independently scoped extensions; they are not authentication bypass fallbacks.
 
 ### Selectable Search Result Row
 

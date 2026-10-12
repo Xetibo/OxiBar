@@ -6,6 +6,10 @@ license = "GPL-3.0-only"
 description = "Shared authentication interaction state for Oxi lock and greeter"
 
 [dependencies]
+chrono = "0.4"
 iced = { version = "0.14", features = ["advanced"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 oxiced = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
 zeroize = "1.8"

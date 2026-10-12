@@ -237,8 +237,17 @@ fn invalid(message: &'static str) -> io::Error {
 fn hyprland_config(executable: &Path, state: &Path) -> String {
     let executable = shell_words::quote(&executable.to_string_lossy()).into_owned();
     let state = shell_words::quote(&state.to_string_lossy()).into_owned();
+    let layout = std::env::var("OXI_KEYBOARD_LAYOUT")
+        .ok()
+        .filter(|s| {
+            !s.is_empty()
+                && s.len() <= 64
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "_,-+".contains(c))
+        })
+        .unwrap_or_else(|| "us".into());
     format!(
-        "monitor = ,preferred,auto,1\nmisc {{\n disable_hyprland_logo = true\n disable_splash_rendering = true\n}}\nexec-once = {executable} --child {state} hyprland\n"
+        "monitor = ,preferred,auto,1\ninput {{\n kb_layout = {layout}\n}}\nmisc {{\n disable_hyprland_logo = true\n disable_splash_rendering = true\n}}\nexec-once = {executable} --child {state} hyprland\n"
     )
 }
 

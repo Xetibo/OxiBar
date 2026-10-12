@@ -29,6 +29,14 @@
   requests. Drain cancellation before reusing an authentication conversation. Parse
   administrator-owned session metadata into argv without shell re-interpretation;
   only an acknowledged authenticated start permits successful kiosk exit.
+- Authentication appearance parsing and image allocation are bounded; greeter
+  configuration/assets retain administrator ownership checks. Verify native CPU
+  pixel byte order with rendered frames, not only opacity/geometry assertions.
+- Treat lock readiness as a protocol event, never process spawn. Hold the scoped
+  inhibitor through a live child's validated readiness token; bound delay leases,
+  reject explicit suspend on readiness failure and preserve a locked child when its
+  watcher stops. Clear repeat identity on focus/device loss and honor widget wake
+  deadlines without retaining password text in repeat or redraw state.
 
 - Keep changes small and aligned with existing module boundaries.
 - Prefer pure helper functions for parsing, state transitions, and config extraction so behavior is unit-testable without DBus, Wayland, Hyprland, or shell commands.

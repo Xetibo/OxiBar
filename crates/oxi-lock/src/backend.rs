@@ -45,6 +45,7 @@ pub enum Event<M> {
     OutputAdded(u32),
     OutputRemoved(u32),
     Input { output: u32, event: iced::Event },
+    KeyboardStatus(oxi_auth_ui::visuals::KeyboardStatus),
     Message(M),
     Tick(Instant),
 }
@@ -127,6 +128,16 @@ impl Locker {
         let mut last_tick = Instant::now();
         loop {
             self.queue.dispatch_pending(&mut self.state)?;
+            let now = Instant::now();
+            let repeats: Vec<_> = self
+                .state
+                .seats
+                .values_mut()
+                .filter_map(|seat| seat.repeat(now))
+                .collect();
+            for (output, event) in repeats {
+                self.state.input(output, event);
+            }
             if let Some(error) = self.state.error.take() {
                 return Err(std::io::Error::other(error).into());
             }
@@ -145,6 +156,7 @@ impl Locker {
                     Pending::Added(id) => Event::OutputAdded(id),
                     Pending::Removed(id) => Event::OutputRemoved(id),
                     Pending::Input(output, event) => Event::Input { output, event },
+                    Pending::KeyboardStatus(status) => Event::KeyboardStatus(status),
                 };
                 combine(&mut action, app.update(event));
             }
@@ -171,8 +183,17 @@ impl Locker {
                     .outputs
                     .values_mut()
                     .for_each(|out| out.dirty = true);
+                action = Action::None;
             }
             for slot in self.state.outputs.values_mut() {
+                if slot.wake_at.is_some_and(|deadline| now >= deadline) {
+                    slot.input
+                        .push(iced::Event::Window(iced::window::Event::RedrawRequested(
+                            now,
+                        )));
+                    slot.dirty = true;
+                    slot.wake_at = None;
+                }
                 if slot.pending.is_some() || slot.dirty || !slot.input.is_empty() {
                     let messages =
                         slot.render(&app, self.state.shm.as_ref().ok_or("Missing shm")?, &qh)?;
@@ -231,6 +252,7 @@ enum Pending {
     Added(u32),
     Removed(u32),
     Input(u32, iced::Event),
+    KeyboardStatus(oxi_auth_ui::visuals::KeyboardStatus),
 }
 
 #[derive(Default)]
@@ -250,6 +272,9 @@ pub(crate) struct State {
 }
 
 impl State {
+    pub(crate) fn keyboard_status(&mut self, status: oxi_auth_ui::visuals::KeyboardStatus) {
+        self.events.push_back(Pending::KeyboardStatus(status));
+    }
     pub(crate) fn input_error(&mut self, message: &str) {
         self.error = Some(message.into());
     }
@@ -314,6 +339,7 @@ pub(crate) struct Slot {
     input: Vec<iced::Event>,
     cursor: mouse::Cursor,
     dirty: bool,
+    wake_at: Option<Instant>,
 }
 
 impl Slot {
@@ -339,6 +365,7 @@ impl Slot {
             input: Vec::new(),
             cursor: mouse::Cursor::Unavailable,
             dirty: true,
+            wake_at: None,
         }
     }
 
@@ -400,13 +427,19 @@ impl Slot {
             &mut self.renderer,
         );
         let mut messages = Vec::new();
-        ui.update(
+        let (update, _) = ui.update(
             &std::mem::take(&mut self.input),
             self.cursor,
             &mut self.renderer,
             &mut clipboard::Null,
             &mut messages,
         );
+        self.wake_at = match update {
+            user_interface::State::Updated { redraw_request, .. } => {
+                redraw_deadline(redraw_request, Instant::now())
+            }
+            user_interface::State::Outdated => Some(Instant::now() + Duration::from_millis(16)),
+        };
         if let Some(buffer) = self.buffers.iter_mut().find(|buffer| !buffer.busy) {
             ui.draw(
                 &mut self.renderer,
@@ -435,6 +468,38 @@ impl Slot {
         }
         self.cache = ui.into_cache();
         Ok(messages)
+    }
+}
+
+fn redraw_deadline(request: iced::window::RedrawRequest, now: Instant) -> Option<Instant> {
+    match request {
+        iced::window::RedrawRequest::Wait => None,
+        iced::window::RedrawRequest::NextFrame => Some(now + Duration::from_millis(16)),
+        iced::window::RedrawRequest::At(instant) => {
+            Some(instant.max(now + Duration::from_millis(16)))
+        }
+    }
+}
+
+#[cfg(test)]
+mod wake_tests {
+    use super::*;
+    #[test]
+    fn wake_scheduler_waits_when_idle_and_respects_future_widget_deadlines() {
+        let now = Instant::now();
+        assert_eq!(
+            redraw_deadline(iced::window::RedrawRequest::Wait, now),
+            None
+        );
+        assert_eq!(
+            redraw_deadline(iced::window::RedrawRequest::NextFrame, now),
+            Some(now + Duration::from_millis(16))
+        );
+        let future = now + Duration::from_secs(1);
+        assert_eq!(
+            redraw_deadline(iced::window::RedrawRequest::At(future), now),
+            Some(future)
+        );
     }
 }
 

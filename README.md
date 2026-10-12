@@ -22,7 +22,10 @@ provider process or rescan the application catalog.
 
 Standalone [protocol locker and kiosk greeter](docs/AUTH_DEPLOYMENT.md) packages:
 `nix build .#oxilock .#oxisession`. The NixOS authentication module supplies PAM and
-greetd integration; the user-only Home Manager module installs the locker.
+greetd integration; Home Manager supplies user appearance and opt-in sleep locking.
+`oxilock` locks the current Wayland session; `oxilock-sleep --suspend` waits for
+protocol readiness before sleep. Both authentication screens use shared themes,
+clock/date and optional bounded wallpaper/avatar assets.
 
 ```sh
 nix build .#oxibar .#oxibar-applications .#oxibar-tools .#oxibar-clock
@@ -129,9 +132,10 @@ bindsym $mod+Escape exec oxibar session toggle
 commands. [Plugin SDK](docs/PLUGIN_SDK.md) documents ABI 6, lifecycle rules and the
 [example plugin](plugins/example/README.md).
 
-[Native lock screen and kiosk session-manager plan](docs/LOCK_SCREEN_SESSION_MANAGER_PLAN.md)
-covers a Rust/Iced `ext-session-lock-v1` locker and a greetd-backed greeter hosted
-alone in Cage or Hyprland kiosk mode.
+[Implemented lock/session design and delivery gates](docs/LOCK_SCREEN_SESSION_MANAGER_PLAN.md)
+cover the Rust/Iced `ext-session-lock-v1` locker and greetd-backed greeter hosted
+alone in Cage or an owned Hyprland kiosk. See [deployment](docs/AUTH_DEPLOYMENT.md)
+for NixOS policy, user settings and compositor commands.
 
 ## Verification
 

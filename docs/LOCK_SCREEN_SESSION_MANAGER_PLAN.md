@@ -1,12 +1,12 @@
 # Native Lock Screen and Kiosk Session Manager
 
-**Status:** implementation in progress. Stages 0 (backend audit/state boundaries)
-through 4 (owned protocol backend, PAM locker, fullscreen greetd and verified kiosk deployment)
-are complete. `oxilock` requires an administrator-owned `/etc/pam.d/oxilock` policy;
+**Status:** stages 0–5 implemented and verified. This document retains the design
+contract and delivery gates. `oxilock` requires an administrator-owned `/etc/pam.d/oxilock` policy;
 `--check` probes protocol support without locking. `oxisession` uses a root-peer
 greetd socket and trusted system Wayland sessions. Both Nix packages, Cage/Hyprland
-UID/seat/VT handoff VMs and strict authentication Clippy pass. Visual/suspend work
-is the final stage. Deployment is documented in `AUTH_DEPLOYMENT.md`.
+UID/seat/VT handoff VMs, all-auth unit checks and strict Clippy pass. Themed visuals,
+input/repeat/wake handling and both readiness-gated S3 paths are verified with
+visible locked resume. Deployment is documented in `AUTH_DEPLOYMENT.md`.
 
 ## Product and process boundaries
 
@@ -15,7 +15,7 @@ coherent visual language as references. Share theme tokens, fonts, input/card
 components and read-only configuration parsing, not the running shell or plugin
 loader.
 
-Deliver two independently packaged executables (working names):
+Two independently packaged authentication applications:
 
 | Executable | Role | Surface backend | Authentication owner |
 | --- | --- | --- | --- |
@@ -27,7 +27,7 @@ selected desktop. `greetd` remains the privileged login manager: it opens the PA
 session, changes identity and starts the authenticated user's command. Oxibar's
 existing session-action tiles remain the in-session logout/suspend/power UI.
 
-Suggested workspace boundaries:
+Implemented workspace boundaries:
 
 ```text
 crates/oxi-auth-ui/       shared prompt state and themed authentication views
@@ -51,12 +51,11 @@ family. The selected implementation is an owned `wayland-client` adapter with Ic
 CPU rendering: the candidate does not expose lock-state events and treats generic
 window close as unlock. See `AUTH_BACKEND_AUDIT.md`; no candidate dependency is added.
 
-The spike must expose lock acquisition/readiness, exact configure/ack handling,
+The selected adapter exposes lock acquisition/readiness, exact configure/ack handling,
 all output lifecycle events, authentication-gated unlock and final display sync.
-Audit keyboard ownership, input methods, renderer failure and device removal,
-including the pending-repeat lifecycle fix already used by Oxibar. If the wrapper
-does not expose these requirements, extend its backend or implement the missing
-protocol adapter with the existing `wayland-client` / `wayland-protocols` toolset.
+Keyboard ownership, renderer failure and device removal have private/native checks.
+Repeat is scoped to physical key/device/focus state; input-method extensions remain
+separate from the native XKB prompt path.
 
 ### Lock lifecycle
 
@@ -111,10 +110,9 @@ policy and must not be promised universally.
 
 ### Shell and suspend integration
 
-Keep the existing configurable System lock command working. Once `oxilock` is
-implemented, deployments can set that command to `oxilock`; no plugin ABI change
-is required. Add a ready-aware lock-then-suspend path instead of treating process
-spawn as proof of locking. Integrate logind's `PrepareForSleep` with a bounded delay
+The configurable System lock command accepts `oxilock` without a plugin ABI change.
+`oxilock-sleep --suspend` gates explicit sleep on protocol readiness rather than
+process spawn. `--watch` integrates logind's `PrepareForSleep` with a bounded delay
 inhibitor: request locking first, release the inhibitor on confirmed readiness,
 and report refusal/timeouts. Test resume on the same locked connection.
 
@@ -211,8 +209,8 @@ Nested compositor tests validate rendering and protocol behavior without touchin
 the developer's session. They cannot prove real seat/VT handoff: keep that gate in
 an isolated NixOS VM. Use deterministic fake authentication by default; actual PAM
 tests require an explicit disposable fixture user/service, never real credentials.
-Add package/build/check targets only when their phase is implemented; this plan
-does not claim new runtime capabilities or replace the existing lock command.
+Independent packages and permanent unit/Clippy/Cage/Hyprland checks now enforce
+these gates. The existing shell lock command remains deployment-configurable.
 
 ## References
 

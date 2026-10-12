@@ -28,6 +28,19 @@ pub fn prompt_for<'a>(
     ready: bool,
     purpose: Purpose,
 ) -> Element<'a, Message> {
+    container(prompt_card(identity, interaction, ready, purpose))
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .padding(OXITHEME.padding_lg)
+        .into()
+}
+
+pub fn prompt_card<'a>(
+    identity: &str,
+    interaction: &Interaction,
+    ready: bool,
+    purpose: Purpose,
+) -> Element<'a, Message> {
     let label = interaction
         .prompt
         .as_ref()
@@ -70,39 +83,36 @@ pub fn prompt_for<'a>(
             .padding(OXITHEME.padding_md)
             .width(Length::Fill)
             .style(oxi_plugin::compact_card_style(OXITHEME.secondary_bg)),
-        )
-        .push(oxi_plugin::text(interaction.notice.clone()).size(OXITHEME.font_sm))
-        .push(
-            Row::new()
-                .spacing(OXITHEME.padding_md)
-                .push(
-                    oxi_plugin::surface_button(
-                        oxi_plugin::text(match purpose {
-                            Purpose::Lock => "Unlock",
-                            Purpose::Login => "Continue",
-                        }),
-                        true,
-                    )
-                    .on_press_maybe(
-                        (ready && interaction.phase != Phase::Waiting).then_some(Message::Submit),
-                    ),
-                )
-                .push(
-                    oxi_plugin::surface_button(oxi_plugin::text("Clear"), false)
-                        .on_press(Message::Cancel),
-                ),
         );
+    if !interaction.notice.is_empty() {
+        body = body.push(oxi_plugin::text(interaction.notice.clone()).size(OXITHEME.font_sm));
+    }
+    body = body.push(
+        Row::new()
+            .spacing(OXITHEME.padding_md)
+            .push(
+                oxi_plugin::surface_button(
+                    oxi_plugin::text(match purpose {
+                        Purpose::Lock => "Unlock",
+                        Purpose::Login => "Continue",
+                    }),
+                    true,
+                )
+                .on_press_maybe(
+                    (ready && interaction.phase != Phase::Waiting).then_some(Message::Submit),
+                ),
+            )
+            .push(
+                oxi_plugin::surface_button(oxi_plugin::text("Clear"), false)
+                    .on_press(Message::Cancel),
+            ),
+    );
     body = body.push(
         oxi_plugin::text("Enter to submit · Escape to clear · Ctrl+U to erase")
             .size(OXITHEME.font_sm),
     );
-    container(
-        container(oxi_plugin::settings_card(body))
-            .max_width(440)
-            .width(Length::Fill),
-    )
-    .center_x(Length::Fill)
-    .center_y(Length::Fill)
-    .padding(OXITHEME.padding_lg)
-    .into()
+    container(oxi_plugin::settings_card(body))
+        .max_width(440)
+        .width(Length::Fill)
+        .into()
 }

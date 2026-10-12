@@ -1,4 +1,11 @@
 use iced::{Event, Point, keyboard, mouse};
+use oxi_auth_ui::visuals::KeyboardStatus;
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    os::unix::fs::FileExt,
+    time::{Duration, Instant},
+};
 use waycrate_xkbkeycode::{
     keyboard::{Key, KeyLocation, NamedKey},
     xkb_keyboard::{Context, ElementState, KeyEvent},
@@ -22,6 +29,8 @@ struct Keyboard {
     context: Context,
     output: Option<u32>,
     modifiers: keyboard::Modifiers,
+    repeat: Repeat,
+    layouts: BTreeMap<u32, String>,
 }
 
 impl Seat {
@@ -41,8 +50,84 @@ impl Seat {
             && keyboard.output == Some(output)
         {
             keyboard.output = None;
+            keyboard.repeat.key = None;
         }
     }
+    pub fn repeat(&mut self, now: Instant) -> Option<(u32, Event)> {
+        let keyboard = self.keyboard.as_mut()?;
+        let output = keyboard.output?;
+        let key = keyboard.repeat.due(now)?;
+        let event =
+            keyboard
+                .context
+                .key_context()?
+                .process_key_event(key + 8, ElementState::Pressed, true);
+        Some((
+            output,
+            Event::Keyboard(convert(event, keyboard.modifiers, true)),
+        ))
+    }
+}
+
+#[derive(Default)]
+struct Repeat {
+    rate: i32,
+    delay: i32,
+    key: Option<(u32, Instant)>,
+}
+impl Repeat {
+    fn press(&mut self, key: u32, now: Instant) {
+        self.key = (self.rate > 0).then(|| {
+            (
+                key,
+                now + Duration::from_millis(self.delay.clamp(0, 2000) as u64),
+            )
+        });
+    }
+    fn release(&mut self, key: u32) {
+        if self.key.is_some_and(|(held, _)| held == key) {
+            self.key = None;
+        }
+    }
+    fn due(&mut self, now: Instant) -> Option<u32> {
+        let (key, next) = self.key?;
+        if now < next || self.rate <= 0 {
+            return None;
+        }
+        self.key = Some((
+            key,
+            now + Duration::from_secs_f64(1.0 / f64::from(self.rate.clamp(1, 100))),
+        ));
+        Some(key)
+    }
+}
+
+fn layouts(bytes: &[u8]) -> BTreeMap<u32, String> {
+    let mut names = BTreeMap::new();
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        for part in text.split("name[Group").skip(1) {
+            let Some((number, tail)) = part.split_once(']') else {
+                continue;
+            };
+            let Some((_, value)) = tail.split_once('=') else {
+                continue;
+            };
+            let Some(value) = value
+                .trim_start()
+                .strip_prefix('"')
+                .and_then(|v| v.split_once('"').map(|(name, _)| name))
+            else {
+                continue;
+            };
+            if let Ok(number @ 1..=32) = number.parse::<u32>()
+                && value.len() <= 128
+                && !value.chars().any(char::is_control)
+            {
+                names.insert(number - 1, value.to_owned());
+            }
+        }
+    }
+    names
 }
 
 impl Drop for Keyboard {
@@ -92,6 +177,8 @@ impl Dispatch<wl_seat::WlSeat, u32> for State {
                             context,
                             output: None,
                             modifiers: keyboard::Modifiers::empty(),
+                            repeat: Repeat::default(),
+                            layouts: BTreeMap::new(),
                         })
                     }
                     Err(_) => state.input_error("Cannot initialize keyboard context"),
@@ -141,6 +228,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for State {
         };
         let output = keyboard.output;
         let mut input = None;
+        let mut status = None;
         match event {
             wl_keyboard::Event::Keymap {
                 format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
@@ -148,6 +236,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for State {
                 size,
             } => {
                 if size > 0 && size <= 1024 * 1024 {
+                    let mut bytes = vec![0; size as usize];
+                    if let Ok(copy) = fd.try_clone()
+                        && File::from(copy).read_exact_at(&mut bytes, 0).is_ok()
+                    {
+                        keyboard.layouts = layouts(&bytes);
+                    }
+                    keyboard.repeat.key = None;
                     keyboard.context.set_keymap_from_fd(fd, size as usize);
                 } else {
                     state.input_error("Invalid keyboard keymap size");
@@ -155,6 +250,18 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for State {
             }
             wl_keyboard::Event::Enter { .. } => {
                 keyboard.output = focus;
+                keyboard.repeat.key = None;
+                status = Some(KeyboardStatus {
+                    caps_lock: keyboard
+                        .context
+                        .state_mut()
+                        .map(|state| state.modifiers().caps_lock),
+                    layout: keyboard
+                        .layouts
+                        .get(&0)
+                        .cloned()
+                        .unwrap_or_else(|| "Layout 1".into()),
+                });
             }
             wl_keyboard::Event::Leave { surface, .. } => {
                 if state.surface_id(&surface) == output
@@ -165,6 +272,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for State {
                 {
                     keyboard.output = None;
                     keyboard.modifiers = keyboard::Modifiers::empty();
+                    keyboard.repeat.key = None;
                 }
             }
             wl_keyboard::Event::Key {
@@ -179,7 +287,17 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for State {
                 };
                 if let Some(mut context) = keyboard.context.key_context() {
                     let event = context.process_key_event(key + 8, pressed, false);
-                    input = Some(convert(event, keyboard.modifiers));
+                    input = Some(convert(event, keyboard.modifiers, false));
+                }
+                if pressed == ElementState::Pressed
+                    && keyboard
+                        .context
+                        .keymap_mut()
+                        .is_some_and(|map| map.key_repeats(key + 8))
+                {
+                    keyboard.repeat.press(key, Instant::now());
+                } else if pressed == ElementState::Released {
+                    keyboard.repeat.release(key);
                 }
             }
             wl_keyboard::Event::Modifiers {
@@ -191,8 +309,16 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for State {
             } => {
                 if let Some(xkb) = keyboard.context.state_mut() {
                     xkb.update_modifiers(mods_depressed, mods_latched, mods_locked, 0, 0, group);
-                    let mods: waycrate_xkbkeycode::keyboard::ModifiersState =
-                        xkb.modifiers().into();
+                    let xkb_modifiers = xkb.modifiers();
+                    status = Some(KeyboardStatus {
+                        caps_lock: Some(xkb_modifiers.caps_lock),
+                        layout: keyboard
+                            .layouts
+                            .get(&group)
+                            .cloned()
+                            .unwrap_or_else(|| format!("Layout {}", group + 1)),
+                    });
+                    let mods: waycrate_xkbkeycode::keyboard::ModifiersState = xkb_modifiers.into();
                     let mut modifiers = keyboard::Modifiers::empty();
                     if mods.shift_key() {
                         modifiers |= keyboard::Modifiers::SHIFT;
@@ -210,10 +336,18 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for State {
                     input = Some(keyboard::Event::ModifiersChanged(modifiers));
                 }
             }
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                keyboard.repeat.rate = rate;
+                keyboard.repeat.delay = delay;
+                keyboard.repeat.key = None;
+            }
             _ => {}
         }
         if let (Some(output), Some(event)) = (output, input) {
             state.input(output, Event::Keyboard(event));
+        }
+        if let Some(status) = status {
+            state.keyboard_status(status);
         }
     }
 }
@@ -335,7 +469,7 @@ fn key(key: Key) -> keyboard::Key {
     }
 }
 
-fn convert(event: KeyEvent, modifiers: keyboard::Modifiers) -> keyboard::Event {
+fn convert(event: KeyEvent, modifiers: keyboard::Modifiers, repeat: bool) -> keyboard::Event {
     let key = key(event.key_without_modifiers);
     let modified_key = self::key(event.logical_key);
     let location = match event.location {
@@ -356,7 +490,7 @@ fn convert(event: KeyEvent, modifiers: keyboard::Modifiers) -> keyboard::Event {
             text: event
                 .text_with_all_modifiers
                 .map(|text| text.as_str().into()),
-            repeat: false,
+            repeat,
         },
         ElementState::Released => keyboard::Event::KeyReleased {
             key,
@@ -365,5 +499,35 @@ fn convert(event: KeyEvent, modifiers: keyboard::Modifiers) -> keyboard::Event {
             location,
             modifiers,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn repeat_deadlines_release_and_disabled_rate_never_replay_stale_keys() {
+        let now = Instant::now();
+        let mut repeat = Repeat {
+            rate: 25,
+            delay: 400,
+            key: None,
+        };
+        repeat.press(14, now);
+        assert_eq!(repeat.due(now), None);
+        assert_eq!(repeat.due(now + Duration::from_millis(400)), Some(14));
+        repeat.release(15);
+        assert!(repeat.key.is_some());
+        repeat.release(14);
+        assert_eq!(repeat.due(now + Duration::from_secs(1)), None);
+        repeat.rate = 0;
+        repeat.press(14, now);
+        assert!(repeat.key.is_none());
+        assert_eq!(
+            layouts(b"name[Group1] = \"English (US)\"; name[Group2] = \"German\";")
+                .get(&1)
+                .map(String::as_str),
+            Some("German")
+        );
     }
 }

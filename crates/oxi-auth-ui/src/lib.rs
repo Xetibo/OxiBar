@@ -1,6 +1,7 @@
 use zeroize::{Zeroize, Zeroizing};
 
 pub mod view;
+pub mod visuals;
 
 pub const MAX_RESPONSE_BYTES: usize = 4096;
 

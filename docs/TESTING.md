@@ -7,7 +7,8 @@ response storage, single-flight attempts, stale/cancelled result rejection,
 protocol readiness/destructor state and acknowledged greeter handoff.
 `oxi-lock` integration tests create a private Wayland socket pair/server and render
 actual Iced CPU frames. They check latest configure acknowledgement, non-NULL
-opaque SHM pixels, integer/fractional geometry, output hotplug/removal, denied and
+opaque SHM pixels and native RGB byte order, integer/fractional geometry, output
+hotplug/removal, denied and
 external-finish destruction, readiness-before-callback, authenticated final sync,
 missing-protocol refusal, malformed configure and crash-without-unlock.
 `oxi-pam` tests compile a private PAM module and load it through test-only
@@ -25,15 +26,28 @@ Authentication integration must use private fixtures or the dedicated VM, never
 the current user's desktop session or credentials.
 
 `nix build .#oxilock .#oxisession` builds independent authentication packages and
-runs their selected Cargo tests. `checks.<system>.authentication-clippy` runs strict
-all-targets Clippy for all four authentication crates. On x86-64,
+runs their selected Cargo tests. `checks.<system>.authentication-unit` runs all
+four authentication crates (28 normal tests plus the test-only ignored PAM child
+entry); `authentication-clippy` runs strict all-targets Clippy. Bounded appearance
+and asset decoding, truthful Caps inference, repeat retirement and widget wake
+deadlines have service-free checks. A private p2p logind fixture transfers actual
+inhibitor FDs and verifies held-through-readiness leases, live-child reuse and
+refusal/timeout gates for explicit suspend. On x86-64,
 `checks.x86_64-linux.authentication-cage` and `authentication-hyprland` boot real
-NixOS VMs with disposable credentials, greetd, PAM and virtio DRM. They assert
+NixOS VMs with disposable credentials, greetd, PAM and real DRM. They assert
 failed-auth retention, retry, old greeter/compositor retirement, UID 1000,
 Wayland environment isolation, seat0/VT1 ownership, logout and different-PID crash
-recovery. Use raw-frame OCR for initial UI readiness; PAM results and process/seat
-state, not OCR or sleeps alone, gate authentication assertions. Deployment examples
-are in `AUTH_DEPLOYMENT.md`.
+recovery. Native checks also cover decoded assets, permission-gated power
+confirmation/cancellation and restored focus; actual protocol/PAM lockers,
+fractional output scaling/hotplug, Caps state, held-key editing, failed-password
+retry and parent/worker crash retirement. Cage's VM verifies both real S3 paths,
+protocol readiness before delay-lease release, visible locked resume, reacquired
+inhibition, watcher-stop child preservation and authenticated unlock after resume.
+The sleep fixture uses legacy VGA/pixman and a protected block-backed Nix store;
+pinned virtio-GPU fences stall after S3. Hyprland retains virtio-GPU coverage.
+Use raw-frame OCR for opaque-card readiness/dialog presence; PAM results and
+process/seat state, not OCR or sleeps alone, gate authentication assertions.
+Deployment examples are in `AUTH_DEPLOYMENT.md`.
 
 ## Strategy
 

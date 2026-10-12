@@ -21,6 +21,12 @@
   then reuse masked multi-prompt interaction. Preserve failure feedback and session
   choice on rejected starts; show explicit starting state until the login manager
   acknowledges handoff. Generic window-close events cannot accept a login.
+- Authentication views use clock/date, optional bounded assets and centered cards
+  with a scroll fallback for small outputs or long prompts. Image/configuration
+  failures retain an opaque fallback and readable feedback. Keyboard indicators
+  distinguish known state from unknown initial Caps Lock state. Pre-login power
+  actions require a visible confirmation and permission checks; dismissal restores
+  username focus without accepting a login. Static composition respects reduced motion.
 
 - Use `oxiced::theme::theme_impl::OXITHEME` for colors and theme-derived styling.
 - `OXITHEME` is the safe compatibility handle for the explicitly delivered
