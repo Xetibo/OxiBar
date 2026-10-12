@@ -11,6 +11,13 @@
 
 ## Rules
 
+- Authentication surfaces share one prompt transaction across outputs. Render
+  secret responses as masks and collect them outside ordinary text-input widget
+  state; explicitly visible authentication prompts may echo their response. Enter
+  submits, Escape clears/cancels, and only authenticated completion unlocks.
+  Use opaque themed backgrounds and centered bounded cards with explicit progress
+  and failure feedback.
+
 - Use `oxiced::theme::theme_impl::OXITHEME` for colors and theme-derived styling.
 - `OXITHEME` is the safe compatibility handle for the explicitly delivered
   immutable snapshot. Use readable built-in Catppuccin roles and preserve explicit

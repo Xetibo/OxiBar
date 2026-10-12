@@ -1,0 +1,11 @@
+[package]
+name = "oxi-pam"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+description = "Private current-user PAM worker for OxiLock"
+
+[dependencies]
+libc = "0.2"
+oxi-auth-ui = { path = "../oxi-auth-ui" }
+zeroize = "1.8"

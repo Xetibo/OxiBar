@@ -71,6 +71,7 @@
                 wayland-protocols
                 libdrm
                 libpulseaudio
+                pam
                 xorg.libX11
                 xorg.libXrandr
                 xorg.libXi
@@ -105,6 +106,7 @@
           };
         in
           pkgs.mkShell {
+            buildInputs = [pkgs.pam];
             inputsFrom = builtins.attrValues self'.packages;
             packages = commonPkgs ++ fontPkgs;
             LD_LIBRARY_PATH = libPath;
@@ -148,6 +150,7 @@
               wayland-protocols
               libdrm
               libpulseaudio
+              pam
               libclang.lib
               vulkan-loader
               xorg.libX11

@@ -10,6 +10,9 @@ iced = { version = "0.14", features = ["advanced", "image", "svg"] }
 iced_runtime = "0.14"
 iced_tiny_skia = { version = "0.14", features = ["image", "svg"] }
 memmap2 = "0.9"
+oxi-auth-ui = { path = "../oxi-auth-ui" }
+oxi-pam = { path = "../oxi-pam" }
+oxiced = { workspace = true }
 rustix = { version = "1", features = ["event", "fs"] }
 tiny-skia = "0.11"
 wayland-client = "0.31"

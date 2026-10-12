@@ -1,5 +1,7 @@
 use zeroize::{Zeroize, Zeroizing};
 
+pub mod view;
+
 pub const MAX_RESPONSE_BYTES: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,7 +25,7 @@ pub struct Secret(Zeroizing<String>);
 
 impl Default for Secret {
     fn default() -> Self {
-        Self(Zeroizing::new(String::new()))
+        Self(Zeroizing::new(String::with_capacity(MAX_RESPONSE_BYTES)))
     }
 }
 impl std::fmt::Debug for Secret {

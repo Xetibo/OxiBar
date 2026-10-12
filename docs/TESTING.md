@@ -2,7 +2,7 @@
 
 ## Authentication state checks
 
-`cargo test -p oxi-auth-ui -p oxi-lock -p oxi-session` checks bounded/redacted
+`cargo test -p oxi-auth-ui -p oxi-lock -p oxi-pam -p oxi-session` checks bounded/redacted
 response storage, single-flight attempts, stale/cancelled result rejection,
 protocol readiness/destructor state and acknowledged greeter handoff.
 `oxi-lock` integration tests create a private Wayland socket pair/server and render
@@ -10,6 +10,12 @@ actual Iced CPU frames. They check latest configure acknowledgement, non-NULL
 opaque SHM pixels, integer/fractional geometry, output hotplug/removal, denied and
 external-finish destruction, readiness-before-callback, authenticated final sync,
 missing-protocol refusal, malformed configure and crash-without-unlock.
+`oxi-pam` tests compile a private PAM module and load it through test-only
+`pam_start_confdir`; production always uses the fixed system service. They exercise
+the real PAM library, information/error/visible/secret MFA prompts, wrong answers,
+account-policy rejection, identity remapping, cancellation/reaping and partial
+bounded IPC. No system PAM file or real account password is changed. Run in the
+flake development shell for the PAM library/headers and pinned C compiler.
 Authentication integration must use private fixtures or the dedicated VM, never
 the current user's desktop session or credentials.
 

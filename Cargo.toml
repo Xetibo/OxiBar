@@ -7,6 +7,7 @@ members = [
 	"crates/oxiced",
 	"crates/oxi-auth-ui",
 	"crates/oxi-lock",
+	"crates/oxi-pam",
 	"crates/oxi-session",
 	"plugins/audio",
 	"plugins/applications",

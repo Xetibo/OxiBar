@@ -1,5 +1,26 @@
 # Decisions
 
+## 2026-10-12: Authentication stage 2 — PAM worker and masked lock interaction
+
+- Add fixed-service current-UID PAM authentication and account checks in a private
+  same-image subprocess. Validate dedicated root-owned service configuration before
+  locking, avoiding PAM's missing-service fallback. Reject PAM identity remapping.
+- Transfer a private same-UID socket on FD 3, close it across helper exec, bound and
+  zeroize binary frames, and cancel/reap the worker process group. Disable core dumps
+  and dumpability; preserve only locale/development library lookup in worker environment.
+- Preallocate response storage to avoid password-bearing reallocations. Shared
+  themed views render masks, while raw key events edit the zeroizing buffer; no
+  password-bearing Iced message or editable widget stores full credentials.
+- Start one authentication attempt only after protocol Locked. Enter submits,
+  Backspace/Ctrl+U edit, Escape/clear cancel without unlock; only a current worker's
+  successful authentication and account result requests authenticated unlock.
+- Production exposes `oxilock [--ready-fd FD]`, `--check`, and a private worker entry;
+  no fake-authentication or service override. Real-library tests use an owned module
+  and test-only confdir to cover MFA, failure, account policy, remapping and cancellation.
+- Pinned-Nix auth-crate tests, strict all-targets Clippy and the standalone locker
+  build pass. Protocol fixtures continue to verify opaque frames and final unlock
+  sync; real kiosk/seat and visual checks follow in the integration stages.
+
 ## 2026-10-12: Authentication stage 1 — owned lock protocol and CPU frames
 
 - Implement `oxi-lock` with direct staging Wayland lock roles, configure coalescing,

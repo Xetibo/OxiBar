@@ -1,9 +1,10 @@
 # Native Lock Screen and Kiosk Session Manager
 
 **Status:** implementation in progress. Stages 0 (backend audit/state boundaries)
-and 1 (owned protocol backend with private rendering/lifecycle fixtures) are
-complete. The non-locking `oxilock --check` frontend is available; authenticated
-interactive locking is wired in stage 2. Integration stages are committed separately.
+through 2 (owned protocol backend, private PAM worker and authenticated frontend)
+are complete. `oxilock` requires an administrator-owned `/etc/pam.d/oxilock` policy;
+`--check` probes protocol support without locking. Greeter, packaging/VM integration
+and visual/suspend stages follow in separate commits.
 
 ## Product and process boundaries
 

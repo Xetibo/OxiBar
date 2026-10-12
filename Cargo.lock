@@ -3293,6 +3293,8 @@ dependencies = [
 name = "oxi-auth-ui"
 version = "0.1.0"
 dependencies = [
+ "iced",
+ "oxiced",
  "zeroize",
 ]
 
@@ -3304,12 +3306,24 @@ dependencies = [
  "iced_runtime",
  "iced_tiny_skia",
  "memmap2",
+ "oxi-auth-ui",
+ "oxi-pam",
+ "oxiced",
  "rustix 1.1.4",
  "tiny-skia",
  "waycrate_xkbkeycode",
  "wayland-client",
  "wayland-protocols",
  "wayland-server",
+]
+
+[[package]]
+name = "oxi-pam"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "oxi-auth-ui",
+ "zeroize",
 ]
 
 [[package]]

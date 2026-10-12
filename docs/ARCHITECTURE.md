@@ -3,8 +3,10 @@
 ## Authentication applications
 
 Authentication is isolated from the shell and its dynamically loaded plugins.
-`crates/oxi-auth-ui` owns bounded prompt/attempt state; `crates/oxi-lock` owns the
-Wayland lock lifecycle; `crates/oxi-session` owns acknowledged greeter handoff.
+`crates/oxi-auth-ui` owns bounded prompt/attempt state and masked themed views;
+`crates/oxi-lock` owns the Wayland lock lifecycle; `crates/oxi-pam` owns current-user
+PAM in a private cancellable subprocess; `crates/oxi-session` owns acknowledged
+greeter handoff.
 The backend selection and privilege boundaries are recorded in
 `AUTH_BACKEND_AUDIT.md`. Lock readiness follows the protocol `locked` event,
 and greeter exit follows an authenticated, acknowledged greetd start request.
@@ -18,6 +20,15 @@ rejects retired devices and supplies no clipboard service. Authentication is an
 application capability; only its explicit success action can request unlock.
 Readiness follows `locked`, and successful/external unlock is followed by display
 sync before returning. Renderer errors and process loss never send unlock.
+
+The locker requires an administrator-owned dedicated PAM service before acquiring
+a lock, preventing fallback to another service's policy. Its same-image worker
+receives only a private same-UID socket; cancellation kills and reaps its process
+group. Bounded zeroized frames carry attempt IDs, multiple prompt types and final
+authentication/account-policy results. Secret text stays in preallocated zeroizing
+storage; ordinary Iced messages/widgets receive masks instead of password strings.
+The PAM conversation owns native response allocations until PAM consumes them.
+Both processes disable core dumps and debugger attachment before handling input.
 
 Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, and dynamic plugin crates.
 

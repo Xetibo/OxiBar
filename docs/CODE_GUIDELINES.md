@@ -18,6 +18,14 @@
 
 ## Rust Style
 
+- Authentication secrets must not implement Clone or unredacted Debug, enter
+  general shell messages/configuration/logs, or be copied into ordinary widget
+  state. Keep response allocations bounded and zeroized, guard attempt identity,
+  and treat PAM-owned native response buffers as a separate ownership boundary.
+- PAM is a fixed administrator-owned current-user policy, never a user-selected
+  service. Keep blocking conversations in the private cancellable worker, reject
+  missing service configuration, and never map errors or cancellation to unlock.
+
 - Keep changes small and aligned with existing module boundaries.
 - Prefer pure helper functions for parsing, state transitions, and config extraction so behavior is unit-testable without DBus, Wayland, Hyprland, or shell commands.
 - Keep dynamic plugin ABI entry points thin. Delegate testable behavior to normal Rust functions where practical.
