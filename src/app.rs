@@ -232,6 +232,7 @@ fn run_bar(connection: Option<Connection>) -> Result<(), iced_layershell::Error>
 }
 
 pub(crate) struct OxiBar {
+    pub(crate) paste: crate::paste::PasteState,
     pub(crate) overview: crate::overview::Overview,
     pub(crate) appearance: crate::theme::ThemeRuntime,
     pub(crate) docks: crate::dock::Docks,
@@ -371,6 +372,7 @@ impl OxiBar {
         let launcher = Launcher::new(config);
         let appearance = crate::theme::ThemeRuntime::new(config, runtime.snapshot.revision, true);
         let mut bar = Self {
+            paste: crate::paste::PasteState::default(),
             overview: crate::overview::Overview::default(),
             appearance,
             docks: crate::dock::Docks::default(),
@@ -593,7 +595,15 @@ impl OxiBar {
             Message::MonitorsReverted(result) => self.monitors_reverted(result),
             Message::MonitorsSaved(result) => self.monitors_saved(result),
             Message::MonitorsExpired(event) => self.monitors_expired(event),
-            Message::SurfaceClosed(id) => self.surface_closed(id),
+            Message::SurfaceClosed(id) => {
+                let paste = self.paste_focus(id, false);
+                Task::batch([self.surface_closed(id), paste])
+            }
+            Message::SurfaceFocus(id, focused) => self.paste_focus(id, focused),
+            Message::Paste(plugin, request) => self.request_paste(plugin, request),
+            Message::PasteDismissed(generation) => self.paste_dismissed(generation),
+            Message::PasteTimeout(generation) => self.paste_timeout(generation),
+            Message::PasteFinished(generation, result) => self.finish_paste(generation, result),
             Message::ModalEscape(id) => {
                 if self.modal_window_id == Some(id) {
                     self.close_modal()
@@ -1692,6 +1702,12 @@ fn layer_surface_size_event(
 ) -> Option<Message> {
     let size = match event {
         iced::Event::Window(window::Event::Closed) => return Some(Message::SurfaceClosed(id)),
+        iced::Event::Window(window::Event::Focused) => {
+            return Some(Message::SurfaceFocus(id, true));
+        }
+        iced::Event::Window(window::Event::Unfocused) => {
+            return Some(Message::SurfaceFocus(id, false));
+        }
         iced::Event::Window(window::Event::Opened { size, .. })
         | iced::Event::Window(window::Event::Resized(size)) => size,
         _ => return None,
@@ -1717,6 +1733,7 @@ mod tests {
 
     fn empty_bar() -> OxiBar {
         let mut bar = OxiBar {
+            paste: crate::paste::PasteState::default(),
             overview: crate::overview::Overview::default(),
             appearance: crate::theme::ThemeRuntime::new(&Table::new(), 0, false),
             docks: crate::dock::Docks::default(),

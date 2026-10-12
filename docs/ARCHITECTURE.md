@@ -43,6 +43,10 @@ token from a live locker. Resume reacquires the lease and reuses a live locked c
 watcher shutdown leaves authentication available. Explicit lock-then-suspend holds
 a block inhibitor through readiness and cannot call Suspend on refusal/timeout.
 Delay leases remain bounded by logind policy and report failed readiness.
+Locker exec preserves only standard streams and its readiness FD; unrelated FDs
+are marked close-on-exec with Linux `close_range(CLOSE_RANGE_CLOEXEC)`. This keeps
+transient D-Bus descriptor copies from extending inhibitor ownership in the child,
+while preserving Rust's spawn-error channel until exec. Failure aborts spawning.
 
 The greeter is a standard fullscreen xdg-shell Iced application, independent of
 layer-shell and the locker. Its root-peer-validated greetd client serializes one
@@ -113,6 +117,10 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   command/confirmation flow.
 - `src/shortcuts.rs`: validated live key bindings, context conflict checks and one
   surface-scoped keyboard dispatcher for all host-owned interactions.
+- `src/paste.rs`: generation-scoped provider paste handoffs. After the provider's
+  acknowledged copy, the host dismisses interactive surfaces, waits for native
+  Unfocused/Closed events and owns one bounded, cancellable virtual-keyboard job.
+  Restricted string requests and completion events cross the dylib boundary.
 - `src/osd.rs`: output-scoped, non-interactive OSD instances and abortable lifetimes.
 - `src/commands.rs`: optional resident provider commands, authoritative completion
   replies and captured-output routing through asynchronous results.
@@ -152,6 +160,8 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   correction. Compositor keyboard Enter/Leave owns keyboard routing independently
   of newly created or pointer-active surfaces. Seat capability updates retain
   existing resources, release removed devices and ignore retired keyboard events.
+  Keyboard capability loss clears the focused surface and publishes Unfocus,
+  including when a temporary virtual keyboard disappears without a Leave event.
   Pending repeats are canceled on focus/device removal and are installed only
   while their keyboard and repeating key still exist.
 - `plugins/clock/src/caldav.rs`: HTTPS-only CalDAV sync, current-month calendar queries, minimal iCalendar parsing, common recurrence expansion, and Nextcloud-compatible calendar query support.
@@ -160,6 +170,12 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `flake.nix` and `nix/*.nix`: Nix packaging for the host and dynamic plugin libraries. Crane builds one workspace dependency artifact derivation and reuses it for every host/plugin package so shared Rust dependencies are not rebuilt per plugin.
 
 ## Runtime Flow
+
+External application paste is a two-stage operation: the provider first confirms
+clipboard ownership, then requests a host-managed focus handoff. The host never
+substitutes a sleep for native focus release, rejects concurrent/disabled-provider
+requests and cancels injection if a host surface regains focus. Clipboard payloads
+stay in their owning service/provider rather than host status or request strings.
 
 - `main()` configures tracing, layershell settings, font loading, theme, subscription, update, and view callbacks.
 - `run()` takes an optional single-instance lock via `single_instance::acquire()` from the `[instance]` config table; when another oxibar holds the lock the new process prints an error and exits non-zero (`allow_multiple_instances = true` skips the lock). The guard is held for the process lifetime.

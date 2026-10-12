@@ -19,7 +19,7 @@ any provider; a user-installed library always takes precedence.
 For manual development installation, run `nix develop -c cargo build --workspace`
 then `scripts/install-plugins.sh` (or pass `release` after a release build). The
 installer includes Applications, respects `CARGO_TARGET_DIR` and `XDG_CONFIG_HOME`,
-and verifies all twelve plugin files before installing any of them. Restart after
+and verifies all thirteen plugin files before installing any of them. Restart after
 replacing initialized libraries; build the host and plugins together.
 
 ## Top-level keys
@@ -92,6 +92,44 @@ Clock also supports `oxibar action Clock popup`, `refresh`, and
 
 See [release checks](docs/RELEASE_CHECKS.md) for reproducible package, catalog,
 Home Manager, private app-lifetime, compositor smoke and performance verification.
+
+## `[oxipaste]` — persistent clipboard history
+
+The optional `liboxipaste.so` provider, named **OxiPaste**, reads the updated
+`org.Xetibo.OxiPasteDaemon` session service. Install the separately packaged
+OxiPaste daemon and start it in the same Wayland session. The plugin package is
+`oxibar-oxipaste`; it is selectable through Home Manager's `config.plugins` or
+installable as a disabled catalog entry through `extraPlugins`.
+
+```toml
+plugins = ["liboxipaste.so"] # Retain your other enabled libraries.
+
+[bar]
+end = ["OxiPaste"]
+
+[control_center]
+widgets = ["OxiPaste"]
+
+[oxipaste]
+paste_shortcut = "ctrl+v"
+poll_seconds = 2
+```
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `paste_shortcut` | `"ctrl+v"` | `"ctrl+v"` or `"ctrl+shift+v"`; choose the target application's paste shortcut. Restart-only. |
+| `poll_seconds` | `2` | Visible history refresh interval, from 1 to 3,600 seconds. Restart-only. |
+
+Clicking a row copies its exact bytes/MIME, then dismisses the shell's interactive
+surfaces and waits for native keyboard focus release before invoking `wtype`.
+**Copy** changes the clipboard without dismissal or key injection. Failed writes
+keep the picker open and show the actual service error; unavailable services can be
+retried with Refresh. Search uses text/MIME and preserves original payloads.
+
+The provider also supports an interactive desktop widget through the layout editor.
+Daemon history/configuration remains under `$XDG_CONFIG_HOME/oxipaste/`, independently
+of Oxibar's sparse settings. This provider does not opt into Tools' separate
+ephemeral launcher clipboard history. See the [plugin setup guide](plugins/oxipaste/README.md).
 
 ## `[bar]` — bar surface
 

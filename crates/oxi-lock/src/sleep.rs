@@ -68,6 +68,10 @@ impl LockerProcess {
                 if libc::dup2(fd, 3) < 0 || libc::fcntl(3, libc::F_SETFD, 0) < 0 {
                     return Err(io::Error::last_os_error());
                 }
+                // Retire inherited D-Bus FD copies at exec, preserving Rust's exec-error pipe.
+                if libc::close_range(4, u32::MAX, libc::CLOSE_RANGE_CLOEXEC as libc::c_int) < 0 {
+                    return Err(io::Error::last_os_error());
+                }
                 Ok(())
             });
         }
@@ -221,6 +225,17 @@ mod tests {
             let _ = child.wait();
         }
     }
+    fn wait_for_release(reader: &mut std::os::unix::net::UnixStream) -> io::Result<()> {
+        // Reply tasks and concurrent forks can briefly retain copies before cleanup/exec.
+        reader.set_read_timeout(Some(Duration::from_secs(1)))?;
+        reader.set_nonblocking(false)?;
+        let result = reader.read(&mut [0]);
+        reader.set_nonblocking(true)?;
+        match result? {
+            0 => Ok(()),
+            _ => Err(io::Error::other("Unexpected inhibitor fixture data")),
+        }
+    }
     #[test]
     fn only_complete_protocol_readiness_opens_gate_and_reuse_requires_live_process() {
         let mut locker = fixture("printf lock >&3; sleep 0.05; printf 'ed\\n' >&3; sleep 2");
@@ -247,6 +262,38 @@ mod tests {
             Duration::from_millis(4250)
         );
     }
+    #[test]
+    fn locker_does_not_inherit_unrelated_inhibitor_descriptors() {
+        let (mut reader, writer) = std::os::unix::net::UnixStream::pair().unwrap();
+        reader.set_nonblocking(true).unwrap();
+        // Model an SCM_RIGHTS descriptor before the D-Bus reply releases its copy.
+        let raw = unsafe { libc::fcntl(writer.as_raw_fd(), libc::F_DUPFD, 4) };
+        assert!(raw >= 4);
+        let reply_fd = unsafe { OwnedFd::from_raw_fd(raw) };
+        let mut locker = fixture("printf 'locked\\n' >&3; sleep 2");
+        locker.wait(Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            reader.read(&mut [0]).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        drop(writer);
+        drop(reply_fd);
+        let released = wait_for_release(&mut reader);
+        assert!(locker.poll().unwrap());
+        stop(&mut locker);
+        released.unwrap();
+    }
+    #[test]
+    fn spawn_reports_exec_failure_without_claiming_readiness() {
+        let mut locker = LockerProcess::default();
+        let error = locker
+            .spawn(Command::new("/nonexistent/oxilock-fixture"))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(locker.child.is_none());
+        assert!(locker.reader.is_none());
+        assert!(!locker.ready);
+    }
     struct Logind {
         readers: std::sync::Arc<std::sync::Mutex<Vec<std::os::unix::net::UnixStream>>>,
         requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
@@ -259,7 +306,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter_mut()
-                .any(|reader| reader.read(&mut [0]).ok() != Some(0))
+                .any(|reader| wait_for_release(reader).is_err())
             {
                 return Err(zbus::fdo::Error::Failed(
                     "Block lease must close before Suspend".into(),
@@ -320,7 +367,7 @@ mod tests {
         prepare(&mut locker, Duration::from_secs(1), &mut lease);
         assert!(locker.ready);
         assert!(lease.is_none());
-        assert_eq!(readers.lock().unwrap()[0].read(&mut [0]).unwrap(), 0);
+        wait_for_release(&mut readers.lock().unwrap()[0]).unwrap();
         assert!(locker.poll().unwrap());
         stop(&mut locker);
         let mut denied = fixture("printf 'denied\n' >&3; sleep 2");

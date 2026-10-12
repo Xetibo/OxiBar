@@ -27,12 +27,15 @@ the current user's desktop session or credentials.
 
 `nix build .#oxilock .#oxisession` builds independent authentication packages and
 runs their selected Cargo tests. `checks.<system>.authentication-unit` runs all
-four authentication crates (28 normal tests plus the test-only ignored PAM child
+four authentication crates (30 normal tests plus the test-only ignored PAM child
 entry); `authentication-clippy` runs strict all-targets Clippy. Bounded appearance
 and asset decoding, truthful Caps inference, repeat retirement and widget wake
 deadlines have service-free checks. A private p2p logind fixture transfers actual
 inhibitor FDs and verifies held-through-readiness leases, live-child reuse and
-refusal/timeout gates for explicit suspend. On x86-64,
+refusal/timeout gates for explicit suspend. Release assertions allow at most one
+second for EOF from asynchronous reply/fork cleanup and still require a live locker.
+A non-close-on-exec descriptor regression detects child-owned inhibitor copies;
+an exec-failure check preserves spawn error reporting. On x86-64,
 `checks.x86_64-linux.authentication-cage` and `authentication-hyprland` boot real
 NixOS VMs with disposable credentials, greetd, PAM and real DRM. They assert
 failed-auth retention, retry, old greeter/compositor retirement, UID 1000,
@@ -204,8 +207,8 @@ during animated layout changes are not a reliable animation timing assertion.
 The smoke enables backtraces, retains panic diagnostics and fails if the daemon's
 retry loop catches a panic. A restarted daemon cannot satisfy the run.
 
-Installer verification uses private fake-library fixtures: a missing Applications
-file must fail before any installation, all twelve libraries must install with
+Installer verification uses private fake-library fixtures: missing Applications or
+OxiPaste files must fail before any installation, all thirteen libraries must install with
 correct contents/mode, and absolute/relative `CARGO_TARGET_DIR` plus custom
 `XDG_CONFIG_HOME` must work. `bash -n scripts/install-plugins.sh` checks syntax.
 
@@ -458,6 +461,45 @@ canonical live font, invalid-input retention and restart/reset across four upgra
 providers. The backend capability patch retains devices on unchanged capabilities
 and ignores retired keyboard proxies. First-presentation release measures remain
 milestone 7, rather than being inferred from layer configuration or sleeps.
+
+## Persistent Clipboard and Native Paste
+
+Build the updated OxiPaste binaries separately, and build Oxibar with its OxiPaste
+dylib from one workspace graph. The following opt-in checks require owned services:
+
+```sh
+nix develop -c nix develop --impure --file nix/gui-tests.nix -c \
+  dbus-run-session --config-file=scripts/private-bus.conf -- \
+  env OXIBAR_TEST_PRIVATE_BUS=1 \
+      OXIBAR_OXIPASTE_PLUGIN="$PWD/target/debug/liboxipaste.so" \
+  cargo test -p oxipaste private_bus -- --ignored
+# In another identical private-bus invocation:
+# cargo test -p oxibar --test clipboard_dylib -- --ignored
+
+nix develop -c nix develop --impure --file nix/gui-tests.nix -c \
+  python scripts/run-isolated.py -- \
+  python scripts/clipboard-smoke.py \
+    "$PWD/target/debug/oxibar" "$PWD/target/debug/liboxipaste.so" \
+    /path/to/OxiPaste/target/debug
+```
+
+Use the filtered working-source shell in Expected Commands while source files are
+untracked. The outer development shell supplies graphics library paths for
+Cargo-built GUIs. The private D-Bus fixture checks delayed actual write completion,
+byte-exact payload identity and failed-write propagation; the real dylib fixture
+checks tasks and visible-only timers without a host Tokio reactor.
+
+The smoke owns HOME/XDG directories, bus, compositor, daemon, host, standalone
+picker and raw terminal receiver. It compares receiver bytes for both Ctrl+V and
+Ctrl+Shift+V after native focus release; screenshots are optional diagnostics.
+It also proves original watcher stdin/trailing newlines, exact Copy after history
+reordering, Copy retaining the picker without typing, failed writes retaining
+picker/history, keyboard-device removal without Leave, standalone Copy/Enter,
+binary MIME bytes, private file permissions and restart persistence. The same
+suite passes against the Nix host/plugin/OxiPaste packages; normal writes use the
+packaged helper wrappers, with the unwrapped daemon isolated for failed-write
+injection. `--trace-focus` records native keyboard/focus transitions.
+Never run these keyboard/clipboard checks against the user's session.
 
 ## Settings Runtime Verification
 

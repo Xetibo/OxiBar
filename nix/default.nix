@@ -21,6 +21,7 @@
   makeFontsConf,
   fontconfig,
   xdg-utils,
+  wtype,
   adwaita-fonts,
   applicationsPlugin,
   ...
@@ -101,7 +102,7 @@ in
     postFixup = ''
       patchelf --set-rpath "${runtimeLibPath}" "$out/bin/oxibar"
       wrapProgram "$out/bin/oxibar" \
-        --prefix PATH : "${lib.makeBinPath [fontconfig xdg-utils]}" \
+        --prefix PATH : "${lib.makeBinPath [fontconfig xdg-utils wtype]}" \
         --set FONTCONFIG_FILE "${fontsConf}" \
         --set-default OXIBAR_PLUGIN_DIR "${applicationsPlugin}/lib" \
         --set VK_ICD_FILENAMES "${vkIcdFiles}"

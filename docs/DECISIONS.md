@@ -1,5 +1,69 @@
 # Decisions
 
+## 2026-10-12: OxiPaste widget and acknowledged native paste
+
+- Add optional `plugins/oxipaste` / `liboxipaste.so`, packaged as `oxibar-oxipaste`.
+  Share the updated external daemon's persistent text/image history across the bar
+  popup, control center and interactive desktop widget. Keep the daemon opt-in and
+  separate from Tools' ephemeral launcher clipboard owner.
+- Use exact bytes/MIME in the daemon's new payload-addressed CopyContent/DeleteContent
+  methods. Await real clipboard completion; separate Copy retains the picker and
+  row-click Paste asks the host to hand off focus. Healthy polls retain action errors.
+- Add additive ABI 6 string request/result helpers for restricted Ctrl+V/Ctrl+Shift+V.
+  The host dismisses interactive surfaces and waits for native Unfocused/Closed,
+  with bounded generation-scoped timeouts and cancellation on renewed shell focus.
+  The Nix host includes wtype. No fixed-delay focus heuristic is used.
+- Route bar clicks through a plugin-local Open message returning the host request
+  from its update task; direct bar strings bypass emission translation.
+- Fix layershellev keyboard capability loss: clear the focused surface and emit
+  Unfocus when a temporary keyboard disappears without Leave. This prevents stale
+  host focus state and paste timeouts; native Leave remains the ordinary barrier.
+- Extend the Cargo installer to thirteen libraries while leaving OxiPaste outside
+  Home Manager's default enabled set. Document catalog/base enablement and daemon
+  startup, plus restart-only shortcut and visible refresh configuration.
+- Verified normal workspace tests, strict workspace Clippy/builds, delayed private
+  D-Bus success/failure and the real dylib without host Tokio TLS. The owned native
+  smoke passes original watcher bytes/newlines, reordering-safe Copy, picker retention,
+  actual application Ctrl+V/Ctrl+Shift+V output, failed-copy history preservation,
+  standalone Copy/Enter and private binary persistence/restart. The real session's
+  clipboard/input was never used. The Nix host/plugin/OxiPaste packages build and
+  pass the same native suite, including keyboard-device removal without Leave.
+  Daemon opt-in/custom target/null-package and catalog option fixtures pass; all
+  three package derivations evaluate on x86-64 and AArch64 (native execution is
+  x86-64). The thirteen-library installer passes both missing-library gates and
+  custom XDG/absolute-relative target paths. Preserve concurrent authentication edits.
+- Rust formatting and OxiPaste's Nix formatting pass. Full-file Alejandra reports
+  existing authentication-block formatting in Oxibar's flake; the clipboard flake
+  diff consists of the formatted helper and package entries.
+
+## 2026-10-12: Authentication rebuild — private lease ownership
+
+- Reproduce the logind lease `WouldBlock` failure with parallel locker library
+  tests pinned to one CPU. The isolated lease test passes repeatedly; scheduling
+  and concurrent process spawning expose the FD lifetime race.
+- Audit authentication fixtures during an active-Oxi rebuild. Locker protocol,
+  logind and greetd tests use private socket pairs; PAM uses a test-only service
+  directory/module and declared compiler/library inputs. No live desktop service
+  or current-session resource is needed by these Cargo tests.
+- Retire unrelated child descriptors with `close_range(CLOSE_RANGE_CLOEXEC)` after
+  installing readiness FD 3. D-Bus SCM_RIGHTS reply copies can lack close-on-exec
+  even when the returned lease has it. Marking rather than immediately closing
+  preserves Rust's exec-error pipe; any failure aborts spawning with native errno.
+- Observe inhibitor EOF with a bounded one-second wait, including the private
+  Suspend fixture. Reply tasks and concurrent forks can briefly retain copies;
+  release must still happen while the locker is alive. Readiness/refusal gates
+  and production lease-release timing remain unchanged.
+- Add a deterministic non-close-on-exec inhibitor regression and an exec-failure
+  regression. The FD test fails against the old spawn path even with the bounded
+  EOF wait, detecting actual inheritance rather than only an immediate-read race.
+- Verification passes: 30 authentication tests in the Nix sandbox, strict all-targets
+  authentication Clippy, both packages, formatting and 100 parallel nine-test locker
+  library runs pinned to one CPU. Use a filtered working-source flake snapshot to
+  include the concurrent untracked workspace member while excluding build artifacts.
+- Verified outputs under `/nix/store/`: locker `ryfcwk6nba73f1jrhncf7dq9r6ybls8h`,
+  greeter `mbj5cgfr20f24qfl411qy14jbzmkz09n`, unit check
+  `xqpxwpp01sdxrb531fzmp244bjnj6f9m` and Clippy `j94633y65795fyri1dp47hnfjzay9lrk`.
+
 ## 2026-10-12: Authentication stage 5 — visuals, input and ready-aware sleep
 
 - Complete the isolated Rust/Iced authentication delivery. Shared read-only settings

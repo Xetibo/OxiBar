@@ -388,6 +388,47 @@ pub type CompositorChangedFn = unsafe extern "Rust" fn(
 
 pub const HOST_REQUEST_WORKSPACE_PREFIX: &str = "oxibar.host.workspace:";
 
+pub const HOST_REQUEST_PASTE_PREFIX: &str = "oxibar.host.paste:";
+pub const HOST_EVENT_PASTE_PREFIX: &str = "oxibar.event.paste:";
+
+/// Copy first, then ask the host to release its keyboard focus and inject paste.
+/// String transport preserves identity across separately compiled Rust dylibs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostPasteRequest {
+    pub shortcut: String,
+}
+
+impl HostPasteRequest {
+    pub fn parse_host_request(value: &str) -> Option<Self> {
+        let shortcut = value.strip_prefix(HOST_REQUEST_PASTE_PREFIX)?;
+        matches!(shortcut, "ctrl+v" | "ctrl+shift+v").then(|| Self {
+            shortcut: shortcut.to_owned(),
+        })
+    }
+
+    pub fn into_message(self) -> PluginMsg {
+        Arc::new(format!("{HOST_REQUEST_PASTE_PREFIX}{}", self.shortcut))
+    }
+
+    pub fn result_message(result: Result<(), String>) -> PluginMsg {
+        Arc::new(match result {
+            Ok(()) => format!("{HOST_EVENT_PASTE_PREFIX}ok"),
+            Err(error) => format!("{HOST_EVENT_PASTE_PREFIX}error:{error}"),
+        })
+    }
+
+    pub fn parse_result(value: &str) -> Option<Result<(), String>> {
+        let result = value.strip_prefix(HOST_EVENT_PASTE_PREFIX)?;
+        if result == "ok" {
+            Some(Ok(()))
+        } else {
+            result
+                .strip_prefix("error:")
+                .map(|error| Err(error.to_owned()))
+        }
+    }
+}
+
 /// Optional resident commands. Validate before starting work; the outcome reports
 /// completion and carries the ordinary model message back through host routing.
 #[derive(Debug, Clone)]

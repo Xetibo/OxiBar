@@ -304,6 +304,7 @@ impl TestHost {
         let settings = crate::settings::SettingsUi::new(&config.snapshot);
         let mut host = Self {
             bar: OxiBar {
+                paste: crate::paste::PasteState::default(),
                 overview: crate::overview::Overview::default(),
                 appearance: crate::theme::ThemeRuntime::new(
                     &config.snapshot.effective,

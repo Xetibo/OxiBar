@@ -16,6 +16,7 @@ members = [
 	"plugins/clock",
 	"plugins/network",
 	"plugins/notifications",
+	"plugins/oxipaste",
 	"plugins/system",
     "plugins/stats",
     "plugins/tools",

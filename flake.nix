@@ -39,6 +39,7 @@
             clippy
             rustfmt
             curl
+            wtype
           ];
           # Fonts shipped into the dev shell. Fontconfig is the canonical
           # discovery mechanism on Linux; `adwaita-fonts` provides the
@@ -206,6 +207,7 @@
           oxibar-clock = pluginPackage "clock";
           oxibar-network = pluginPackage "network";
           oxibar-notifications = pluginPackage "notifications";
+          oxibar-oxipaste = pluginPackage "oxipaste";
           oxibar-system = pluginPackage "system";
           oxibar-stats = pluginPackage "stats";
           oxibar-tools = pluginPackage "tools";

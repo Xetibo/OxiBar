@@ -16,6 +16,7 @@ plugins=(
   clock
   network
   notifications
+  oxipaste
   tray
   workspaces
   stats

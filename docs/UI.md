@@ -127,6 +127,10 @@
   retain one model. Closing a dropdown restores bar input/keyboard policy.
 - Every dropdown requests keyboard focus while open and closes with scoped Escape,
   including ordinary provider popups and standalone inbox panels.
+- Clipboard pickers distinguish row-click Paste from a separate Copy action that
+  retains the picker. Copy must acknowledge success before dismissal/injection;
+  paste releases native keyboard ownership first. Keep action failures visible
+  across healthy background refreshes and preserve exact data outside previews.
 - Session uses a centered, output-bounded OxiShut-style overlay: three equal columns
   of large icon-only tiles, neutral theme fills, accent selection, disabled capability
   styling, hover descriptions and a selected-action label. Native confirmation

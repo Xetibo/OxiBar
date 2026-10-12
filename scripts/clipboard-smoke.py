@@ -1,0 +1,299 @@
+"""Verify real clipboard ownership and paste focus on an owned Wayland session."""
+import argparse
+import asyncio
+import collections
+import json
+import os
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import tty
+
+
+def receive(root):
+    tty.setraw(sys.stdin.fileno())
+    os.write(sys.stdout.fileno(), b"\x1b[?2004h")
+    (root / "receiver-ready").touch()
+    with (root / "received").open("ab", buffering=0) as output:
+        while data := os.read(sys.stdin.fileno(), 4096):
+            output.write(data)
+
+
+async def main():
+    from dbus_next import Message, MessageType
+    from dbus_next.aio import MessageBus
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("oxibar")
+    parser.add_argument("plugin")
+    parser.add_argument("oxipaste_directory")
+    parser.add_argument("--screenshots")
+    parser.add_argument("--trace-focus", action="store_true")
+    args = parser.parse_args()
+    if os.environ.get("OXIBAR_TEST_ISOLATED") != "1" or not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        raise SystemExit("Run through scripts/run-isolated.py, nested Hyprland mode")
+    scripts = Path(__file__).resolve().parent
+    binaries = Path(args.oxipaste_directory).resolve()
+    host = str(Path(args.oxibar).resolve())
+    processes = []
+    logs = collections.deque(maxlen=300)
+    with tempfile.TemporaryDirectory(prefix="oxibar-clipboard-") as temporary:
+        root = Path(temporary)
+        config = root / "config"
+        (config / "oxibar" / "plugins").mkdir(parents=True)
+        (config / "oxipaste").mkdir()
+        (config / "oxibar" / "plugins" / "liboxipaste.so").symlink_to(Path(args.plugin).resolve())
+        (config / "oxipaste" / "config.toml").write_text('keepOpen=false\npasteShortcut="ctrl+v"\nmax_items=100\n')
+        shim = root / "helpers"
+        shim.mkdir()
+        failure = root / "fail-copy"
+        copy = shim / "wl-copy"
+        copy.write_text(f"#!/bin/sh\nif test -e {shlex.quote(str(failure))}; then exit 7; fi\nexec {shlex.quote(shutil.which('wl-copy'))} \"$@\"\n")
+        copy.chmod(0o700)
+        env = dict(os.environ, HOME=str(root), XDG_CONFIG_HOME=str(config), XDG_DATA_HOME=str(root / "data"), XDG_STATE_HOME=str(root / "state"), XDG_DATA_DIRS=str(root / "empty"), RUST_BACKTRACE="1")
+        bus = await MessageBus().connect()
+
+        def run(*command, **options):
+            return subprocess.run(command, env=env, timeout=12, check=True, capture_output=True, **options)
+
+        def start(*command, child_env=None):
+            process = subprocess.Popen(command, env=child_env or env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            processes.append(process)
+            def drain():
+                for line in process.stdout:
+                    if child_env and child_env.get("WAYLAND_DEBUG") and not any(word in line for word in ["wl_keyboard", "set_keyboard_interactivity", "keyboard focus", "releasing keyboard", "WARN", "ERROR"]):
+                        continue
+                    logs.append(line)
+            threading.Thread(target=drain, daemon=True).start()
+            return process
+
+        def stop(process):
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=6)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+
+        async def wait(predicate, label):
+            deadline = time.monotonic() + 12
+            while time.monotonic() < deadline:
+                try:
+                    value = predicate()
+                    if asyncio.iscoroutine(value):
+                        value = await value
+                    if value:
+                        return value
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    pass
+                await asyncio.sleep(.025)
+            try:
+                state = json.dumps(status())
+            except (OSError, ValueError, subprocess.SubprocessError):
+                state = "host unavailable"
+            raise AssertionError(label + "\n" + state + "\n" + "".join(logs))
+
+        async def call(member, signature="", body=None, failed=False):
+            reply = await asyncio.wait_for(bus.call(Message(destination="org.Xetibo.OxiPasteDaemon", path="/org/Xetibo/OxiPasteDaemon", interface="org.Xetibo.OxiPasteDaemon", member=member, signature=signature, body=body or [])), 10)
+            if failed:
+                assert reply.message_type == MessageType.ERROR, reply.body
+            elif reply.message_type != MessageType.METHOD_RETURN:
+                raise ValueError(str(reply.body))
+            return reply.body
+
+        async def history():
+            return (await call("GetAll"))[0]
+
+        async def contains(payload):
+            return any(bytes(entry[0]) == payload for entry in await history())
+
+        def status():
+            return json.loads(run(host, "status").stdout)["data"]
+
+        def hypr(topic):
+            return json.loads(run("hyprctl", "-j", topic).stdout)
+
+        def layers(process):
+            return [dict(layer, output=output) for output, groups in hypr("layers").items() for group in groups["levels"].values() for layer in group if layer.get("pid") == process.pid]
+
+        async def layer(process, namespace):
+            return await wait(lambda: next((value for value in layers(process) if value["namespace"] == namespace), None), namespace)
+
+        def received():
+            path = root / "received"
+            return path.read_bytes().replace(b"\x1b[200~", b"").replace(b"\x1b[201~", b"") if path.exists() else b""
+
+        pointer = root / "pointer"
+        xml = os.environ["OXIBAR_TEST_VIRTUAL_POINTER_XML"]
+        run("wayland-scanner", "client-header", xml, str(root / "virtual-pointer.h"))
+        run("wayland-scanner", "private-code", xml, str(root / "virtual-pointer.c"))
+        flags = shlex.split(run("pkg-config", "--cflags", "--libs", "wayland-client", text=True).stdout)
+        run("gcc", "-O2", "-I", str(root), str(scripts / "virtual-pointer.c"), str(root / "virtual-pointer.c"), *flags, "-o", str(pointer))
+
+        async def click(process, namespace, x, y):
+            selected = await layer(process, namespace)
+            monitor = next(value for value in hypr("monitors") if value["name"] == selected["output"])
+            run(str(pointer), "0", "0", monitor["name"], str(round(selected["x"] - monitor["x"] + x)), str(round(selected["y"] - monitor["y"] + y)), str(round(monitor["width"] / monitor["scale"])), str(round(monitor["height"] / monitor["scale"])))
+            logs.append(f"clicked {namespace} {x},{y}: {selected} cursor={hypr('cursorpos')}\n")
+
+        async def picture(name, process, namespace):
+            if args.screenshots:
+                target = Path(args.screenshots)
+                target.mkdir(parents=True, exist_ok=True)
+                selected = await layer(process, namespace)
+                run("grim", "-g", f"{selected['x']},{selected['y']} {selected['w']}x{selected['h']}", str(target / (name + ".png")))
+
+        try:
+            daemon_env = dict(env, PATH=str(shim) + os.pathsep + env["PATH"])
+            daemon = start(str(binaries / "oxipaste_daemon"), child_env=daemon_env)
+            await wait(lambda: call("GetAll"), "clipboard daemon ready")
+            watched = b"watch original bytes\n\n"
+            subprocess.run(["wl-copy", "--type", "text/plain;charset=utf-8"], env=env, input=watched, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=12, check=True)
+            await wait(lambda: contains(watched), "watcher captures original bytes and trailing newlines")
+            await call("DeleteAll")
+            selected = b"clipboard selected\nline two\n"
+            await call("Capture", "ays", [selected, "text/plain;charset=utf-8"])
+            kitty_config = root / "kitty.conf"
+            kitty_config.write_text("map ctrl+v paste_from_clipboard\nmap ctrl+shift+v paste_from_clipboard\nconfirm_os_window_close 0\n")
+            terminal = start("kitty", "--config", str(kitty_config), "--class", "oxibar-clipboard-target", sys.executable, str(Path(__file__).resolve()), "receive", str(root))
+            await wait(lambda: (root / "receiver-ready").exists(), "owned receiver ready")
+            target = await wait(lambda: next((value for value in hypr("clients") if value["class"] == "oxibar-clipboard-target"), None), "owned receiver window")
+            # Keep native keyboard capability present between short-lived input helpers.
+            keyboard = start("wtype", "-s", "120000")
+            output = next(value["name"] for value in hypr("monitors") if value["id"] == target["monitor"])
+            (config / "oxibar" / "config.toml").write_text(f'''plugins=["liboxipaste.so"]
+[bar]
+outputs=[{json.dumps(output)}]
+start=["OxiPaste"]
+center=[]
+end=[]
+[dock]
+enabled=false
+[instance]
+lock_path={json.dumps(str(root / 'lock'))}
+[ipc]
+socket_path={json.dumps(str(root / 'socket'))}
+[launcher]
+default_plugins=[]
+[control_center]
+widgets=["OxiPaste"]
+[monitor]
+apply_on_start=false
+[theme]
+animation_ms=0
+[oxipaste]
+poll_seconds=3600
+paste_shortcut="ctrl+v"
+''')
+            bar_env = dict(env, RUST_LOG="warn,oxibar::paste=debug")
+            if args.trace_focus:
+                bar_env["WAYLAND_DEBUG"] = "1"
+            bar = start(host, child_env=bar_env)
+            await wait(lambda: status()["bar_buttons"], "clipboard bar ready")
+            await asyncio.sleep(.3)
+            await picture("clipboard-bar", bar, "OxiBar")
+
+            async def open_popup():
+                run("hyprctl", "dispatch", "focuswindow", "address:" + target["address"])
+                button = next(value for value in status()["bar_buttons"] if value["provider"] == "OxiPaste")
+                await click(bar, "OxiBar", button["x"] + button["width"] / 2, button["y"] + button["height"] / 2)
+                await wait(lambda: status()["popup_open"], "clipboard dropdown open")
+                await asyncio.sleep(.35)
+                dropdown = status()["dropdown"]
+                return dropdown["x"], 31 + 8
+
+            x, y = await open_popup()
+            await picture("clipboard-popup", bar, "OxiBar")
+            # Reorder daemon history after the rendered snapshot; selection must stay exact.
+            await call("Capture", "ays", [b"newer clipboard entry", "text/plain;charset=utf-8"])
+            await click(bar, "OxiBar", x + 493, y + 146)
+            await wait(lambda: run("wl-paste", "--no-newline").stdout == selected, "Copy writes selected snapshot despite reordered history")
+            assert status()["popup_open"] and received() == b"", "Copy must retain dropdown and not type"
+            await picture("clipboard-copy", bar, "OxiBar")
+            # Successful Copy refreshes history. Filter the selected item before paste.
+            await click(bar, "OxiBar", x + 120, y + 66)
+            run("wtype", "clipboard selected")
+            await asyncio.sleep(.2)
+            await click(bar, "OxiBar", x + 160, y + 196)
+            await wait(lambda: received() == selected, "row click pastes exact bytes into focused application")
+            assert not status()["popup_open"]
+            await wait(lambda: hypr("activewindow").get("address") == target["address"], "keyboard focus returned to application")
+
+            # Native write failures must keep the picker open and preserve history.
+            x, y = await open_popup()
+            unwrapped = binaries / ".oxipaste_daemon-wrapped"
+            if unwrapped.exists():
+                # Nix's helper PATH prefix intentionally overrides the failure shim.
+                # Verify normal writes through the wrapper, then isolate failed IO.
+                await call("ShutDown")
+                await wait(lambda: daemon.poll() == 0, "packaged daemon shutdown")
+                daemon = start(str(unwrapped), child_env=daemon_env)
+                await wait(lambda: call("GetAll"), "failure-injectable daemon ready")
+            before = await history()
+            failure.touch()
+            await click(bar, "OxiBar", x + 160, y + 196)
+            await asyncio.sleep(.3)
+            assert status()["popup_open"] and received() == selected
+            await call("PasteAndDelete", "t", [0], failed=True)
+            assert await history() == before, "failed copy must not delete history"
+            await picture("clipboard-failure", bar, "OxiBar")
+            failure.unlink()
+            run("wtype", "-k", "Escape")
+            await wait(lambda: not status()["popup_open"], "close failed picker")
+
+            # Exercise the alternate terminal shortcut through the real host path.
+            run(host, "config", "set", "oxipaste.paste_shortcut", '"ctrl+shift+v"')
+            stop(bar)
+            bar = start(host)
+            await wait(lambda: status()["bar_buttons"], "clipboard bar restarted")
+            x, y = await open_popup()
+            # Device removal must publish focus loss even without keyboard Leave.
+            stop(keyboard)
+            await asyncio.sleep(.15)
+            await click(bar, "OxiBar", x + 160, y + 186)
+            await wait(lambda: received() == selected * 2, "Ctrl+Shift+V pastes into owned terminal")
+            stop(bar)
+
+            # Standalone Copy stays open; Enter pastes only after native focus release.
+            start("wtype", "-s", "120000")
+            run("hyprctl", "dispatch", "focuswindow", "address:" + target["address"])
+            ui = start(str(binaries / "oxipaste"))
+            await layer(ui, "OxiPaste")
+            await asyncio.sleep(.35)
+            await picture("clipboard-standalone", ui, "OxiPaste")
+            await click(ui, "OxiPaste", 378, 236)
+            await asyncio.sleep(.2)
+            assert ui.poll() is None and received() == selected * 2
+            assert run("wl-paste", "--no-newline").stdout == selected
+            run("wtype", "-k", "Return")
+            await wait(lambda: received() == selected * 3, "standalone Enter pastes into focused application")
+            await wait(lambda: ui.poll() == 0, "standalone closes only after successful paste")
+
+            binary = b"\x00\xffbinary<>:<>\n"
+            await call("Capture", "ays", [binary, "application/octet-stream"])
+            await call("CopyContent", "ays", [binary, "application/octet-stream"])
+            assert run("wl-paste", "--no-newline", "--type", "application/octet-stream").stdout == binary
+            await call("ShutDown")
+            await wait(lambda: daemon.poll() == 0, "clean daemon shutdown")
+            assert (config / "oxipaste" / "items").stat().st_mode & 0o777 == 0o600
+            daemon = start(str(binaries / "oxipaste_daemon"), child_env=daemon_env)
+            await wait(lambda: contains(binary), "binary history survives daemon restart")
+            assert await contains(selected)
+            print(json.dumps(dict(original_watch_payload=True, trailing_newlines=True, content_addressed_copy=True, copy_keeps_open=True, native_focus_handoff=True, keyboard_device_loss=True, row_click_paste=True, terminal_shortcut=True, failed_copy_preserves_picker_and_history=True, standalone_copy_and_paste=True, binary_copy_and_private_persistence=True)), flush=True)
+        finally:
+            bus.disconnect()
+            for process in reversed(processes):
+                stop(process)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "receive":
+        receive(Path(sys.argv[2]))
+    else:
+        asyncio.run(main())

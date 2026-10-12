@@ -47,7 +47,7 @@ nix develop -c cargo build --workspace
 scripts/install-plugins.sh
 ```
 
-The installer includes Applications and checks all twelve libraries before writing
+The installer includes Applications and OxiPaste and checks all thirteen libraries before writing
 anything. It respects `CARGO_TARGET_DIR` and `XDG_CONFIG_HOME`; pass `release` after
 a release build. Restart Oxibar after replacing initialized plugin libraries.
 
@@ -67,6 +67,16 @@ into the user manager before starting that target. See
 [Home Manager](examples/home-manager.nix) and [Sway](examples/sway.conf) examples.
 The module supplies separately selectable plugin packages, including a disabled
 installed catalog through `extraPlugins`.
+
+### Persistent clipboard widget
+
+The optional [OxiPaste provider](plugins/oxipaste/README.md) shares the updated
+OxiPaste daemon's persistent text/image history. Build `.#oxibar-oxipaste`, install
+`liboxipaste.so`, enable it and place **OxiPaste** in the bar, control center or
+desktop layout. Row clicks paste into the application below after native keyboard
+focus release; a separate **Copy** button keeps the picker open. Use
+`oxipaste.paste_shortcut = "ctrl+shift+v"` for terminals that require it.
+The clipboard daemon's startup is configured separately.
 
 With the daemon running:
 
@@ -127,6 +137,8 @@ bindsym $mod+Escape exec oxibar session toggle
   icons retain their correct renderer and use a portable icon fallback.
 - Existing CalDAV, network password modals, notification inline replies/DND,
   StatusNotifier/dbusmenu and workspace flows.
+- Optional persistent OxiPaste history with independent Copy/Paste actions and
+  acknowledged clipboard writes before native focus handoff.
 
 [Configuration](configuration.md) describes defaults, supported capabilities and
 commands. [Plugin SDK](docs/PLUGIN_SDK.md) documents ABI 6, lifecycle rules and the

@@ -136,6 +136,18 @@ graphs; plugin-local message types are for that plugin's `update` function.
 Task modals keep protocol state until completion; closing cancels only the active
 operation. The host handles scoped Escape/Tab and outside-click dismissal.
 
+Bar view callbacks enter the plugin's ordinary `update`; handle a local message
+there and return a host request through `Task::done`. Task emissions and popup
+messages pass through host request translation.
+
+After confirming clipboard copy, emit
+`HostPasteRequest { shortcut: "ctrl+v".into() }.into_message()` (or
+`"ctrl+shift+v"`). The host dismisses interactive surfaces, waits for actual native
+focus release and owns the bounded injection job. Parse the completion string with
+`HostPasteRequest::parse_result` in `update`, clear busy state and retain errors.
+Never send clipboard payloads in the host request, inject before copy completion,
+or infer readiness from a delay. These helpers are additive at ABI 6.
+
 Host control-center and inbox views normally share an attached bar
 dropdown. Bar children report
 real layout bounds; the host owns anchoring, scrolling, input and keyboard policy.
@@ -149,8 +161,9 @@ context before retiring the menu and handing off to the native confirmation.
 Retain an identity through index reorder; allocate a new identity if its target
 changes. Cancel stale queries, discard old generations, and revalidate before
 activation. A removed entry must never launch its replacement. Clipboard payloads
-belong only to bounded ephemeral history/results and must not enter persistent
-usage, favorites, identity ledgers, logs or public status diagnostics.
+belong only to their bounded history/results owner (an external persistent
+clipboard service may retain its own private history) and must not enter
+persistent usage, favorites, identity ledgers, logs or public status diagnostics.
 
 `command` validates arguments before work and returns a `CommandOutcome` when work
 finishes. Its ordinary message is applied before the IPC response. A queued request

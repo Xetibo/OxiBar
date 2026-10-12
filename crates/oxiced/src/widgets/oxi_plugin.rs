@@ -24,6 +24,7 @@ pub enum ShellIcon {
     Stats,
     Application,
     Overview,
+    Clipboard,
 }
 
 pub fn icon<'a>(kind: ShellIcon) -> iced::widget::Svg<'a> {
@@ -61,6 +62,9 @@ pub fn icon<'a>(kind: ShellIcon) -> iced::widget::Svg<'a> {
         }
         ShellIcon::Overview => {
             "<rect x='3' y='3' width='8' height='8' rx='1'/><rect x='14' y='3' width='7' height='12' rx='1'/><rect x='3' y='14' width='8' height='7' rx='1'/><path d='M14 18h7'/>"
+        }
+        ShellIcon::Clipboard => {
+            "<rect x='5' y='4' width='14' height='17' rx='2'/><rect x='9' y='2' width='6' height='4' rx='1'/><path d='M9 10h6M9 14h6M9 18h4'/>"
         }
     };
     svg(svg::Handle::from_memory(format!(

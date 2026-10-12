@@ -1699,14 +1699,21 @@ impl<T: 'static> Dispatch<wl_seat::WlSeat, ()> for WindowState<T> {
                     state.keyboard_state = Some(KeyboardState::new(seat.get_keyboard(qh, ())));
                 }
             } else if let Some(mut keyboard) = state.keyboard_state.take() {
+                let surface_id = state.keyboard_surface_id();
+                state.keyboard_surface = None;
                 state.repeat_delay = None;
                 if let Some(token) = keyboard.repeat_token.take() {
                     state.to_remove_tokens.push(token);
                 }
                 state.message.push((
-                    state.keyboard_surface_id(),
+                    surface_id,
                     DispatchMessageInner::ModifiersChanged(keyboard::ModifiersState::empty()),
                 ));
+                if surface_id.is_some() {
+                    state
+                        .message
+                        .push((surface_id, DispatchMessageInner::Unfocus));
+                }
             }
             if capabilities.contains(wl_seat::Capability::Pointer) {
                 if state.pointer.is_none() {

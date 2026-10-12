@@ -113,6 +113,9 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   and unwrap a missing keyboard at timer installation. Focus loss, release and device
   removal now clear pending repeats; installation revalidates live ownership.
   The complete private compositor UI flow passes rapid Escape/reopen afterward.
+- Resolved: removing a temporary keyboard could leave the host's focused-surface
+  set stale and cause paste handoff timeouts. Capability loss now clears keyboard
+  ownership and emits Unfocus; ordinary native Leave remains the paste barrier.
 - Follow-up: upstream the correction and evaluate a released replacement before
   removing the local dependency; startup connection error propagation remains separate.
 
@@ -187,9 +190,20 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Resolved: provider switches now load Applications immediately, and Nix profile
   directories supplement incomplete session XDG paths while preserving precedence.
 - Resolved: the development installer omitted Applications despite enabled config,
-  leaving the dock without a catalog. It now preflights all twelve libraries, includes
+  leaving the dock without a catalog. It now preflights all thirteen libraries, includes
   Applications and respects custom build/config roots. The Nix host supplies a pinned
   Applications fallback after user-installed libraries, still requiring enablement.
+
+### Persistent Clipboard Integration
+
+- OxiPaste's external daemon owns persistent history and original payloads; the
+  optional provider shares one visible-only refresh stream and bounded D-Bus jobs.
+- Remaining: history polling transfers complete snapshots, and image preview
+  decoding/allocation is delegated to Iced. Revision/signal snapshots and bounded
+  cached thumbnails are future optimizations for large image-heavy histories.
+- Paste relies on compositor virtual-keyboard support, native focus restoration
+  and the configured application shortcut. Unsupported injection returns an error
+  after copy; no compositor-specific focus heuristic is substituted.
 
 ### Legacy Bar Label Capability
 
@@ -294,6 +308,9 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   scheduling and readiness-aware sleep paths have private and real VM checks.
   Existing shell actions use the configured locker; system PAM/greetd policy remains
   administrator-owned. Deployment and current verification are in `AUTH_DEPLOYMENT.md`.
+- Rebuild-time inhibitor FD inheritance is resolved: unrelated descriptors are
+  retired at locker exec, and private lease checks tolerate bounded asynchronous
+  cleanup while retaining their live-child ownership assertions.
 - Actual DRM/firmware behavior beyond the tested virtual devices still needs hardware
   coverage. The pinned virtio-GPU fence queue stalls after QEMU S3; the sleep fixture
   uses legacy VGA/pixman while Hyprland retains normal virtio-GPU tests. No production

@@ -75,6 +75,11 @@ pub enum Message {
     Exit,
     OutputsChanged(Result<crate::monitor::OutputSnapshot, String>),
     SurfaceClosed(IcedId),
+    SurfaceFocus(IcedId, bool),
+    Paste(String, oxibar_plugin_api::HostPasteRequest),
+    PasteDismissed(u64),
+    PasteTimeout(u64),
+    PasteFinished(u64, Result<(), String>),
     FromSurface(IcedId, Box<Message>),
     PluginTask(Option<IcedId>, Box<Message>),
     OnOutput(Option<String>, Box<Message>),
@@ -621,6 +626,12 @@ pub(crate) fn translate_plugin_message(plugin_id: String, msg: PluginMsg) -> Mes
     }
 
     if let Some(request) = msg.downcast_ref::<String>() {
+        if request.starts_with(oxibar_plugin_api::HOST_REQUEST_PASTE_PREFIX) {
+            return oxibar_plugin_api::HostPasteRequest::parse_host_request(request)
+                .map_or(Message::Ignore, |request| {
+                    Message::Paste(plugin_id, request)
+                });
+        }
         if let Some(request) = oxibar_plugin_api::HostOsdRequest::parse_host_request(request) {
             return Message::ShowOsd(plugin_id, request);
         }

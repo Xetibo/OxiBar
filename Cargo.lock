@@ -3409,6 +3409,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxipaste"
+version = "0.1.0"
+dependencies = [
+ "async-io",
+ "iced",
+ "iced_runtime",
+ "oxibar-plugin-api",
+ "oxiced",
+ "zbus",
+]
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

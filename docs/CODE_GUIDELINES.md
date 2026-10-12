@@ -130,10 +130,15 @@
   Bound concurrent IPC handlers so slow actions do not block fast commands.
 - Use the SDK's serialized host-request helpers across dylibs, rather than relying
   on SDK struct `Any` identity across independently compiled dependency graphs.
+  Bar callbacks deliver plugin-local messages; emit host requests from the returned
+  update task so host translation runs consistently for all surfaces.
 - Non-interactive surfaces must not alter keyboard ownership. Route keyboard events
   by compositor Enter/Leave, independently of pointer focus or surface creation.
 - Pending keyboard-repeat work must be canceled with its focus/device ownership;
   revalidate the live keyboard and repeating key before installing a timer.
+  Device capability loss must also clear and publish native focus loss, even if
+  the removed device never sent Leave. External paste waits for native handoff,
+  with bounded generation-scoped cancellation rather than a fixed delay.
 - Coalesce transient OSDs per output and abort replaced timers; expiry carries a
   generation. Initial service snapshots are quiet, failed actions do not show success.
 - Scope DBus state/actions to the service's unique-owner epoch. Subscribe before

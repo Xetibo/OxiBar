@@ -14,6 +14,7 @@ pub mod messages;
 pub mod monitor;
 pub mod osd;
 pub mod overview;
+mod paste;
 pub mod plugins;
 pub mod session_menu;
 pub mod settings;
