@@ -6,7 +6,7 @@ use iced::futures::{
 };
 use std::{
     collections::BTreeMap,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     os::unix::{fs::PermissionsExt, process::CommandExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -63,7 +63,93 @@ fn application_environment(
             )
         )
     });
+    for key in [
+        "GBM_BACKEND",
+        "LIBVA_DRIVER_NAME",
+        "__GLX_VENDOR_LIBRARY_NAME",
+    ] {
+        if environment
+            .get(std::ffi::OsStr::new(key))
+            .is_some_and(|value| value.is_empty())
+        {
+            environment.remove(std::ffi::OsStr::new(key));
+        }
+    }
+    repair_wayland_display(&mut environment);
     environment
+}
+
+fn repair_wayland_display(environment: &mut BTreeMap<std::ffi::OsString, std::ffi::OsString>) {
+    let Some(runtime) = environment.get(std::ffi::OsStr::new("XDG_RUNTIME_DIR")) else {
+        return;
+    };
+    if let Some(display) = wayland_display(
+        Path::new(runtime),
+        environment
+            .get(std::ffi::OsStr::new("WAYLAND_DISPLAY"))
+            .map(OsString::as_os_str),
+    ) {
+        environment.insert("WAYLAND_DISPLAY".into(), display);
+    }
+}
+
+/// Resolve a live inherited display or a bounded, sorted runtime-socket fallback.
+pub fn wayland_display(runtime: &Path, display: Option<&OsStr>) -> Option<OsString> {
+    use std::os::unix::{fs::FileTypeExt, net::UnixStream};
+    if let Some(display) = display.filter(|value| !value.is_empty()) {
+        let endpoint = runtime.join(display);
+        if UnixStream::connect(endpoint).is_ok() {
+            return Some(display.to_owned());
+        }
+    }
+    let entries = std::fs::read_dir(runtime).ok()?;
+    let mut sockets: Vec<_> = entries
+        .take(4096)
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            (name
+                .to_str()
+                .is_some_and(|name| name.starts_with("wayland-") && !name.ends_with(".lock"))
+                && entry.file_type().is_ok_and(|kind| kind.is_socket()))
+            .then_some((name, entry.path()))
+        })
+        .collect();
+    sockets.sort_by(|a, b| a.0.cmp(&b.0));
+    sockets
+        .into_iter()
+        .take(64)
+        .find(|(_, path)| UnixStream::connect(path).is_ok())
+        .map(|(name, _)| name)
+}
+
+fn unset_environment(
+    environment: &BTreeMap<std::ffi::OsString, std::ffi::OsString>,
+) -> Vec<String> {
+    [
+        "INVOCATION_ID",
+        "JOURNAL_STREAM",
+        "WAYLAND_SOCKET",
+        "NOTIFY_SOCKET",
+        "LISTEN_PID",
+        "LISTEN_FDS",
+        "LISTEN_FDNAMES",
+        "SYSTEMD_EXEC_PID",
+        "OXIBAR_APP_ENV_SAVED",
+        "OXIBAR_APP_LD_LIBRARY_PATH",
+        "OXIBAR_APP_FONTCONFIG_FILE",
+        "OXIBAR_APP_VK_ICD_FILENAMES",
+        "LD_LIBRARY_PATH",
+        "FONTCONFIG_FILE",
+        "VK_ICD_FILENAMES",
+        "GBM_BACKEND",
+        "LIBVA_DRIVER_NAME",
+        "__GLX_VENDOR_LIBRARY_NAME",
+    ]
+    .into_iter()
+    .filter(|key| !environment.contains_key(std::ffi::OsStr::new(key)))
+    .map(str::to_owned)
+    .collect()
 }
 
 /// Call from a worker, never from rendering. User-systemd is preferred; a host
@@ -196,7 +282,9 @@ async fn handoff(
         std::process::id(),
         NEXT_UNIT.fetch_add(1, Ordering::Relaxed)
     );
-    let environment: Vec<String> = application_environment(std::env::vars_os())
+    let environment = application_environment(std::env::vars_os());
+    let unset = unset_environment(&environment);
+    let environment: Vec<String> = environment
         .into_iter()
         .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
         .map(|(key, value)| format!("{key}={value}"))
@@ -210,6 +298,7 @@ async fn handoff(
         ("StandardOutput", Value::from("null")),
         ("StandardError", Value::from("journal")),
         ("Environment", Value::from(environment)),
+        ("UnsetEnvironment", Value::from(unset)),
         (
             "ExecStart",
             Value::from(vec![(executable.to_owned(), arguments.to_vec(), false)]),
@@ -360,6 +449,9 @@ mod tests {
             );
             let mut command = Command::new(executable);
             command
+                .env("WAYLAND_SOCKET", "99")
+                .env("GBM_BACKEND", "stale-manager-backend");
+            command
                 .args(&arguments[1..])
                 .process_group(0)
                 .stdin(Stdio::null())
@@ -372,6 +464,15 @@ mod tests {
                 if let Some((key, value)) = entry.split_once('=') {
                     command.env(key, value);
                 }
+            }
+            let unset: Vec<String> = properties
+                .remove("UnsetEnvironment")
+                .unwrap()
+                .try_into()
+                .unwrap();
+            assert!(unset.iter().any(|key| key == "WAYLAND_SOCKET"));
+            for key in unset {
+                command.env_remove(key);
             }
             self.children.lock().unwrap().push(
                 command
@@ -498,7 +599,7 @@ mod tests {
             vec![
                 "sh".into(),
                 "-c".into(),
-                format!("printf alive > '{marker}'; exec sleep 60"),
+                format!("test -z \"${{WAYLAND_SOCKET+x}}\" || exit 1; printf alive > '{marker}'; exec sleep 60"),
             ],
             None,
         )
@@ -545,11 +646,56 @@ mod tests {
             "wayland-private"
         );
         assert_eq!(environment.len(), 4);
+        let unset = unset_environment(&environment);
+        assert!(unset.iter().any(|key| key == "LD_LIBRARY_PATH"));
+        assert!(!unset.iter().any(|key| key == "FONTCONFIG_FILE"));
         let unwrapped = application_environment([("LD_LIBRARY_PATH".into(), "/user/libs".into())]);
         assert_eq!(
             unwrapped[std::ffi::OsStr::new("LD_LIBRARY_PATH")],
             "/user/libs"
         );
+    }
+    #[test]
+    fn empty_or_stale_display_uses_live_socket_but_preserves_valid_explicit_display() {
+        use std::os::unix::net::UnixListener;
+        let root = std::env::temp_dir().join(format!(
+            "oxibar-wayland-handoff-{}-{}",
+            std::process::id(),
+            NEXT_UNIT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let stale = UnixListener::bind(root.join("wayland-0")).unwrap();
+        drop(stale);
+        let _live = UnixListener::bind(root.join("wayland-1")).unwrap();
+        let _explicit = UnixListener::bind(root.join("wayland-2")).unwrap();
+        std::fs::write(root.join("wayland-not-a-socket"), "private fixture").unwrap();
+        let build = |display: &str| {
+            application_environment([
+                ("XDG_RUNTIME_DIR".into(), root.as_os_str().to_owned()),
+                ("WAYLAND_DISPLAY".into(), display.into()),
+                ("GBM_BACKEND".into(), "".into()),
+                ("WAYLAND_SOCKET".into(), "99".into()),
+            ])
+        };
+        for display in ["", "wayland-0", "wayland-missing"] {
+            let environment = build(display);
+            assert_eq!(
+                environment[std::ffi::OsStr::new("WAYLAND_DISPLAY")],
+                "wayland-1"
+            );
+            assert!(!environment.contains_key(std::ffi::OsStr::new("WAYLAND_SOCKET")));
+            assert!(!environment.contains_key(std::ffi::OsStr::new("GBM_BACKEND")));
+        }
+        assert_eq!(
+            build("wayland-2")[std::ffi::OsStr::new("WAYLAND_DISPLAY")],
+            "wayland-2"
+        );
+        assert_eq!(
+            build(root.join("wayland-2").to_str().unwrap())
+                [std::ffi::OsStr::new("WAYLAND_DISPLAY")],
+            root.join("wayland-2").as_os_str()
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn relative_executable_uses_the_requested_working_directory() {

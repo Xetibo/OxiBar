@@ -15,6 +15,10 @@
   worker context. Never direct-launch again after uncertain submission acceptance.
   Keep shell-only graphics/library/font overrides out of child apps; preserve and
   restore the incoming session environment rather than stripping legitimate user settings.
+- Normalize recovered Wayland endpoints before startup creates threads. Later
+  handoffs repair their own child environment; never mutate process environment
+  from threaded UI/worker code. Remove discarded variables from transient-manager
+  inheritance explicitly, not only from the supplied environment list.
 - Measure actual compositor presentation for first-frame gates. Keep measurement
   traces outside watched fixtures and preserve normal idle behavior when disabled.
 
@@ -24,9 +28,14 @@
   general shell messages/configuration/logs, or be copied into ordinary widget
   state. Keep response allocations bounded and zeroized, guard attempt identity,
   and treat PAM-owned native response buffers as a separate ownership boundary.
+- Masked authentication input uses explicit application focus, not ordinary widget
+  focus. Route prompt keys even when Iced marks them captured, preserve native
+  username editing outside prompts and use modified character keys when text is absent.
 - PAM is a fixed administrator-owned current-user policy, never a user-selected
   service. Keep blocking conversations in the private cancellable worker, reject
   missing service configuration, and never map errors or cancellation to unlock.
+- Build authentication binaries and their compositors from the deployment package
+  set: system PAM modules and EGL vendors must share a compatible native ABI.
 - Greeter IPC authenticates its root peer, bounds complete frames and serializes
   requests. Drain cancellation before reusing an authentication conversation. Parse
   administrator-owned session metadata into argv without shell re-interpretation;

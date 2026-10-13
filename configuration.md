@@ -614,6 +614,9 @@ before spawning children, keeping Oxibar's Nix wrapper/development overrides loc
 to the shell. Application stderr goes to the transient user service's journal, or
 the parent's stderr on direct fallback; inspect `journalctl --user -b -u 'oxibar-app-*.service'`
 when an application exits immediately after a successful executable handoff.
+Missing, empty or stale `WAYLAND_DISPLAY` is recovered from live runtime sockets
+at daemon startup and child handoff. Valid explicit relative/absolute displays are
+preserved; discarded FD/driver variables are also unset in transient services.
 
 ### `[commands]` — terminal command provider
 

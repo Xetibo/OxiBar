@@ -1,8 +1,12 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.as_slice() {
+        [] => oxi_session::kiosk::run(oxi_session::kiosk::DEFAULT_BACKEND),
         [help] if help == "--help" => {
-            println!("Usage: oxisession-kiosk --backend cage|hyprland");
+            println!(
+                "Usage: oxisession-kiosk [--backend hyprland|cage] (default: {})",
+                oxi_session::kiosk::DEFAULT_BACKEND
+            );
             Ok(())
         }
         [flag, backend] if flag == "--backend" => oxi_session::kiosk::run(backend),

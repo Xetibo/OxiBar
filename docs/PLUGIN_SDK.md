@@ -120,6 +120,12 @@ overrides are restored to their original session values in both launch paths;
 unwrapped session overrides remain intact. Transient stderr is journaled and direct
 fallback inherits stderr. Never launch again after uncertain acceptance.
 
+Handoff retains a connectable explicit Wayland display or recovers a live socket
+when the inherited value is missing, empty or stale. Transient `UnsetEnvironment`
+removes caller-only FD variables and discarded overrides from manager inheritance.
+`launch::wayland_display(runtime, display)` exposes the same bounded resolver for
+pre-thread daemon bootstrap; worker handoff only changes its child environment.
+
 Definite unavailable/unsupported managers use `launch::direct`: argument vectors,
 a new process group and a reaped child. That fallback does not move a process out
 of an existing systemd cgroup. Apps, Commands, Tools, calendar and locker handoffs share this

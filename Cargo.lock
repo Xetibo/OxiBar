@@ -3349,6 +3349,8 @@ name = "oxi-session"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "iced_runtime",
+ "iced_tiny_skia",
  "libc",
  "oxi-auth-ui",
  "oxiced",

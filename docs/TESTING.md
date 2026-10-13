@@ -11,8 +11,11 @@ opaque SHM pixels and native RGB byte order, integer/fractional geometry, output
 hotplug/removal, denied and
 external-finish destruction, readiness-before-callback, authenticated final sync,
 missing-protocol refusal, malformed configure and crash-without-unlock. A native
-pointer fixture validates the Enter serial, visible ARGB cursor pixels and actual
-Iced button clicks on the lock surface. Controller checks cover response click focus,
+pointer fixture validates the Enter serial, fallback ARGB cursor pixels and actual
+Iced button clicks on the lock surface. Cursor-shape fixtures check compositor-owned
+default/button/text shapes. The shared masked password view receives a real native
+XKB keymap, click and typing/Enter in one event batch to detect focus-order loss.
+Controller checks cover response click focus,
 Tab/Shift+Tab traversal, focused editing and Clear without authenticating/unlocking.
 `oxi-pam` tests compile a private PAM module and load it through test-only
 `pam_start_confdir`; production always uses the fixed system service. They exercise
@@ -25,12 +28,16 @@ frames and multi-prompt conversations. They cover cancelled in-flight replies,
 retry identities, malformed/truncated/oversized frames, rejected starts and final
 acknowledged handoff. Catalog fixtures verify direct argv/field-code expansion,
 hidden/unavailable entries and administrator ownership rules.
+Frontend fixtures receive real private greetd prompts, click the actual masked
+Iced response, edit captured keys with missing text payloads and modified characters,
+cycle Tab/Shift+Tab, reject editing from focused buttons and cancel without handoff.
+Multiple prompts automatically regain input focus; only an acknowledged start exits.
 Authentication integration must use private fixtures or the dedicated VM, never
 the current user's desktop session or credentials.
 
 `nix build .#oxilock .#oxisession` builds independent authentication packages and
 runs their selected Cargo tests. `checks.<system>.authentication-unit` runs all
-four authentication crates (32 normal tests plus the test-only ignored PAM child
+four authentication crates (36 normal tests plus the test-only ignored PAM child
 entry); `authentication-clippy` runs strict all-targets Clippy. Bounded appearance
 and asset decoding, truthful Caps inference, repeat retirement and widget wake
 deadlines have service-free checks. A private p2p logind fixture transfers actual
@@ -41,7 +48,8 @@ A non-close-on-exec descriptor regression detects child-owned inhibitor copies;
 an exec-failure check preserves spawn error reporting. On x86-64,
 `checks.x86_64-linux.authentication-cage` and `authentication-hyprland` boot real
 NixOS VMs with disposable credentials, greetd, PAM and real DRM. They assert
-failed-auth retention, retry, old greeter/compositor retirement, UID 1000,
+failed-auth retention, retry, prompt Tab/Shift+Tab editing isolation, old
+greeter/compositor retirement, UID 1000,
 Wayland environment isolation, seat0/VT1 ownership, logout and different-PID crash
 recovery. Native checks also cover decoded assets, permission-gated power
 confirmation/cancellation and restored focus; actual protocol/PAM lockers,
@@ -57,6 +65,24 @@ The VM greeter inherits `ICED_BACKEND=wgpu` and deliberately nonexistent Vulkan
 ICD paths; its binary must still start and complete login through CPU rendering.
 Deployment examples are in `AUTH_DEPLOYMENT.md`.
 
+`checks.<system>.authentication-platform` verifies that NixOS defaults use the
+consumer's PAM/graphics package set rather than standalone pinned packages.
+It also checks the Hyprland default and explicit Cage command. The Hyprland VM
+leaves backend selection unset so real login exercises the module default.
+The Cage sleep VM uses pixman and cannot establish EGL-driver compatibility.
+For an owned GLES2 check, set `$CAGE` to Cage from the deployment package set and,
+on a Mesa system, run:
+
+```sh
+nix develop --impure --file nix/gui-tests.nix -c \
+  python scripts/run-isolated.py --parent -- \
+  python scripts/auth-platform-smoke.py "$CAGE" \
+    --egl-vendor /run/opengl-driver/share/glvnd/egl_vendor.d/50_mesa.json
+```
+
+The script removes the fixture's pinned graphics overrides and requires a live
+Cage GLES2 context before its owned child runs. It never acquires the user's seat.
+
 ## Strategy
 
 - Unit tests cover host main-loop helpers and every plugin crate.
@@ -68,7 +94,8 @@ Deployment examples are in `AUTH_DEPLOYMENT.md`.
 ## Current Unit Coverage
 
 - SDK/release: actual-completion app handoff validation, restoration of the original
-  session graphics/font environment, owned interval cancellation,
+  session graphics/font environment, empty/stale/live/absolute Wayland endpoint
+  selection and transient-manager unset rules, owned interval cancellation,
   quiet root-filtered filesystem watches, process-resident code/deferred vtable
   cleanup, shared example views/config/modal state and Network stale-edit replies.
 
@@ -190,7 +217,10 @@ width changes, attached clock/left navigation/inbox, centered 800×480 OxiShut-s
 session tiles and native confirmation, 1440×960 settings, live default-provider enablement without
 restart, indexing/search/activation of an owned desktop-entry fixture and calculator
 copy. A separate `>` command fixture checks provider isolation and actual activation
-with literal quoted arguments. Three-column pointer drag and its content preview, coherent Base24/accent and
+with literal quoted arguments. The daemon deliberately starts with empty
+`WAYLAND_DISPLAY`; desktop/command children must receive the private live endpoint
+without `WAYLAND_SOCKET`, and native clipboard copy must still work.
+Three-column pointer drag and its content preview, coherent Base24/accent and
 real monitor Preview/Keep/Revert/sparse-save plus bottom-bar placement are covered. The fixture owns
 its XDG config/data/state, immutable base symlink, bus, mock logind/power profiles,
 MPRIS player, null-device PulseAudio server, virtual pointer and compositor;

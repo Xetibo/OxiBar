@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn request(stream: &mut UnixStream) -> Value {
+pub(super) fn request(stream: &mut UnixStream) -> Value {
     let mut header = [0; 4];
     stream.read_exact(&mut header).unwrap();
     let length = u32::from_ne_bytes(header) as usize;
@@ -22,7 +22,7 @@ fn request(stream: &mut UnixStream) -> Value {
     stream.read_exact(&mut body).unwrap();
     serde_json::from_slice(&body).unwrap()
 }
-fn response(stream: &mut UnixStream, value: Value) {
+pub(super) fn response(stream: &mut UnixStream, value: Value) {
     let body = serde_json::to_vec(&value).unwrap();
     let mut frame = (body.len() as u32).to_ne_bytes().to_vec();
     frame.extend(body);
@@ -31,13 +31,13 @@ fn response(stream: &mut UnixStream, value: Value) {
         thread::sleep(Duration::from_micros(100));
     }
 }
-fn prompt(stream: &mut UnixStream, kind: &str) {
+pub(super) fn prompt(stream: &mut UnixStream, kind: &str) {
     response(
         stream,
         json!({"type":"auth_message", "auth_message_type":kind, "auth_message":format!("Private {kind} fixture")}),
     );
 }
-fn model(stream: UnixStream) -> Model {
+pub(super) fn model(stream: UnixStream) -> Model {
     let session = Session {
         id: "fixture".into(),
         name: "Private fixture session".into(),
@@ -69,7 +69,7 @@ fn pump(model: &mut Model, condition: impl Fn(&Model) -> bool) {
         thread::sleep(Duration::from_millis(1));
     }
 }
-fn pair() -> (UnixStream, UnixStream) {
+pub(super) fn pair() -> (UnixStream, UnixStream) {
     let (client, server) = UnixStream::pair().unwrap();
     server
         .set_read_timeout(Some(Duration::from_secs(4)))

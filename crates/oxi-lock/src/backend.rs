@@ -19,6 +19,7 @@ use wayland_protocols::{
         ext_session_lock_manager_v1, ext_session_lock_surface_v1, ext_session_lock_v1,
     },
     wp::{
+        cursor_shape::v1::client::{wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1},
         fractional_scale::v1::client::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1},
         viewporter::client::{wp_viewport, wp_viewporter},
     },
@@ -155,7 +156,14 @@ impl Locker {
                     }
                     Pending::Added(id) => Event::OutputAdded(id),
                     Pending::Removed(id) => Event::OutputRemoved(id),
-                    Pending::Input(output, event) => Event::Input { output, event },
+                    Pending::Input(output, event) => {
+                        if let Some(slot) = self.state.outputs.get_mut(&output) {
+                            for message in slot.dispatch_input(&app, &event)? {
+                                combine(&mut action, app.update(Event::Message(message)));
+                            }
+                        }
+                        Event::Input { output, event }
+                    }
                     Pending::KeyboardStatus(status) => Event::KeyboardStatus(status),
                 };
                 combine(&mut action, app.update(event));
@@ -200,6 +208,11 @@ impl Locker {
                     for message in messages {
                         combine(&mut action, app.update(Event::Message(message)));
                     }
+                }
+            }
+            for (output, slot) in &self.state.outputs {
+                for seat in self.state.seats.values_mut() {
+                    seat.update_cursor(*output, slot.interaction);
                 }
             }
             if action != Action::None {
@@ -263,6 +276,7 @@ pub(crate) struct State {
     lock: Option<ext_session_lock_v1::ExtSessionLockV1>,
     viewporter: Option<wp_viewporter::WpViewporter>,
     fractional: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
+    cursor_shapes: Option<(u32, wp_cursor_shape_manager_v1::WpCursorShapeManagerV1)>,
     pub(crate) outputs: BTreeMap<u32, Slot>,
     pub(crate) seats: BTreeMap<u32, Seat>,
     lifecycle: Lifecycle,
@@ -281,7 +295,14 @@ impl State {
     ) {
         if let (Some(seat), Some(compositor), Some(shm)) =
             (self.seats.get_mut(&id), &self.compositor, &self.shm)
-            && let Err(error) = seat.show_cursor(pointer, serial, compositor, shm, qh)
+            && let Err(error) = seat.show_cursor(
+                pointer,
+                serial,
+                self.cursor_shapes.as_ref().map(|(_, manager)| manager),
+                compositor,
+                shm,
+                qh,
+            )
         {
             self.input_error(&format!("Cannot create lock cursor: {error}"));
         }
@@ -322,14 +343,7 @@ impl State {
     }
 
     pub(crate) fn input(&mut self, output: u32, event: iced::Event) {
-        if let Some(out) = self.outputs.get_mut(&output) {
-            if let iced::Event::Mouse(mouse::Event::CursorMoved { position }) = &event {
-                out.cursor = mouse::Cursor::Available(*position);
-            }
-            if matches!(event, iced::Event::Mouse(mouse::Event::CursorLeft)) {
-                out.cursor = mouse::Cursor::Unavailable;
-            }
-            out.input.push(event.clone());
+        if self.outputs.contains_key(&output) {
             self.events.push_back(Pending::Input(output, event));
         }
     }
@@ -352,6 +366,7 @@ pub(crate) struct Slot {
     cache: user_interface::Cache,
     input: Vec<iced::Event>,
     cursor: mouse::Cursor,
+    interaction: mouse::Interaction,
     dirty: bool,
     wake_at: Option<Instant>,
 }
@@ -378,8 +393,63 @@ impl Slot {
             cache: user_interface::Cache::default(),
             input: Vec::new(),
             cursor: mouse::Cursor::Unavailable,
+            interaction: mouse::Interaction::Idle,
             dirty: true,
             wake_at: None,
+        }
+    }
+
+    fn dispatch_input<A: Application>(
+        &mut self,
+        app: &A,
+        event: &iced::Event,
+    ) -> Result<Vec<A::Message>, Error> {
+        if let iced::Event::Mouse(mouse::Event::CursorMoved { position }) = event {
+            self.cursor = mouse::Cursor::Available(*position);
+        } else if matches!(event, iced::Event::Mouse(mouse::Event::CursorLeft)) {
+            self.cursor = mouse::Cursor::Unavailable;
+        }
+        self.dirty = true;
+        if self.size.0 == 0 {
+            return Ok(Vec::new());
+        }
+        let output = Output {
+            id: *self.output.data::<u32>().ok_or("Missing output identity")?,
+            name: self.name.clone(),
+            size: self.size,
+            scale: self.scale(),
+        };
+        let mut ui = UserInterface::build(
+            app.view(&output),
+            Size::new(self.size.0 as f32, self.size.1 as f32),
+            std::mem::take(&mut self.cache),
+            &mut self.renderer,
+        );
+        let mut messages = Vec::new();
+        let (update, _) = ui.update(
+            std::slice::from_ref(event),
+            self.cursor,
+            &mut self.renderer,
+            &mut clipboard::Null,
+            &mut messages,
+        );
+        if let user_interface::State::Updated {
+            mouse_interaction, ..
+        } = update
+        {
+            self.interaction = mouse_interaction;
+        }
+        self.cache = ui.into_cache();
+        Ok(messages)
+    }
+
+    fn scale(&self) -> f64 {
+        if self.viewport.is_some() {
+            self.preferred_scale
+                .map(|value| f64::from(value) / 120.0)
+                .unwrap_or(f64::from(self.integer_scale))
+        } else {
+            f64::from(self.integer_scale)
         }
     }
 
@@ -402,13 +472,7 @@ impl Slot {
         if self.size.0 == 0 {
             return Ok(Vec::new());
         }
-        let scale = if self.viewport.is_some() {
-            self.preferred_scale
-                .map(|value| f64::from(value) / 120.0)
-                .unwrap_or(f64::from(self.integer_scale))
-        } else {
-            f64::from(self.integer_scale)
-        };
+        let scale = self.scale();
         let physical = (
             (f64::from(self.size.0) * scale).ceil() as u32,
             (f64::from(self.size.1) * scale).ceil() as u32,
@@ -449,7 +513,12 @@ impl Slot {
             &mut messages,
         );
         self.wake_at = match update {
-            user_interface::State::Updated { redraw_request, .. } => {
+            user_interface::State::Updated {
+                redraw_request,
+                mouse_interaction,
+                ..
+            } => {
+                self.interaction = mouse_interaction;
                 redraw_deadline(redraw_request, Instant::now())
             }
             user_interface::State::Outdated => Some(Instant::now() + Duration::from_millis(16)),
@@ -563,6 +632,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wp_fractional_scale_manager_v1" => {
                     state.fractional = Some(registry.bind(name, 1, qh, ()))
                 }
+                "wp_cursor_shape_manager_v1" => {
+                    state.cursor_shapes = Some((name, registry.bind(name, 1, qh, ())))
+                }
                 "wl_output" => {
                     state.outputs.insert(
                         name,
@@ -584,6 +656,16 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     state.events.push_back(Pending::Removed(name));
                 }
                 state.seats.remove(&name);
+                if state
+                    .cursor_shapes
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == name)
+                {
+                    state.seats.values_mut().for_each(Seat::clear_cursor);
+                    if let Some((_, manager)) = state.cursor_shapes.take() {
+                        manager.destroy();
+                    }
+                }
             }
             _ => {}
         }
@@ -720,3 +802,5 @@ wayland_client::delegate_noop!(State: ignore ext_session_lock_manager_v1::ExtSes
 wayland_client::delegate_noop!(State: ignore wp_viewporter::WpViewporter);
 wayland_client::delegate_noop!(State: ignore wp_viewport::WpViewport);
 wayland_client::delegate_noop!(State: ignore wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1);
+wayland_client::delegate_noop!(State: ignore wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
+wayland_client::delegate_noop!(State: ignore wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);

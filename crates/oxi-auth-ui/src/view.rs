@@ -135,6 +135,11 @@ pub fn prompt_card_focused<'a>(
                     style
                 }),
             )
+            .interaction(if input_enabled {
+                iced::mouse::Interaction::Text
+            } else {
+                iced::mouse::Interaction::Idle
+            })
             .on_press(Message::Focus(Focus::Input)),
         );
     if !interaction.notice.is_empty() {

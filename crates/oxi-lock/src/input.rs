@@ -14,6 +14,9 @@ use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle, WEnum,
     protocol::{wl_compositor, wl_keyboard, wl_pointer, wl_seat, wl_shm},
 };
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
+};
 
 use crate::{
     backend::{Error, State},
@@ -26,6 +29,9 @@ pub(crate) struct Seat {
     pointer: Option<wl_pointer::WlPointer>,
     pointer_output: Option<u32>,
     cursor: Option<Cursor>,
+    cursor_shape: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
+    pointer_serial: Option<u32>,
+    shape: Option<wp_cursor_shape_device_v1::Shape>,
 }
 
 struct Keyboard {
@@ -45,17 +51,30 @@ impl Seat {
             pointer: None,
             pointer_output: None,
             cursor: None,
+            cursor_shape: None,
+            pointer_serial: None,
+            shape: None,
         }
     }
     pub fn show_cursor(
         &mut self,
         pointer: &wl_pointer::WlPointer,
         serial: u32,
+        shapes: Option<&wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
         compositor: &wl_compositor::WlCompositor,
         shm: &wl_shm::WlShm,
         qh: &QueueHandle<State>,
     ) -> Result<(), Error> {
         if self.pointer.as_ref() != Some(pointer) {
+            return Ok(());
+        }
+        self.pointer_serial = Some(serial);
+        self.shape = None;
+        if let Some(manager) = shapes {
+            if self.cursor_shape.is_none() {
+                self.cursor_shape = Some(manager.get_pointer(pointer, qh, ()));
+            }
+            self.set_shape(mouse::Interaction::Idle);
             return Ok(());
         }
         if self.cursor.is_none() {
@@ -65,6 +84,36 @@ impl Seat {
             cursor.show(pointer, serial);
         }
         Ok(())
+    }
+    pub fn update_cursor(&mut self, output: u32, interaction: mouse::Interaction) {
+        if self.pointer_output == Some(output) {
+            self.set_shape(interaction);
+        }
+    }
+    fn set_shape(&mut self, interaction: mouse::Interaction) {
+        use wp_cursor_shape_device_v1::Shape;
+        let shape = match interaction {
+            mouse::Interaction::Pointer => Shape::Pointer,
+            mouse::Interaction::Text => Shape::Text,
+            mouse::Interaction::Grab => Shape::Grab,
+            mouse::Interaction::Grabbing => Shape::Grabbing,
+            mouse::Interaction::NotAllowed => Shape::NotAllowed,
+            _ => Shape::Default,
+        };
+        if let (Some(device), Some(serial)) = (&self.cursor_shape, self.pointer_serial)
+            && self.shape != Some(shape)
+        {
+            device.set_shape(serial, shape);
+            self.shape = Some(shape);
+        }
+    }
+    pub(crate) fn clear_cursor(&mut self) {
+        if let Some(device) = self.cursor_shape.take() {
+            device.destroy();
+        }
+        self.cursor = None;
+        self.pointer_serial = None;
+        self.shape = None;
     }
     pub fn remove_output(&mut self, output: u32) {
         if self.pointer_output == Some(output) {
@@ -163,6 +212,7 @@ impl Drop for Keyboard {
 }
 impl Drop for Seat {
     fn drop(&mut self) {
+        self.clear_cursor();
         if let Some(pointer) = &self.pointer
             && pointer.version() >= 3
         {
@@ -219,7 +269,7 @@ impl Dispatch<wl_seat::WlSeat, u32> for State {
                 seat.pointer = Some(seat.proxy.get_pointer(qh, *id));
             }
         } else if let Some(pointer) = seat.pointer.take() {
-            seat.cursor = None;
+            seat.clear_cursor();
             if pointer.version() >= 3 {
                 pointer.release();
             }

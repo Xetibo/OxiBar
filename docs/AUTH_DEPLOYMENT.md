@@ -14,7 +14,7 @@ privileged authentication/session owner is greetd.
   programs.oxilock.sleepIntegration = true; # Optional graphical-session watcher.
   services.oxisession = {
     enable = true;
-    backend = "cage"; # Or "hyprland".
+    backend = "hyprland"; # Default; "cage" is an explicit alternative.
     keyboardLayout = "us";
     settings = {
       appearance.clock_format = "%H:%M";
@@ -31,6 +31,16 @@ account and runs `oxisession-kiosk` as greetd's default session on VT 1. greetd 
 PAM, UID changes, logind and the selected user's session. Choose one display
 manager for that VT.
 
+Module defaults build `oxilock`, `oxisession` and their kiosk compositors against
+the consuming NixOS `pkgs`; greeter enablement also enables graphics support.
+This is required for loading the system's PAM modules and EGL vendor libraries.
+An older pinned libc cannot load modules requiring newer `GLIBC_*` symbols: the
+locker may never receive a password prompt and Cage may fail before the greeter starts.
+Use the module defaults rather than overriding them with standalone
+`inputs.oxibar.packages.<system>.oxilock` / `oxisession` from a different package set.
+For explicit builds, `inputs.oxibar.lib.mkAuthenticationPackages pkgs` returns both
+packages using the supplied deployment package set.
+
 Session entries come from administrator-owned system Wayland desktop files.
 `services.oxisession.sessionPackages` defaults to NixOS display-manager session
 packages; it can also contain explicit packages with `share/wayland-sessions`.
@@ -41,15 +51,18 @@ as validated argument arrays. Inspect the installed catalog with:
 nix run .#oxisession -- --list-sessions
 ```
 
-The owned kiosk supervisor uses absolute packaged compositor paths. Cage hosts
-only the greeter. Hyprland gets a new private minimal configuration, with no user
+The owned kiosk supervisor uses absolute packaged compositor paths. Hyprland is
+the default for the NixOS module and `oxisession-kiosk` without arguments. Cage is
+available through `backend = "cage"` or `--backend cage` and hosts only the greeter.
+Hyprland gets a new private minimal configuration, with no user
 startup hooks or desktop bindings. After greetd acknowledges the selected session,
 the supervisor requires both greeter success and successful compositor teardown.
 Hyprland exit is bound to the owned PID and instance signature. A failed or crashed
 greeter cannot report an authenticated handoff; greetd restarts its default session.
 
-The packaged Cage includes xdg-shell version-6 support and a guard for fullscreen
-requests before the initial surface commit, required by Iced's fullscreen startup.
+Cage versions older than 0.3 receive xdg-shell version-6 support and a guard for
+fullscreen requests before the initial surface commit; newer Cage versions use
+their upstream support. These are required by Iced's fullscreen startup.
 The keyboard layout is supplied to the owned compositor and displayed in the
 greeter. It is passed in the actual default-session command because greetd clears
 its daemon's environment. Power off/restart are available only when logind permits
@@ -81,6 +94,9 @@ username focus. Authentication and confirmed session start remain separate.
 Home Manager installs the user application; the administrator must supply the
 dedicated PAM policy, through the NixOS module above or an equivalent system setup.
 It does not install a privileged display manager or a user-selected PAM policy.
+The locker default uses Home Manager's `pkgs`; keep that set compatible with the
+system PAM modules. For NixOS-integrated Home Manager, `home-manager.useGlobalPkgs = true`
+uses the system package set for this build as well.
 
 ```sh
 oxilock --check             # Probe protocol support without locking.
@@ -128,9 +144,14 @@ services.oxisession.settings.appearance.wallpaper = "/etc/oxibar/wallpaper.png";
 Missing/invalid assets keep an opaque themed fallback. Cards remain centered with
 a scroll fallback on small outputs or long prompts. Secret responses are masked,
 bounded and zeroized; no password-bearing Iced text-input widget or clipboard is
-used. Enter submits, Escape clears/cancels an attempt, and Ctrl+U clears the response.
+used. New locker and greeter prompts focus the response; clicking it restores focus.
+Tab/Shift+Tab cycle enabled input/buttons, Enter activates the focused control and
+Space activates buttons; typing only edits the focused response. Escape clears/cancels
+an attempt, and Ctrl+U clears the response. Greeter cancellation restores username focus.
 Escape never unlocks. The locker reports native XKB Caps/group state. The greeter
 shows the enforced kiosk layout and unknown Caps until observed keys establish it.
+On Hyprland the cursor-shape protocol uses the compositor's normal cursor theme,
+including text and button shapes; the custom visible arrow is only a protocol fallback.
 
 ## Readiness-gated sleep
 
@@ -180,6 +201,7 @@ bindsym $mod+Shift+l exec oxilock-sleep --suspend
 nix build .#oxilock .#oxisession
 nix build .#checks.x86_64-linux.authentication-unit
 nix build .#checks.x86_64-linux.authentication-clippy
+nix build .#checks.x86_64-linux.authentication-platform
 nix build .#checks.x86_64-linux.authentication-cage
 nix build .#checks.x86_64-linux.authentication-hyprland
 ```
@@ -187,9 +209,13 @@ nix build .#checks.x86_64-linux.authentication-hyprland
 Both packages and unit/Clippy checks are defined for `x86_64-linux` and
 `aarch64-linux`; real seat/VT VM checks run on x86-64. They use disposable accounts
 and credentials, real greetd/PAM/DRM, and assert UID, active seat/VT, kiosk retirement,
-rejected login, logout and fresh-PID crash recovery. Native lockers cover assets,
+rejected login, password focus traversal, logout and fresh-PID crash recovery.
+Native lockers cover assets,
 fractional scale/hotplug, Caps, held-key editing, failed-password retry and crash
 protection. Cage's VM additionally verifies both actual S3 paths, readiness before
 inhibitor release, visible locked resume, lease reacquisition and watcher-stop child
 preservation. Its legacy VGA/pixman fixture avoids pinned virtio-GPU S3 fence stalls;
 Hyprland retains virtio-GPU coverage. They never use the developer's desktop.
+The pixman sleep VM does not test EGL context creation. The owned GLES2/vendor
+check in `TESTING.md` exercises Cage with the deployment's system EGL library,
+outside the fixture's pinned graphics environment.

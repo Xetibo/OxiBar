@@ -45,10 +45,32 @@
       settings = customSettings;
     }).config;
   defaults = (evaluate {module = flake.nixosModules.home-manager;}).config;
+  authenticationOverlay = _: previous: {
+    pam = previous.pam.overrideAttrs (_: {pname = "home-auth-pam-fixture";});
+  };
+  authenticationPkgs = pkgs.extend authenticationOverlay;
+  authentication =
+    (import (homeManagerPath + "/modules") {
+      pkgs = authenticationPkgs;
+      configuration = {
+        imports = [flake.homeManagerModules.oxilock];
+        home.username = "oxibar-test";
+        home.homeDirectory = "/home/oxibar-test";
+        home.stateVersion = "25.11";
+        nixpkgs.overlays = [authenticationOverlay];
+        programs.oxilock.enable = true;
+      };
+    }).config;
+  authenticationPackage = (flake.lib.mkAuthenticationPackages authenticationPkgs).oxilock;
   base = builtins.fromTOML (builtins.readFile disabled.xdg.configFile."oxibar/config.toml".source);
   defaultBase = builtins.fromTOML (builtins.readFile defaults.xdg.configFile."oxibar/config.toml".source);
   checks = {
-    allModuleAssertions = builtins.all (item: item.assertion) (disabled.assertions ++ enabled.assertions ++ defaults.assertions);
+    allModuleAssertions = builtins.all (item: item.assertion) (disabled.assertions ++ enabled.assertions ++ defaults.assertions ++ authentication.assertions);
+    authenticationUsesHomePackageSet =
+      authentication.programs.oxilock.package.drvPath
+      == authenticationPackage.drvPath
+      && authenticationPackage.drvPath != packages.oxilock.drvPath;
+    authenticationApplicationInstalled = builtins.elem authenticationPackage.drvPath (builtins.map (package: package.drvPath) authentication.home.packages);
     startupIsOptIn =
       builtins.all (configuration:
         !configuration.programs.oxibar.systemd.enable && !(builtins.hasAttr "oxibar" configuration.systemd.user.services)) [disabled defaults];
@@ -80,4 +102,5 @@
       && enabled.systemd.user.services.oxibar.Service.Slice == "app.slice";
   };
 in
-  assert builtins.all (value: value) (builtins.attrValues checks); checks
+  assert pkgs.lib.assertMsg (builtins.all (value: value) (builtins.attrValues checks))
+  "Home Manager checks failed: ${builtins.concatStringsSep ", " (builtins.attrNames (pkgs.lib.filterAttrs (_: value: !value) checks))}"; checks

@@ -16,10 +16,12 @@ actions. Each registered output has a lock role, configure/ack state, two
 release-aware opaque SHM buffers and an Iced CPU-renderer/cache. Integer scaling
 and fractional-scale/viewport destinations preserve exact surface-local geometry.
 Output removal retires its input focus and resources. Input uses per-seat contexts,
-rejects retired devices and supplies no clipboard service. Each pointer owns an
-immutable ARGB SHM cursor surface, published with the native Enter serial. Explicit
-application focus traverses enabled response/submit/cancel controls; mouse response
-focus and keyboard editing share the zeroized transaction rather than a text widget.
+rejects retired devices and supplies no clipboard service. Cursor-shape requests
+use the compositor's theme with the native Enter serial; an immutable ARGB SHM
+cursor is the fallback for compositors without that protocol. Explicit application
+focus traverses enabled response/submit/cancel controls. Widget focus messages and
+native keys are dispatched in input order, so a click followed by typing in one
+batch edits the zeroized transaction rather than an ordinary text widget.
 Authentication is an
 application capability; only its explicit success action can request unlock.
 Readiness follows `locked`, and successful/external unlock is followed by display
@@ -55,6 +57,11 @@ while preserving Rust's spawn-error channel until exec. Failure aborts spawning.
 The greeter is a standard fullscreen xdg-shell Iced application, independent of
 layer-shell and the locker. Its binary selects the CPU renderer before starting
 threads or probing GPU adapters, so Vulkan discovery is not a login prerequisite.
+Its prompt controller shares explicit response/submit/cancel focus with the locker,
+honors response clicks and receives captured as well as ignored keyboard events
+during authentication. New prompts focus the zeroized response; modified character
+keys supply text when the backend omits a text payload. Ordinary username input
+retains native widget handling before authentication and regains focus after cancel.
 Its root-peer-validated greetd client serializes one
 bounded request at a time, drains cancelled replies before retry, and holds response
 serialization in zeroized storage. A system-only desktop catalog resolves trusted
@@ -67,11 +74,18 @@ Authentication packages use a separate Cargo artifact graph from the dynamic she
 plugins. The kiosk supervisor owns a private compositor process group and runtime
 directory; an acknowledged start must be followed by successful compositor teardown
 before it returns success to greetd. Instance-specific exit binds both signature
-and owned PID. NixOS supplies root PAM/greetd policy and the greeter account; Home
-Manager only configures the per-user application. Real VM tests verify that both
+and owned PID. Hyprland is the default owned kiosk compositor in both the CLI and
+NixOS module; Cage remains an explicit backend choice. NixOS supplies root PAM/greetd
+policy and the greeter account; Home Manager only configures the per-user application.
+Real VM tests verify that both
 kiosk processes retire before a new UID acquires the active seat/VT.
 Authentication packages resolve runtime libraries through RPATH and supply fonts
 without imposing a Vulkan ICD or library-path override on the kiosk compositor.
+`nix/auth-packages.nix` builds the entire authentication graph against its caller's
+`pkgs`. NixOS and Home Manager defaults use the deployment package set so the
+locker can load system PAM modules and the kiosk can load system EGL vendors with
+compatible libc/native libraries. Standalone flake packages retain their pinned
+package set; host/plugin ABI builds remain a separate shared graph.
 
 Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, and dynamic plugin crates.
 
@@ -700,6 +714,12 @@ wrapper/development shell preserve the incoming graphics/font environment before
 applying their own runtime settings; handoff restores those originals for children.
 Unwrapped session overrides remain authoritative. Transient service stderr is
 journaled and direct fallback inherits stderr for post-exec failure diagnosis.
+The shared socket resolver preserves a live explicit Wayland endpoint and recovers
+missing, empty or stale displays from bounded runtime-directory socket discovery.
+Daemon entry normalizes the environment before initializing threads, so native
+workers share the recovered connection; child handoff resolves again without
+mutating the threaded process. Transient `UnsetEnvironment` also removes
+caller-only FDs and absent overrides inherited from the user manager.
 
 Home Manager startup is opt-in and bound to a configured compositor session target.
 Enabled packages and disabled installed catalog packages are separate; immutable
@@ -736,6 +756,9 @@ responsiveness are verified alongside the existing shell flows.
   installed-only catalog. The persistent clipboard backend ships inside its
   provider library and needs no separately installed or started daemon.
 - `inputs.crane` provides Cargo derivations for Nix builds.
+- `lib.mkAuthenticationPackages pkgs` supplies caller-package-set authentication
+  builds and a separate dependency cache. System module defaults use this factory;
+  the platform check rejects accidental fallback to pinned standalone packages.
 - `flake.nix` creates one cleaned Cargo source, one vendored dependency set, and one `buildDepsOnly` workspace artifact derivation with `--workspace` package selection.
 - `nix/default.nix` builds only the host package from those shared Cargo artifacts.
 - Cargo source cleaning retains the vendored overview protocol XML. Host checks

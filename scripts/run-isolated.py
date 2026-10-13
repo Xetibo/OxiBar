@@ -79,12 +79,17 @@ def main():
                 env["OXIBAR_TEST_COMPOSITOR_VERSION"] = subprocess.check_output(["sway", "--version"], text=True).strip()
                 print(json.dumps({"isolated_compositor": parent.pid, "version": env["OXIBAR_TEST_COMPOSITOR_VERSION"], "backend": "headless GLES2"}), flush=True)
                 return subprocess.run(arguments, env=env).returncode
+            runtime = root / "runtime"
+            runtime.mkdir(mode=0o700)
+            env["XDG_RUNTIME_DIR"] = str(runtime)
+            env["WAYLAND_DISPLAY"] = str(parent_display)
+            env["OXIBAR_TEST_PARENT_WAYLAND"] = str(parent_display)
             compositor = subprocess.Popen([binary, "--config", str(config)], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             collect(compositor, logs)
             deadline = time.monotonic() + 10
             while True:
-                sockets = list((root/"hypr").glob("*/.socket.sock"))
-                displays = [path for path in root.glob("wayland-*") if path.is_socket() and path != parent_display]
+                sockets = list((runtime/"hypr").glob("*/.socket.sock"))
+                displays = [path for path in runtime.glob("wayland-*") if path.is_socket()]
                 if sockets and displays:
                     env["HYPRLAND_INSTANCE_SIGNATURE"] = sockets[0].parent.name
                     env["WAYLAND_DISPLAY"] = displays[0].name

@@ -16,6 +16,10 @@ shell-words = "1.1"
 zeroize = "1.8"
 zbus = "5.14"
 
+[dev-dependencies]
+iced_runtime = "0.14"
+iced_tiny_skia = "0.14"
+
 [[bin]]
 name = "oxisession"
 path = "src/main.rs"

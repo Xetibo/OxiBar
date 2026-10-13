@@ -15,14 +15,20 @@
   secret responses as masks and collect them outside ordinary text-input widget
   state; explicitly visible authentication prompts may echo their response. Escape
   clears/cancels, and only authenticated completion unlocks. The locker displays a
-  native pointer cursor; clicking the response focuses it. Tab/Shift+Tab cycle enabled
+  compositor-themed pointer/text/button cursors through the cursor-shape protocol,
+  with a visible fallback only when that protocol is absent. Clicking the response
+  focuses it before subsequent native keys are handled. Tab/Shift+Tab cycle enabled
   response and action controls with a theme accent ring. Enter activates the focused
   action (or submits from the response), and Space activates focused buttons. New
   response prompts focus the input automatically; typing only edits that input.
   Use opaque themed backgrounds and centered bounded cards with explicit progress
   and failure feedback.
 - Greeters offer a trusted session picker and username field before authentication,
-  then reuse masked multi-prompt interaction. Preserve failure feedback and session
+  then reuse masked multi-prompt interaction with the same explicit response/action
+  focus as the locker. Response clicks and Tab/Shift+Tab must reach the input and
+  enabled buttons; captured keyboard events must not disable password editing.
+  New prompts focus the response, and cancellation restores username focus.
+  Preserve failure feedback and session
   choice on rejected starts; show explicit starting state until the login manager
   acknowledges handoff. Generic window-close events cannot accept a login.
 - Authentication views use clock/date, optional bounded assets and centered cards

@@ -173,12 +173,13 @@ timeout_ms=10000
         applications = root / "data" / "applications"
         applications.mkdir(parents=True)
         launcher_action = root / "launcher-action"
-        (applications / "oxibar-private.desktop").write_text(f"[Desktop Entry]\nType=Application\nName=Oxibar private launcher fixture\nExec={shlex.quote(sys.executable)} -c {shlex.quote('from pathlib import Path; Path(' + repr(str(launcher_action)) + ').touch()')}\n")
+        action = 'import json, os; from pathlib import Path; Path(' + repr(str(launcher_action)) + ').write_text(json.dumps(dict(display=os.environ.get("WAYLAND_DISPLAY"), socket=os.environ.get("WAYLAND_SOCKET"))))'
+        (applications / "oxibar-private.desktop").write_text(f"[Desktop Entry]\nType=Application\nName=Oxibar private launcher fixture\nExec={shlex.quote(sys.executable)} -c {shlex.quote(action)}\n")
         command_bin = root / "bin"
         command_bin.mkdir()
         command_action = root / "command-action"
         command = command_bin / "oxibar-private-command"
-        command.write_text(f"#!{sys.executable}\nimport json, sys\nfrom pathlib import Path\nPath({str(command_action)!r}).write_text(json.dumps(sys.argv[1:]))\n")
+        command.write_text(f"#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\nPath({str(command_action)!r}).write_text(json.dumps(dict(argv=sys.argv[1:], display=os.environ.get('WAYLAND_DISPLAY'), socket=os.environ.get('WAYLAND_SOCKET'))))\n")
         command.chmod(0o755)
         env["PATH"] = str(command_bin) + os.pathsep + env["PATH"]
         pointer = root / "pointer"
@@ -191,7 +192,8 @@ timeout_ms=10000
         daemon = service = pulse = hover_pointer = None
         def cli(*arguments, check=True):
             result = subprocess.run([args.binary, *arguments], env=env, text=True, capture_output=True, timeout=12)
-            if check: result.check_returncode()
+            if check and result.returncode:
+                raise AssertionError(f"CLI {arguments!r} failed: {result.stdout}{result.stderr}")
             if not check: return result
             return json.loads(result.stdout) if result.stdout.startswith("{") else result
         def status(): return cli("status")["data"]
@@ -255,7 +257,7 @@ timeout_ms=10000
                 except subprocess.TimeoutExpired: process.kill(); process.wait()
         def start():
             nonlocal daemon
-            daemon = subprocess.Popen([args.binary], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            daemon = subprocess.Popen([args.binary], env=dict(env, WAYLAND_DISPLAY=""), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             drain(daemon)
             wait(lambda: cli("status", check=False).returncode == 0, "daemon ready")
             return wait(lambda: status()["bar_buttons"], "actual bar button bounds")[0]["output"]
@@ -437,13 +439,14 @@ timeout_ms=10000
             wait(lambda: any(row["provider"] == "Applications" for row in status()["launcher_results"]), "live application search")
             keyboard("-k", "Return")
             wait(lambda: launcher_action.exists() and not status()["launcher_open"], "owned application activation")
+            assert json.loads(launcher_action.read_text()) == dict(display=env["WAYLAND_DISPLAY"], socket=None)
             button("launcher", output)
             layer("OxiBar launcher")
             keyboard('> oxibar-private-command "literal argument" "$HOME;no-shell"')
             wait(lambda: status()["launcher_results"] and all(row["provider"] == "Commands" for row in status()["launcher_results"]), "separate command provider scope")
             keyboard("-k", "Return")
             wait(lambda: command_action.exists() and not status()["launcher_open"], "owned command activation")
-            assert json.loads(command_action.read_text()) == ["literal argument", "$HOME;no-shell"]
+            assert json.loads(command_action.read_text()) == dict(argv=["literal argument", "$HOME;no-shell"], display=env["WAYLAND_DISPLAY"], socket=None)
             button("launcher", output)
             layer("OxiBar launcher")
             time.sleep(.4)

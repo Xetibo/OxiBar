@@ -8,8 +8,11 @@ use iced::{
     Element, Length, Subscription, Task, Theme, keyboard,
     widget::{Column, Row, container},
 };
-use oxi_auth_ui::view::{self, Purpose};
 use oxi_auth_ui::visuals::{KeyboardStatus, Visuals};
+use oxi_auth_ui::{
+    Phase as AuthPhase,
+    view::{self, Focus, Purpose},
+};
 use oxiced::{
     theme::theme_impl::{OXITHEME, get_derived_iced_theme},
     widgets::{oxi_picklist, oxi_plugin, oxi_text_input},
@@ -28,10 +31,9 @@ enum Message {
     Username(String),
     Session(Session),
     Auth(view::Message),
-    Key(keyboard::Event),
+    Key(keyboard::Event, iced::event::Status),
     Tick,
     Reconnect,
-    Observe(keyboard::Event),
     Power(Power),
     ConfirmPower,
     CancelPower,
@@ -44,10 +46,9 @@ impl fmt::Debug for Message {
             Self::Username(_) => "Username",
             Self::Session(_) => "Session",
             Self::Auth(_) => "Authentication action",
-            Self::Key(_) => "Keyboard input [REDACTED]",
+            Self::Key(_, _) => "Keyboard input [REDACTED]",
             Self::Tick => "Tick",
             Self::Reconnect => "Reconnect",
-            Self::Observe(_) => "Keyboard status",
             Self::Power(_)
             | Self::ConfirmPower
             | Self::CancelPower
@@ -61,6 +62,7 @@ struct Greeter {
     accepted: Arc<AtomicBool>,
     visuals: Visuals,
     keyboard: KeyboardStatus,
+    focus: Option<Focus>,
     power: Option<Power>,
     power_busy: bool,
     power_off: bool,
@@ -81,48 +83,121 @@ impl Power {
 }
 const USERNAME_ID: &str = "oxisession-username";
 impl Greeter {
+    fn auth_ready(&self) -> bool {
+        self.model.client.is_some()
+            && !self.model.cancelling
+            && self.power.is_none()
+            && !self.power_busy
+    }
+    fn keyboard_input(
+        &mut self,
+        event: keyboard::Event,
+        status: iced::event::Status,
+    ) -> Task<Message> {
+        use keyboard::{Key, key::Named};
+        self.keyboard.observe(&event);
+        if self.power_busy {
+            return Task::none();
+        }
+        let keyboard::Event::KeyPressed {
+            key,
+            modified_key,
+            modifiers,
+            text,
+            repeat,
+            ..
+        } = event
+        else {
+            return Task::none();
+        };
+        if !repeat
+            && modifiers.control()
+            && modifiers.shift()
+            && !modifiers.alt()
+            && !modifiers.logo()
+            && let Key::Character(key) = &key
+        {
+            let power = match key.as_str() {
+                "p" | "P" => Some(Power::PowerOff),
+                "r" | "R" => Some(Power::Reboot),
+                _ => None,
+            };
+            if let Some(power) = power {
+                return self.update(Message::Power(power));
+            }
+        }
+        if self.power.is_some() {
+            if key == Key::Named(Named::Escape) {
+                self.power = None;
+            }
+            return Task::none();
+        }
+        let prompt = self.model.interaction.phase == AuthPhase::Prompt;
+        if key == Key::Named(Named::Tab) {
+            if prompt {
+                self.focus = Some(self.focus.unwrap_or(Focus::Input).next(
+                    &self.model.interaction,
+                    self.auth_ready(),
+                    modifiers.shift(),
+                ));
+            } else if status == iced::event::Status::Ignored {
+                return if modifiers.shift() {
+                    iced::widget::operation::focus_previous()
+                } else {
+                    iced::widget::operation::focus_next()
+                };
+            }
+            return Task::none();
+        }
+        // The masked response has no editable widget; captured keys still belong to its prompt.
+        if prompt {
+            match key.as_ref() {
+                Key::Named(Named::Escape) => self.model.cancel(),
+                Key::Named(Named::Enter) => {
+                    if self.focus == Some(Focus::Cancel) {
+                        self.model.cancel();
+                    } else {
+                        self.model.submit();
+                    }
+                }
+                Key::Named(Named::Space) | Key::Character(" ")
+                    if self.focus != Some(Focus::Input) =>
+                {
+                    if self.focus == Some(Focus::Cancel) {
+                        self.model.cancel();
+                    } else if self.focus == Some(Focus::Submit) {
+                        self.model.submit();
+                    }
+                }
+                _ if self.focus == Some(Focus::Input) => {
+                    let text = text.as_deref().or_else(|| match &modified_key {
+                        Key::Character(value) => Some(value.as_str()),
+                        _ => None,
+                    });
+                    self.model.input(&key, modifiers, text);
+                }
+                _ => {}
+            }
+        } else if status == iced::event::Status::Ignored {
+            self.model.input(&key, modifiers, text.as_deref());
+        }
+        Task::none()
+    }
     fn update(&mut self, message: Message) -> Task<Message> {
         let could_choose_user = self.model.can_choose_user();
         let had_power_confirmation = self.power.is_some();
+        let previous_phase = self.model.interaction.phase;
         if self.power_busy
             && !matches!(
                 &message,
-                Message::PowerResult(_) | Message::Tick | Message::Observe(_)
+                Message::PowerResult(_) | Message::Tick | Message::Key(_, _)
             )
         {
             return Task::none();
         }
+        let mut task = Task::none();
         match message {
-            Message::Observe(event) => {
-                self.keyboard.observe(&event);
-                if let keyboard::Event::KeyPressed {
-                    key,
-                    modifiers,
-                    repeat: false,
-                    ..
-                } = &event
-                {
-                    if self.power.is_some()
-                        && *key == keyboard::Key::Named(keyboard::key::Named::Escape)
-                    {
-                        self.power = None;
-                    } else if modifiers.control()
-                        && modifiers.shift()
-                        && !modifiers.alt()
-                        && !modifiers.logo()
-                        && let keyboard::Key::Character(key) = key
-                    {
-                        let power = match key.as_str() {
-                            "p" | "P" => Some(Power::PowerOff),
-                            "r" | "R" => Some(Power::Reboot),
-                            _ => None,
-                        };
-                        if let Some(power) = power {
-                            return self.update(Message::Power(power));
-                        }
-                    }
-                }
-            }
+            Message::Key(event, status) => task = self.keyboard_input(event, status),
             Message::PowerCapabilities((power_off, reboot)) => {
                 self.power_off = power_off;
                 self.reboot = reboot;
@@ -155,28 +230,11 @@ impl Greeter {
             Message::Session(session) => self.model.select(session),
             Message::Auth(view::Message::Submit) if self.power.is_none() => self.model.submit(),
             Message::Auth(view::Message::Cancel) => self.model.cancel(),
-            Message::Auth(view::Message::Focus(_)) => {}
-            Message::Key(keyboard::Event::KeyPressed {
-                key: keyboard::Key::Named(keyboard::key::Named::Escape),
-                ..
-            }) if self.power.is_some() => self.power = None,
-            Message::Key(keyboard::Event::KeyPressed {
-                key: keyboard::Key::Named(keyboard::key::Named::Tab),
-                modifiers,
-                ..
-            }) => {
-                return if modifiers.shift() {
-                    iced::widget::operation::focus_previous()
-                } else {
-                    iced::widget::operation::focus_next()
-                };
+            Message::Auth(view::Message::Focus(focus))
+                if focus.enabled(&self.model.interaction, self.auth_ready()) =>
+            {
+                self.focus = Some(focus);
             }
-            Message::Key(keyboard::Event::KeyPressed {
-                key,
-                modifiers,
-                text,
-                ..
-            }) if self.power.is_none() => self.model.input(&key, modifiers, text.as_deref()),
             Message::Tick => {
                 self.visuals.tick();
                 if self.model.poll() {
@@ -187,25 +245,26 @@ impl Greeter {
             Message::Reconnect => self.model.reconnect(),
             _ => {}
         }
+        if self.model.interaction.phase == AuthPhase::Prompt {
+            if previous_phase != AuthPhase::Prompt {
+                self.focus = Some(Focus::Input);
+            }
+        } else {
+            self.focus = None;
+        }
         if self.model.can_choose_user()
             && (!could_choose_user || (had_power_confirmation && self.power.is_none()))
         {
-            iced::widget::operation::focus(USERNAME_ID)
+            Task::batch([task, iced::widget::operation::focus(USERNAME_ID)])
         } else {
-            Task::none()
+            task
         }
     }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
             iced::time::every(Duration::from_millis(30)).map(|_| Message::Tick),
             iced::event::listen_with(|event, status, _| match event {
-                iced::Event::Keyboard(event) if status == iced::event::Status::Ignored => {
-                    Some(Message::Key(event))
-                }
-                _ => None,
-            }),
-            iced::event::listen_with(|event, _, _| match event {
-                iced::Event::Keyboard(event) => Some(Message::Observe(event)),
+                iced::Event::Keyboard(event) => Some(Message::Key(event, status)),
                 _ => None,
             }),
         ])
@@ -254,11 +313,12 @@ impl Greeter {
             .size(OXITHEME.font_sm),
         );
         content = content.push(
-            view::prompt_card(
+            view::prompt_card_focused(
                 "Sign in",
                 &self.model.interaction,
-                self.model.client.is_some() && !self.model.cancelling,
+                self.auth_ready(),
                 Purpose::Login,
+                self.focus,
             )
             .map(Message::Auth),
         );
@@ -325,6 +385,7 @@ pub fn run(client: Client, catalog: Catalog) -> Result<(), Box<dyn std::error::E
         accepted: accepted.clone(),
         visuals: Visuals::load(Purpose::Login),
         keyboard: KeyboardStatus::configured(),
+        focus: None,
         power: None,
         power_busy: false,
         power_off: false,
@@ -368,6 +429,10 @@ pub fn run(client: Client, catalog: Catalog) -> Result<(), Box<dyn std::error::E
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "frontend_tests.rs"]
+mod tests;
 
 async fn power_action(action: Power) -> bool {
     let result = async {

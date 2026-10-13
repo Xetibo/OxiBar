@@ -13,6 +13,7 @@ use std::{
 };
 
 type Error = Box<dyn std::error::Error>;
+pub const DEFAULT_BACKEND: &str = "hyprland";
 static STOP: AtomicBool = AtomicBool::new(false);
 extern "C" fn stop(_: libc::c_int) {
     STOP.store(true, Ordering::Relaxed);

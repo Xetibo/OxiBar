@@ -1,5 +1,64 @@
 # Decisions
 
+## 2026-10-13: Greeter prompt focus and Hyprland kiosk default
+
+- The greeter still used the legacy unfocused prompt view, ignored response-focus
+  messages and subscribed to only ignored key events. Wire the shared explicit
+  input/submit/cancel controller into its frontend, consume captured prompt keys,
+  and fall back to modified character keys when native text is missing. Preserve
+  ordinary username-widget capture, redacted keyboard messages and zeroized secrets.
+- New visible/secret prompts focus the response; clicking it restores focus.
+  Tab/Shift+Tab cycle enabled controls, focused buttons do not edit the response,
+  Enter/Space activate actions, and cancellation restores the username field.
+  Root-peer validation, serialized cancellation and acknowledged-only handoff remain.
+- Default both the NixOS module and no-argument kiosk CLI to Hyprland. Retain Cage
+  as an explicit choice and keep the owned minimal compositor configuration and
+  PID/signature-bound teardown. Module assertions cover both generated commands.
+- Two private greetd frontend fixtures exercise captured/missing-text keys,
+  multi-prompt focus, a real Iced masked-field click and clear without authentication.
+  All 36 normal authentication tests and strict all-target Clippy pass. The Hyprland
+  VM leaves the backend option unset and passes real PAM failure/retry, Tab/Shift+Tab
+  editing isolation, accepted login, seat handoff, lock/unlock and crash recovery.
+- Use the focused prompt's Tab/focus hint for OCR readiness: its password label was
+  present in failed-run screenshots but missed by OCR. Authentication success still
+  depends on PAM, acknowledged handoff and process/seat assertions.
+
+## 2026-10-13: Deployment ABI, Wayland endpoint and themed lock input follow-up
+
+- The installed bar inherited empty `WAYLAND_DISPLAY`, recovered a socket for its
+  own renderer, then forwarded the empty value to applications. New retained stderr
+  showed actual Nheko/Qt and OpenCode/Electron Wayland connection refusal. Normalize
+  the daemon environment before threads start and share bounded live-socket recovery
+  with child handoff. Preserve valid explicit displays, including absolute paths.
+  Transient `UnsetEnvironment` prevents manager-side FD/absent override inheritance;
+  empty GBM/LIBVA/GLX driver selectors are discarded. No duplicate uncertain handoff.
+- Installed auth binaries used glibc 2.40 while system PAM/Mesa required
+  `GLIBC_2.43`; read-only module loads reproduced both failures. PAM could not reach
+  a password prompt, and CPU greeter selection did not fix the kiosk's EGL loader.
+  Factor `lib.mkAuthenticationPackages pkgs` / `nix/auth-packages.nix` and use the
+  consuming package set for NixOS/Home Manager defaults and their compositor graph.
+  Keep standalone packages pinned and shell/plugin ABI builds together. Cage <0.3
+  retains the fullscreen/xdg-shell patch; newer Cage uses upstream support.
+- Use compositor cursor-shape with Enter serials and Iced default/text/button
+  interaction; retain immutable SHM only as a protocol fallback. Dispatch widget
+  focus and native keys in arrival order before rendering, preserving click-then-type
+  in one batch. Native-XKB shared-password and themed-cursor fixtures pass without
+  moving secrets into ordinary widgets or changing authenticated-only unlock.
+- Caller-package-set module assertions, all fourteen Home Manager checks and modern
+  authentication builds/tests pass.
+  Actual system PAM/Mesa libraries load with the matched runtime. Owned Cage GLES2
+  context creation passes against the real system Mesa vendor after clearing the
+  fixture's pinned graphics overrides; the pixman sleep VM was not EGL coverage.
+- Actual installed Nheko and OpenCode open via the packaged launcher in a private
+  Sway/HOME/bus with intentionally empty incoming display. Packaged Hyprland UI smoke
+  also passes desktop/command endpoint and FD assertions plus native clipboard copy.
+  Separate nested runtime directories prevent recovery from selecting the parent.
+- Workspace tests/strict Clippy and native authentication checks pass. Cage VM
+  passes real login, seat handoff, password lock/unlock, hotplug/repeat, both S3 paths
+  and crash recovery. One run hit asynchronous explicit-suspend inhibitor retirement;
+  retain timeout inhibitor diagnostics and the successful rerun without weakening
+  readiness/authentication gates or changing production suspend policy.
+
 ## 2026-10-13: Launcher command isolation and native authentication input/rendering
 
 - Extract PATH command indexing/search/terminal wrapping from Tools into optional

@@ -294,8 +294,11 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   existing systemd cgroup without a user manager.
 - Resolved: packaged/development shell graphics and font overrides no longer leak
   into handed-off apps. Post-exec application errors now retain stderr diagnostics.
-  OpenCode opens under a private compositor; its earlier desktop-session Electron
-  SIGTRAP is not reproduced there, so its hardware-specific cause remains unproven.
+  Follow-up journal evidence identified empty `WAYLAND_DISPLAY` as the cause of
+  OpenCode/Nheko connection refusal. Startup and handoff recover a live endpoint;
+  transient unset rules prevent stale manager FD/driver variables from reappearing.
+  Both installed applications now open through the launcher in an owned compositor
+  with an intentionally empty incoming display. Clipboard follows the same repair.
 
 ## UI Theme Debt
 
@@ -329,10 +332,24 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   cleanup while retaining their live-child ownership assertions.
 - Resolved: locker mouse interaction now publishes a visible native cursor and
   explicit response focus; Tab/Shift+Tab reaches enabled input/buttons without
-  moving secrets into ordinary widgets. Private protocol and controller checks pass.
+  moving secrets into ordinary widgets. Cursor-shape uses Hyprland's theme instead
+  of the fallback arrow. Ordered dispatch preserves click-then-type input in one
+  native batch; a shared-password/native-XKB fixture verifies this behavior.
+- Resolved: the greeter ignored response-focus messages and handled only ignored
+  keyboard events. It now shares explicit prompt focus, accepts captured keys while
+  prompting and derives missing text from modified character keys. Private greetd
+  frontend fixtures and the default Hyprland VM verify editing and focus traversal.
 - Resolved: greeter startup selects CPU rendering before GPU initialization.
   Authentication packaging no longer pins the compositor to a software Vulkan ICD;
   the Cage login/lock/suspend VM passes with deliberately invalid Vulkan settings.
+- Resolved: pinned authentication libc could not load the newer system PAM and Mesa
+  modules (`GLIBC_2.43` missing), preventing password prompts and Cage EGL startup.
+  Module defaults now build from the consuming system/Home Manager package set.
+  System-vendor GLES2 context creation and caller-package-set assertions pass.
+  Explicit standalone package overrides still need a compatible system ABI.
+- An explicit-suspend VM run encountered asynchronous block-inhibitor retirement
+  and refused Suspend; the rerun passed. Timeout diagnostics now include the
+  inhibitor list. This does not change the readiness/authentication gates.
 - Actual DRM/firmware behavior beyond the tested virtual devices still needs hardware
   coverage. The pinned virtio-GPU fence queue stalls after QEMU S3; the sleep fixture
   uses legacy VGA/pixman while Hyprland retains normal virtio-GPU tests. No production

@@ -178,32 +178,13 @@
             pkgs.callPackage ./nix/plugin.nix {
               inherit craneLib src cargoVendorDir cargoArtifacts lockFile plugin;
             };
-          authArtifacts = craneLib.buildDepsOnly (commonCraneArgs
-            // {
-              postPatch = ''cp -R ${layershellevSource}/. crates/layershellev/src/'';
-              cargoBuildExtraArgs = "-p oxi-lock -p oxi-session";
-              cargoTestExtraArgs = "-p oxi-lock -p oxi-session --no-run";
-            });
-          authPackage = package: binary:
-            pkgs.callPackage ./nix/auth-package.nix {
-              inherit craneLib src cargoVendorDir lockFile package binary;
-              cargoArtifacts = authArtifacts;
-              cage = pkgs.cage.overrideAttrs (old: {
-                patches = (old.patches or []) ++ [./nix/cage-initial-fullscreen.patch];
-                postPatch =
-                  (old.postPatch or "")
-                  + ''
-                    substituteInPlace cage.c --replace-fail 'wlr_xdg_shell_create(server.wl_display, 5)' 'wlr_xdg_shell_create(server.wl_display, 6)'
-                  '';
-              });
-            };
+          authentication = self.lib.mkAuthenticationPackages pkgs;
         in rec {
           oxibar = pkgs.callPackage ./nix/default.nix {
             inherit inputs craneLib src cargoVendorDir cargoArtifacts lockFile;
             applicationsPlugin = oxibar-applications;
           };
-          oxilock = authPackage "oxi-lock" "oxilock";
-          oxisession = authPackage "oxi-session" "oxisession";
+          inherit (authentication) oxilock oxisession;
           oxibar-audio = pluginPackage "audio";
           oxibar-applications = pluginPackage "applications";
           oxibar-battery = pluginPackage "battery";
@@ -223,6 +204,7 @@
         };
         checks =
           {
+            authentication-platform = import ./nix/auth-package-tests.nix {inherit pkgs self;};
             authentication-clippy = self'.packages.oxisession.clippy;
             authentication-unit = self'.packages.oxisession.authenticationTests;
           }
@@ -240,6 +222,12 @@
           };
       };
       flake = _: rec {
+        lib.mkAuthenticationPackages = pkgs:
+          import ./nix/auth-packages.nix {
+            inherit pkgs;
+            crane = inputs.crane;
+            source = self.outPath;
+          };
         nixosModules.home-manager = homeManagerModules.default;
         nixosModules.authentication = import ./nix/auth-nixos.nix self;
         homeManagerModules = rec {

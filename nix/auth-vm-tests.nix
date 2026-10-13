@@ -67,19 +67,20 @@ in
     enableOCR = true;
     nodes.machine = {...}: {
       imports = [self.nixosModules.authentication];
-      services.oxisession = {
-        enable = true;
-        inherit backend;
-        sessionPackages = [desktop];
-        settings = {
-          theme.reduced_motion = true;
-          appearance = {
-            clock_format = "%H:%M:%S";
-            avatar = "${avatar}";
-            wallpaper = "${avatar}";
+      services.oxisession =
+        {
+          enable = true;
+          sessionPackages = [desktop];
+          settings = {
+            theme.reduced_motion = true;
+            appearance = {
+              clock_format = "%H:%M:%S";
+              avatar = "${avatar}";
+              wallpaper = "${avatar}";
+            };
           };
-        };
-      };
+        }
+        // pkgs.lib.optionalAttrs (backend == "cage") {inherit backend;};
       programs.oxilock = {
         enable = true;
         sleepIntegration = true;
@@ -128,6 +129,8 @@ in
                   return
               time.sleep(0.5)
           machine.screenshot("missing-greeter-text")
+          print(machine.get_screen_text())
+          print(machine.succeed("journalctl -u greetd --no-pager; ps -eo user,pid,comm,args"))
           raise Exception("Greeter did not display " + pattern)
 
       start_all()
@@ -166,8 +169,11 @@ in
 
       with subtest("accepted login releases kiosk seat before starting the selected UID"):
           machine.send_key("ret")
-          time.sleep(2)
+          visible("Tab.*focus")
           machine.screenshot("retry-password-prompt")
+          machine.send_key("tab")
+          machine.send_chars("ignored")
+          machine.send_key("shift-tab")
           machine.send_chars("testpass\n")
           try:
               machine.wait_for_file("/home/alice/auth-fixture/uid", timeout=60)
@@ -247,7 +253,7 @@ in
               deadline = time.monotonic() + 60
               while "suspended" not in machine.send_monitor_command("info status"):
                   if time.monotonic() >= deadline:
-                      print(machine.succeed("cat /home/alice/auth-fixture/suspend.log 2>/dev/null; journalctl --no-pager -n 60; true"))
+                      print(machine.succeed("cat /home/alice/auth-fixture/suspend.log 2>/dev/null; systemd-inhibit --list --no-pager; journalctl --no-pager -n 60; true"))
                       machine.screenshot("sleep-failed")
                       raise AssertionError("VM did not enter S3")
                   time.sleep(0.1)

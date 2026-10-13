@@ -1,9 +1,9 @@
 use std::{
     collections::BTreeSet,
     fs::File,
-    io::Read,
+    io::{Read, Write},
     os::{
-        fd::OwnedFd,
+        fd::{AsFd, OwnedFd},
         unix::{fs::FileExt, net::UnixStream},
     },
     sync::{
@@ -22,6 +22,10 @@ use wayland_protocols::{
         ext_session_lock_v1 as lock,
     },
     wp::{
+        cursor_shape::v1::server::{
+            wp_cursor_shape_device_v1 as cursor_device,
+            wp_cursor_shape_manager_v1 as cursor_manager,
+        },
         fractional_scale::v1::server::{
             wp_fractional_scale_manager_v1 as fractional_manager,
             wp_fractional_scale_v1 as fractional,
@@ -33,8 +37,8 @@ use wayland_server::{
     Client, DataInit, Dispatch, Display, DisplayHandle, GlobalDispatch, New, Resource,
     backend::{ClientData, ClientId, DisconnectReason, GlobalId},
     protocol::{
-        wl_buffer, wl_compositor, wl_output, wl_pointer, wl_region, wl_seat, wl_shm, wl_shm_pool,
-        wl_surface,
+        wl_buffer, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_region, wl_seat, wl_shm,
+        wl_shm_pool, wl_surface,
     },
 };
 
@@ -49,6 +53,8 @@ enum Policy {
     Missing,
     Malformed,
     Pointer,
+    ThemedPointer,
+    Password,
 }
 
 #[derive(Default)]
@@ -60,6 +66,7 @@ struct Record {
     destroyed: usize,
     removed: usize,
     cursors: usize,
+    shapes: Vec<cursor_device::Shape>,
 }
 #[derive(Default)]
 struct Controls {
@@ -99,8 +106,14 @@ impl Fixture {
                     (),
                 );
             }
-            if policy == Policy::Pointer {
+            if matches!(
+                policy,
+                Policy::Pointer | Policy::ThemedPointer | Policy::Password
+            ) {
                 handle.create_global::<Server, wl_seat::WlSeat, _>(9, ());
+            }
+            if matches!(policy, Policy::ThemedPointer | Policy::Password) {
+                handle.create_global::<Server, cursor_manager::WpCursorShapeManagerV1, _>(1, ());
             }
             handle.insert_client(server, control.clone()).unwrap();
             let mut state = Server {
@@ -111,6 +124,7 @@ impl Fixture {
                 initial: Some(initial),
                 hotplugged: false,
                 pointer: None,
+                keyboard: None,
             };
             let start = Instant::now();
             while !control.stop.load(Ordering::Acquire) && start.elapsed() < Duration::from_secs(8)
@@ -169,6 +183,7 @@ struct Server {
     initial: Option<GlobalId>,
     hotplugged: bool,
     pointer: Option<wl_pointer::WlPointer>,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
 }
 
 macro_rules! global {
@@ -207,13 +222,74 @@ global!(wl_compositor::WlCompositor);
 global!(manager::ExtSessionLockManagerV1);
 global!(viewporter::WpViewporter);
 global!(fractional_manager::WpFractionalScaleManagerV1);
+global!(cursor_manager::WpCursorShapeManagerV1);
 noop!(wl_region::WlRegion, ());
 noop!(wl_buffer::WlBuffer, BufferData);
 noop!(fractional::WpFractionalScaleV1, ());
+noop!(wl_keyboard::WlKeyboard, ());
+
+impl Dispatch<cursor_manager::WpCursorShapeManagerV1, ()> for Server {
+    fn request(
+        state: &mut Self,
+        _: &Client,
+        _: &cursor_manager::WpCursorShapeManagerV1,
+        request: cursor_manager::Request,
+        _: &(),
+        _: &DisplayHandle,
+        init: &mut DataInit<'_, Self>,
+    ) {
+        if let cursor_manager::Request::GetPointer {
+            cursor_shape_device,
+            pointer,
+        } = request
+        {
+            assert_eq!(Some(&pointer), state.pointer.as_ref());
+            init.init(cursor_shape_device, ());
+        }
+    }
+}
+impl Dispatch<cursor_device::WpCursorShapeDeviceV1, ()> for Server {
+    fn request(
+        state: &mut Self,
+        _: &Client,
+        _: &cursor_device::WpCursorShapeDeviceV1,
+        request: cursor_device::Request,
+        _: &(),
+        _: &DisplayHandle,
+        _: &mut DataInit<'_, Self>,
+    ) {
+        if let cursor_device::Request::SetShape {
+            serial,
+            shape: wayland_server::WEnum::Value(shape),
+        } = request
+        {
+            assert_eq!(serial, 42);
+            state.controls.record.lock().unwrap().shapes.push(shape);
+            let activate = match state.policy {
+                Policy::ThemedPointer => shape == cursor_device::Shape::Pointer,
+                Policy::Password => shape == cursor_device::Shape::Text,
+                _ => false,
+            };
+            if activate {
+                let pointer = state.pointer.as_ref().unwrap();
+                pointer.button(43, 1, 272, wl_pointer::ButtonState::Pressed);
+                pointer.button(44, 2, 272, wl_pointer::ButtonState::Released);
+                pointer.frame();
+                if state.policy == Policy::Password {
+                    let keyboard = state.keyboard.as_ref().unwrap();
+                    for (serial, key) in [(45, 30), (47, 28)] {
+                        keyboard.key(serial, 3, key, wl_keyboard::KeyState::Pressed);
+                        keyboard.key(serial + 1, 4, key, wl_keyboard::KeyState::Released);
+                    }
+                }
+            }
+        }
+    }
+}
 
 impl GlobalDispatch<wl_seat::WlSeat, ()> for Server {
     fn bind(
-        _: &mut Self,
+        state: &mut Self,
         _: &DisplayHandle,
         _: &Client,
         resource: New<wl_seat::WlSeat>,
@@ -221,7 +297,11 @@ impl GlobalDispatch<wl_seat::WlSeat, ()> for Server {
         init: &mut DataInit<'_, Self>,
     ) {
         let seat = init.init(resource, ());
-        seat.capabilities(wl_seat::Capability::Pointer);
+        seat.capabilities(if state.policy == Policy::Password {
+            wl_seat::Capability::Pointer | wl_seat::Capability::Keyboard
+        } else {
+            wl_seat::Capability::Pointer
+        });
         seat.name("private-pointer".into());
     }
 }
@@ -235,8 +315,34 @@ impl Dispatch<wl_seat::WlSeat, ()> for Server {
         _: &DisplayHandle,
         init: &mut DataInit<'_, Self>,
     ) {
-        if let wl_seat::Request::GetPointer { id } = request {
-            state.pointer = Some(init.init(id, ()));
+        match request {
+            wl_seat::Request::GetPointer { id } => state.pointer = Some(init.init(id, ())),
+            wl_seat::Request::GetKeyboard { id } => {
+                let keyboard = init.init(id, ());
+                let keymap = br#"xkb_keymap {
+                    xkb_keycodes "fixture" { minimum = 8; maximum = 255; <AC01> = 38; <RTRN> = 36; };
+                    xkb_types "fixture" { type "ONE_LEVEL" { modifiers = None; level_name[Level1] = "Any"; }; };
+                    xkb_compatibility "fixture" {};
+                    xkb_symbols "fixture" {
+                        key <AC01> { type = "ONE_LEVEL", [ a ] };
+                        key <RTRN> { type = "ONE_LEVEL", [ Return ] };
+                    };
+                };"#;
+                let mut file = File::from(
+                    rustix::fs::memfd_create("private-keymap", rustix::fs::MemfdFlags::CLOEXEC)
+                        .unwrap(),
+                );
+                file.write_all(keymap).unwrap();
+                file.write_all(&[0]).unwrap();
+                keyboard.keymap(
+                    wl_keyboard::KeymapFormat::XkbV1,
+                    file.as_fd(),
+                    (keymap.len() + 1) as u32,
+                );
+                keyboard.repeat_info(0, 0);
+                state.keyboard = Some(keyboard);
+            }
+            _ => {}
         }
     }
 }
@@ -434,10 +540,16 @@ impl Dispatch<lock::ExtSessionLockV1, ()> for Server {
                     2,
                     if state.policy == Policy::Malformed {
                         0
+                    } else if state.policy == Policy::Password {
+                        800
                     } else {
                         80
                     },
-                    40,
+                    if state.policy == Policy::Password {
+                        600
+                    } else {
+                        40
+                    },
                 );
                 state.controls.record.lock().unwrap().created.push(index);
             }
@@ -536,9 +648,17 @@ impl Dispatch<wl_surface::WlSurface, SurfaceData> for Server {
                     Policy::Fractional => 1.25,
                     _ => 1.0,
                 };
+                let logical = if state.policy == Policy::Password {
+                    (800, 600)
+                } else {
+                    (80, 40)
+                };
                 assert_eq!(
                     (data.width, data.height),
-                    ((80.0 * factor) as i32, (40.0 * factor) as i32)
+                    (
+                        (f64::from(logical.0) * factor) as i32,
+                        (f64::from(logical.1) * factor) as i32
+                    )
                 );
                 if state.policy == Policy::Fractional {
                     assert_eq!(surface.destination, Some((80, 40)));
@@ -546,7 +666,7 @@ impl Dispatch<wl_surface::WlSurface, SurfaceData> for Server {
                 } else {
                     assert_eq!(
                         (data.width / surface.scale, data.height / surface.scale),
-                        (80, 40)
+                        logical
                     );
                 }
                 let mut pixels = vec![0; (data.stride * data.height) as usize];
@@ -570,12 +690,28 @@ impl Dispatch<wl_surface::WlSurface, SurfaceData> for Server {
                 if !state.locked {
                     state.locked = true;
                     state.lock.as_ref().unwrap().locked();
-                    if state.policy == Policy::Pointer {
+                    if matches!(
+                        state.policy,
+                        Policy::Pointer | Policy::ThemedPointer | Policy::Password
+                    ) {
                         let pointer = state.pointer.as_ref().unwrap();
-                        pointer.enter(42, proxy, 40.0, 20.0);
-                        pointer.button(43, 1, 272, wl_pointer::ButtonState::Pressed);
-                        pointer.button(44, 2, 272, wl_pointer::ButtonState::Released);
-                        pointer.frame();
+                        pointer.enter(
+                            42,
+                            proxy,
+                            f64::from(logical.0) / 2.0,
+                            f64::from(logical.1) / 2.0,
+                        );
+                        if state.policy == Policy::Pointer {
+                            pointer.button(43, 1, 272, wl_pointer::ButtonState::Pressed);
+                            pointer.button(44, 2, 272, wl_pointer::ButtonState::Released);
+                            pointer.frame();
+                        } else if state.policy == Policy::Password {
+                            state
+                                .keyboard
+                                .as_ref()
+                                .unwrap()
+                                .enter(41, proxy, Vec::new());
+                        }
                     }
                     if state.policy == Policy::Finished {
                         state.lock.as_ref().unwrap().finished();
@@ -721,7 +857,96 @@ fn native_pointer_sets_visible_cursor_and_click_reaches_widgets_on_lock_surface(
     let record = fixture.controls.record.lock().unwrap();
     assert_eq!(record.cursors, 1);
     assert_eq!(record.unlocked, 1);
-    assert!(record.commits.len() >= 2);
+    assert!(!record.commits.is_empty());
+}
+
+#[test]
+fn compositor_cursor_shapes_use_enter_serial_and_widget_interaction_without_custom_cursor_surface()
+{
+    let mut fixture = Fixture::new(Policy::ThemedPointer);
+    let mut app = app();
+    app.pointer = true;
+    assert_eq!(
+        fixture.client().unwrap().run(app, None).unwrap(),
+        Exit::Authenticated
+    );
+    let record = fixture.controls.record.lock().unwrap();
+    assert_eq!(record.cursors, 0);
+    assert_eq!(
+        record.shapes,
+        [cursor_device::Shape::Default, cursor_device::Shape::Pointer]
+    );
+    assert_eq!(record.unlocked, 1);
+}
+
+struct PasswordApp {
+    interaction: oxi_auth_ui::Interaction,
+    focus: oxi_auth_ui::view::Focus,
+}
+impl Application for PasswordApp {
+    type Message = oxi_auth_ui::view::Message;
+    fn update(&mut self, event: Event<Self::Message>) -> Action {
+        use oxi_auth_ui::view::{Focus, Message};
+        match event {
+            Event::Message(Message::Focus(focus)) => self.focus = focus,
+            Event::Input {
+                event: iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, text, .. }),
+                ..
+            } => {
+                if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) {
+                    if self.interaction.input.expose() == "a" {
+                        return Action::AuthenticatedUnlock;
+                    }
+                } else if self.focus == Focus::Input
+                    && let Some(text) = text
+                {
+                    self.interaction.input.push(&text);
+                }
+            }
+            _ => {}
+        }
+        Action::Redraw
+    }
+    fn view(&self, _: &Output) -> Element<'_, Self::Message> {
+        iced::widget::container(oxi_auth_ui::view::prompt_card_focused(
+            "Private keyboard fixture",
+            &self.interaction,
+            true,
+            oxi_auth_ui::view::Purpose::Lock,
+            Some(self.focus),
+        ))
+        .center(iced::Fill)
+        .into()
+    }
+    fn background(&self) -> Color {
+        Color::from_rgb8(0x22, 0x66, 0xbb)
+    }
+}
+
+#[test]
+fn native_password_click_focus_and_xkb_typing_preserve_order_in_one_event_batch() {
+    let mut fixture = Fixture::new(Policy::Password);
+    let mut interaction = oxi_auth_ui::Interaction::default();
+    let attempt = interaction.begin().unwrap();
+    interaction.receive(
+        attempt,
+        oxi_auth_ui::Prompt {
+            kind: oxi_auth_ui::PromptKind::Secret,
+            text: "Password".into(),
+        },
+    );
+    let app = PasswordApp {
+        interaction,
+        focus: oxi_auth_ui::view::Focus::Submit,
+    };
+    assert_eq!(
+        fixture.client().unwrap().run(app, None).unwrap(),
+        Exit::Authenticated
+    );
+    let record = fixture.controls.record.lock().unwrap();
+    assert_eq!(record.cursors, 0);
+    assert!(record.shapes.contains(&cursor_device::Shape::Text));
+    assert_eq!(record.unlocked, 1);
 }
 
 #[test]
