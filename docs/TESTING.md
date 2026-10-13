@@ -118,6 +118,9 @@ Cage GLES2 context before its owned child runs. It never acquires the user's sea
 - Runner: XDG precedence/hidden masking, localized fields/actions, inherited/cyclic
   icon themes, argument expansion, symlinked Nix-profile app entries and exact
   executable/desktop-class aliases, stable catalogs and bounded ranked matching;
+  exact application-name/desktop-ID priority over more shared-executable game/action
+  rows than the result limit, with large usage boosts, case variants and preserved
+  empty-query personalization and named game/action argument intents;
   latest-running/pending cancellation, scope reactivation, metadata load/save races,
   private versioned state, exact-provider activation and stale displayed identities.
 - IPC: command validation, configured socket path, a real command/acknowledgement round trip and stale-socket recovery.

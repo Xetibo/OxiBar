@@ -1,5 +1,23 @@
 # Decisions
 
+## 2026-10-14: Exact application identities survive shared launcher aliases
+
+- Steam's system desktop entry is valid and indexed. Installed game shortcuts and
+  desktop actions also use `Exec=steam`; their exact executable matches tied Steam's
+  name at score 1000, filling the seven-row limit before the parent application.
+- When a query exactly matches an application name/desktop ID, keep those identities
+  above other application rows after usage/favorite boosts. Cap other final scores
+  below the exact-match floor; retain case folding and the optional `.desktop` suffix.
+  Empty queries and helper-only searches preserve existing personalization. Named
+  game/action queries still select their own frozen argument vectors.
+- A catalog regression uses sixteen game shortcuts, two desktop actions and large
+  ranking boosts, checking `steam`, `STEAM`, `steam.desktop`, named game/action intents
+  and empty-query ranking. All eighteen Applications tests and strict Clippy pass;
+  formatting and Nix host/Applications builds pass.
+- Packaged launcher verification in an owned Sway/HOME/bus reads the actual installed
+  Steam/game catalog with extra private favorites. Typing `steam` renders Steam first;
+  native IPC scores are 1000 followed by six 999 rows, confirmed by a UI screenshot.
+
 ## 2026-10-13: Greeter prompt focus and Hyprland kiosk default
 
 - The greeter still used the legacy unfocused prompt view, ignored response-focus

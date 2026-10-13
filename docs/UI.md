@@ -83,6 +83,8 @@
 - Show provider prefixes, indexing/unavailable status and separate favorite actions.
   Terminal/PATH command results are prefix-scoped by default; merged application
   search is an explicit preference rather than command noise hiding desktop entries.
+  Exact application names/desktop IDs stay ahead of helper-alias matches, including
+  usage-boosted or favorite game shortcuts and desktop actions.
   A row or input submission captures its displayed provider/local identity; a later
   result reorder must not change what that activation executes. Ephemeral launcher
   clipboard history is explicitly opt-in and clears when disabled; calculator copy

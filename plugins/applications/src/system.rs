@@ -10,6 +10,7 @@ use oxibar_plugin_api::worker::CancelToken;
 use crate::config::Config;
 
 const DESKTOP_GROUP: &str = "[Desktop Entry]";
+const EXACT_MATCH_SCORE: i64 = 1000;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Entry {
@@ -682,6 +683,15 @@ pub(crate) fn search(entries: &[Entry], query: &str, limit: usize) -> Vec<Match>
     )
 }
 
+fn exact_identity(entry: &Entry, normalized_query: &str) -> bool {
+    [&entry.name, &entry.desktop_id]
+        .into_iter()
+        .any(|candidate| {
+            let text = candidate.to_lowercase();
+            text == normalized_query || text.strip_suffix(".desktop") == Some(normalized_query)
+        })
+}
+
 pub(crate) fn search_ranked(
     entries: &[Entry],
     query: &str,
@@ -692,6 +702,11 @@ pub(crate) fn search_ranked(
     let matcher = SkimMatcherV2::default().ignore_case();
     let query = query.trim();
     let normalized = query.to_lowercase();
+    let has_exact_identity = !query.is_empty()
+        && entries
+            .iter()
+            .take_while(|_| !cancel.is_cancelled())
+            .any(|entry| exact_identity(entry, &normalized));
     let mut matches: Vec<Match> = Vec::with_capacity(limit.min(50));
     for (index, entry) in entries.iter().enumerate() {
         if cancel.is_cancelled() {
@@ -708,7 +723,7 @@ pub(crate) fn search_ranked(
                     if text == normalized
                         || text.strip_suffix(".desktop") == Some(normalized.as_str())
                     {
-                        Some(1000)
+                        Some(EXACT_MATCH_SCORE)
                     } else if text.starts_with(&normalized) {
                         Some(500 - (text.len() as i64).min(100))
                     } else if let Some(position) = text.find(&normalized) {
@@ -724,11 +739,15 @@ pub(crate) fn search_ranked(
         let Some(score) = score else {
             continue;
         };
-        let matched = Match {
-            index,
-            score: score
-                .saturating_add(ranking.get(&entry.desktop_id).copied().unwrap_or_default()),
+        let score =
+            score.saturating_add(ranking.get(&entry.desktop_id).copied().unwrap_or_default());
+        // Shared launcher aliases must not displace an exact application name or desktop ID.
+        let score = if has_exact_identity && !exact_identity(entry, &normalized) {
+            score.min(EXACT_MATCH_SCORE - 1)
+        } else {
+            score
         };
+        let matched = Match { index, score };
         let position = matches
             .binary_search_by(|current| {
                 matched
@@ -889,6 +908,67 @@ mod tests {
             assert_eq!(entries[found[0].index].argv, [executable]);
             assert_eq!(found[0].score, 1000, "exact alias {query}");
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn exact_application_identity_survives_shared_launchers_and_usage() {
+        let root = std::env::temp_dir().join(format!("oxibar-steam-search-{}", std::process::id()));
+        let user = root.join("user");
+        let system = root.join("system");
+        for dir in [&user, &system] {
+            fs::create_dir_all(dir.join("applications")).unwrap();
+        }
+        for index in 0..16 {
+            fs::write(
+                user.join(format!("applications/game-{index}.desktop")),
+                format!("[Desktop Entry]\nType=Application\nName=Private game {index:02}\nExec=steam steam://rungameid/{index}\nCategories=Game;\n"),
+            )
+            .unwrap();
+        }
+        fs::write(
+            system.join("applications/steam.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Steam\nExec=steam %U\nActions=Store;Library;\n[Desktop Action Store]\nName=Store\nExec=steam steam://store\n[Desktop Action Library]\nName=Library\nExec=steam steam://open/games\n",
+        )
+        .unwrap();
+        let entries = load_entries_from(&[user, system], &config(), &[]);
+        let ranking = entries
+            .iter()
+            .filter(|entry| entry.desktop_id != "steam.desktop")
+            .map(|entry| (entry.desktop_id.clone(), 1_000_000))
+            .collect();
+        for query in ["steam", "STEAM", "steam.desktop"] {
+            let found = search_ranked(&entries, query, 7, &ranking, &CancelToken::default());
+            assert!(!found.is_empty() && found.len() <= 7);
+            if query != "steam.desktop" {
+                assert_eq!(found.len(), 7);
+            }
+            let first = &entries[found[0].index];
+            assert_eq!(first.desktop_id, "steam.desktop", "query {query}");
+            assert_eq!(first.argv, ["steam"]);
+            assert!(
+                found
+                    .iter()
+                    .skip(1)
+                    .all(|other| other.score < found[0].score)
+            );
+        }
+        for (query, id, argument) in [
+            ("Private game 00", "game-0.desktop", "steam://rungameid/0"),
+            (
+                "Steam — Library",
+                "steam.desktop::Library",
+                "steam://open/games",
+            ),
+        ] {
+            let found = search_ranked(&entries, query, 7, &ranking, &CancelToken::default());
+            let first = &entries[found[0].index];
+            assert_eq!(first.desktop_id, id);
+            assert_eq!(first.argv, ["steam", argument]);
+        }
+        let empty = search_ranked(&entries, "", 7, &ranking, &CancelToken::default());
+        assert_ne!(entries[empty[0].index].desktop_id, "steam.desktop");
+        assert_eq!(empty[0].score, 1_000_000);
         fs::remove_dir_all(root).unwrap();
     }
 

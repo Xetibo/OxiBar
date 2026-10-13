@@ -38,6 +38,8 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Resolved: PATH commands no longer crowd desktop entries in default merged search;
   they have a separate prefix-scoped provider. Application executable/desktop-class
   aliases and comparable exact-match scores retain discoverability of Nix-profile apps.
+- Resolved: shared helper executables no longer let game shortcuts/actions crowd
+  exact application names/desktop IDs out of bounded results, even with usage/favorites.
 - Remaining gaps: DBusActivatable-only entries and a persistent mtime index cache.
   Large configured result lists do not yet scroll keyboard selection automatically.
   Tools' files and Commands' executables skip non-UTF8 paths rather than lossy retargeting.

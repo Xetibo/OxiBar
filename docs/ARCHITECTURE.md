@@ -263,6 +263,8 @@ paste handoff use the same scoped surface cleanup.
 - PATH commands are prefix-scoped by default, with an explicit opt-in for merged
   search. Application names/executable/desktop-class aliases use comparable exact,
   partial and fuzzy scores so installed desktop entries remain discoverable.
+  Within application results, exact names/desktop IDs outrank other matches after
+  usage/favorite boosts, preventing shared helper aliases from filling the result cap.
 - Per-output bars share one plugin model/subscription per plugin. Optional
   context-aware views receive output name, native scale and an instance identifier;
   `bar_view` also receives the output-local label preference and takes precedence

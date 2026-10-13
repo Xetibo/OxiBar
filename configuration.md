@@ -597,6 +597,9 @@ default_plugins = ["libapplications.so", "libcommands.so", "libtools.so"]
 The provider searches desktop entry names, executable names, desktop IDs,
 `StartupWMClass`, categories, keywords and generic names. Exact names/aliases rank
 above partial and fuzzy matches, including Nix-profile entries such as Nheko.
+An exact application name or desktop ID takes priority over other application
+matches even after usage/favorite boosts. Shared helper executables therefore do
+not let game shortcuts or desktop actions hide their parent application.
 Empty search combines favorites/recent usage with alphabetical fallback. XDG user data
 directories take precedence over system directories, including hidden-entry
 masking. Commands use argument-based process launching and support common desktop
