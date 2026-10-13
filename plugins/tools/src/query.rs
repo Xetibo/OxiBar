@@ -70,7 +70,7 @@ pub fn search(
     let prefix = input
         .chars()
         .next()
-        .filter(|character| ">=/@!:".contains(*character));
+        .filter(|character| "=/@!:".contains(*character));
     let query = if prefix.is_some() { &input[1..] } else { input }.trim();
     let normalized = query.to_lowercase();
     let mut found = Vec::new();
@@ -156,76 +156,6 @@ pub fn search(
             }
         }
         return Ok(found);
-    }
-    if prefix == Some('>') && !query.is_empty() {
-        let mut argv = shell_words::split(query).map_err(|error| error.to_string())?;
-        if argv.len() > 32
-            || argv
-                .iter()
-                .any(|argument| argument.len() > 4096 || argument.contains('\0'))
-        {
-            return Err("Command is too large".into());
-        }
-        if let Some(executable) = argv.first().and_then(|name| index.commands.get(name)) {
-            let key = format!("command:{}", argv[0]);
-            argv[0] = executable
-                .to_str()
-                .ok_or("Executable path is not UTF-8")?
-                .to_owned();
-            add(Found {
-                title: format!("Run {query}"),
-                description: if config.command_terminal {
-                    "Run argument list in terminal"
-                } else {
-                    "Run argument list"
-                }
-                .into(),
-                key: Some(key),
-                intent: Intent::Execute {
-                    argv,
-                    terminal: config.command_terminal,
-                    directory: None,
-                },
-                score: 1500,
-            });
-        } else if argv.len() > 1 {
-            return Err("Executable was not found in PATH".into());
-        }
-    }
-    if prefix.is_none() || prefix == Some('>') {
-        for (name, executable) in &index.commands {
-            if cancel.is_cancelled() {
-                return Ok(Vec::new());
-            }
-            let Some(executable) = executable.to_str() else {
-                continue;
-            };
-            let key = format!("command:{name}");
-            if prefix.is_none() && query.len() < 2 && !config.favorites.contains(&key) {
-                continue;
-            }
-            if let Some(score) = match_score(&normalized, name) {
-                if prefix == Some('>') && name == query {
-                    continue;
-                }
-                add(Found {
-                    title: name.clone(),
-                    description: if config.command_terminal {
-                        "Command · run in terminal"
-                    } else {
-                        "Command · run argument list"
-                    }
-                    .into(),
-                    key: Some(key),
-                    intent: Intent::Execute {
-                        argv: vec![executable.to_owned()],
-                        terminal: config.command_terminal,
-                        directory: None,
-                    },
-                    score: score - 100,
-                });
-            }
-        }
     }
     if prefix.is_none() || prefix == Some('/') {
         for path in &index.files {

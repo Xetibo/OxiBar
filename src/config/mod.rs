@@ -15,7 +15,8 @@ mod watch;
 pub use store::{ConfigSnapshot, ConfigStore, Mutation, Source};
 pub(crate) use watch::{WatchPaths, watch_changes};
 
-pub const DEFAULT_RUNNER_PLUGINS: [&str; 2] = ["libapplications.so", "libtools.so"];
+pub const DEFAULT_RUNNER_PLUGINS: [&str; 3] =
+    ["libapplications.so", "libcommands.so", "libtools.so"];
 
 pub fn get_allowed_plugins(config: &Table) -> Vec<&str> {
     let mut files = match config.get("plugins") {

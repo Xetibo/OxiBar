@@ -13,8 +13,12 @@
 
 - Authentication surfaces share one prompt transaction across outputs. Render
   secret responses as masks and collect them outside ordinary text-input widget
-  state; explicitly visible authentication prompts may echo their response. Enter
-  submits, Escape clears/cancels, and only authenticated completion unlocks.
+  state; explicitly visible authentication prompts may echo their response. Escape
+  clears/cancels, and only authenticated completion unlocks. The locker displays a
+  native pointer cursor; clicking the response focuses it. Tab/Shift+Tab cycle enabled
+  response and action controls with a theme accent ring. Enter activates the focused
+  action (or submits from the response), and Space activates focused buttons. New
+  response prompts focus the input automatically; typing only edits that input.
   Use opaque themed backgrounds and centered bounded cards with explicit progress
   and failure feedback.
 - Greeters offer a trusted session picker and username field before authentication,
@@ -71,6 +75,8 @@
   unmatched search. Healthy empty history explains how copying adds items; backend
   errors must remain visible alongside useful cached content.
 - Show provider prefixes, indexing/unavailable status and separate favorite actions.
+  Terminal/PATH command results are prefix-scoped by default; merged application
+  search is an explicit preference rather than command noise hiding desktop entries.
   A row or input submission captures its displayed provider/local identity; a later
   result reorder must not change what that activation executes. Ephemeral launcher
   clipboard history is explicitly opt-in and clears when disabled; calculator copy

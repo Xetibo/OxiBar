@@ -1,6 +1,6 @@
 use iced::{
     Element, Length,
-    widget::{Column, Row, container},
+    widget::{Column, Row, container, mouse_area},
 };
 use oxiced::{theme::theme_impl::OXITHEME, widgets::oxi_plugin};
 
@@ -10,6 +10,37 @@ use crate::{Interaction, Phase, PromptKind};
 pub enum Message {
     Submit,
     Cancel,
+    Focus(Focus),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Focus {
+    Input,
+    Submit,
+    Cancel,
+}
+impl Focus {
+    pub fn enabled(self, interaction: &Interaction, ready: bool) -> bool {
+        match self {
+            Self::Input => ready && interaction.phase == Phase::Prompt,
+            Self::Submit => ready && matches!(interaction.phase, Phase::Idle | Phase::Prompt),
+            Self::Cancel => true,
+        }
+    }
+    pub fn next(self, interaction: &Interaction, ready: bool, reverse: bool) -> Self {
+        let targets = [Self::Input, Self::Submit, Self::Cancel];
+        let mut index = targets
+            .iter()
+            .position(|target| *target == self)
+            .unwrap_or(0);
+        for _ in 0..targets.len() {
+            index = (index + if reverse { targets.len() - 1 } else { 1 }) % targets.len();
+            if targets[index].enabled(interaction, ready) {
+                return targets[index];
+            }
+        }
+        Self::Cancel
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -41,6 +72,18 @@ pub fn prompt_card<'a>(
     ready: bool,
     purpose: Purpose,
 ) -> Element<'a, Message> {
+    prompt_card_focused(identity, interaction, ready, purpose, None)
+}
+
+pub fn prompt_card_focused<'a>(
+    identity: &str,
+    interaction: &Interaction,
+    ready: bool,
+    purpose: Purpose,
+    focus: Option<Focus>,
+) -> Element<'a, Message> {
+    let input_enabled = Focus::Input.enabled(interaction, ready);
+    let submit_enabled = Focus::Submit.enabled(interaction, ready);
     let label = interaction
         .prompt
         .as_ref()
@@ -76,13 +119,23 @@ pub fn prompt_card<'a>(
             .size(OXITHEME.font_md),
         )
         .push(
-            container(
-                oxi_plugin::text(if value.is_empty() { " ".into() } else { value })
-                    .size(OXITHEME.font_xl),
+            mouse_area(
+                container(
+                    oxi_plugin::text(if value.is_empty() { " ".into() } else { value })
+                        .size(OXITHEME.font_xl),
+                )
+                .padding(OXITHEME.padding_md)
+                .width(Length::Fill)
+                .style(move |theme| {
+                    let mut style = oxi_plugin::compact_card_style(OXITHEME.secondary_bg)(theme);
+                    if focus == Some(Focus::Input) && input_enabled {
+                        style.border.color = OXITHEME.primary;
+                        style.border.width = 2.0;
+                    }
+                    style
+                }),
             )
-            .padding(OXITHEME.padding_md)
-            .width(Length::Fill)
-            .style(oxi_plugin::compact_card_style(OXITHEME.secondary_bg)),
+            .on_press(Message::Focus(Focus::Input)),
         );
     if !interaction.notice.is_empty() {
         body = body.push(oxi_plugin::text(interaction.notice.clone()).size(OXITHEME.font_sm));
@@ -98,18 +151,36 @@ pub fn prompt_card<'a>(
                     }),
                     true,
                 )
-                .on_press_maybe(
-                    (ready && interaction.phase != Phase::Waiting).then_some(Message::Submit),
-                ),
+                .style(move |theme, status| {
+                    let mut style = oxi_plugin::flat_primary_bg_button_style(theme, status);
+                    if focus == Some(Focus::Submit) && submit_enabled {
+                        style.border.color = OXITHEME.primary;
+                        style.border.width = 2.0;
+                    }
+                    style
+                })
+                .on_press_maybe(submit_enabled.then_some(Message::Submit)),
             )
             .push(
                 oxi_plugin::surface_button(oxi_plugin::text("Clear"), false)
+                    .style(move |theme, status| {
+                        let mut style = oxi_plugin::flat_secondary_bg_button_style(theme, status);
+                        if focus == Some(Focus::Cancel) {
+                            style.border.color = OXITHEME.primary;
+                            style.border.width = 2.0;
+                        }
+                        style
+                    })
                     .on_press(Message::Cancel),
             ),
     );
     body = body.push(
-        oxi_plugin::text("Enter to submit · Escape to clear · Ctrl+U to erase")
-            .size(OXITHEME.font_sm),
+        oxi_plugin::text(if focus.is_some() {
+            "Tab / Shift+Tab: focus · Enter: activate · Escape: clear · Ctrl+U: erase"
+        } else {
+            "Enter to submit · Escape to clear · Ctrl+U to erase"
+        })
+        .size(OXITHEME.font_sm),
     );
     container(oxi_plugin::settings_card(body))
         .max_width(440)

@@ -12,16 +12,20 @@ use waycrate_xkbkeycode::{
 };
 use wayland_client::{
     Connection, Dispatch, Proxy, QueueHandle, WEnum,
-    protocol::{wl_keyboard, wl_pointer, wl_seat},
+    protocol::{wl_compositor, wl_keyboard, wl_pointer, wl_seat, wl_shm},
 };
 
-use crate::backend::State;
+use crate::{
+    backend::{Error, State},
+    buffer::Cursor,
+};
 
 pub(crate) struct Seat {
     proxy: wl_seat::WlSeat,
     keyboard: Option<Keyboard>,
     pointer: Option<wl_pointer::WlPointer>,
     pointer_output: Option<u32>,
+    cursor: Option<Cursor>,
 }
 
 struct Keyboard {
@@ -40,7 +44,27 @@ impl Seat {
             keyboard: None,
             pointer: None,
             pointer_output: None,
+            cursor: None,
         }
+    }
+    pub fn show_cursor(
+        &mut self,
+        pointer: &wl_pointer::WlPointer,
+        serial: u32,
+        compositor: &wl_compositor::WlCompositor,
+        shm: &wl_shm::WlShm,
+        qh: &QueueHandle<State>,
+    ) -> Result<(), Error> {
+        if self.pointer.as_ref() != Some(pointer) {
+            return Ok(());
+        }
+        if self.cursor.is_none() {
+            self.cursor = Some(Cursor::new(compositor, shm, qh)?);
+        }
+        if let Some(cursor) = &self.cursor {
+            cursor.show(pointer, serial);
+        }
+        Ok(())
     }
     pub fn remove_output(&mut self, output: u32) {
         if self.pointer_output == Some(output) {
@@ -195,6 +219,7 @@ impl Dispatch<wl_seat::WlSeat, u32> for State {
                 seat.pointer = Some(seat.proxy.get_pointer(qh, *id));
             }
         } else if let Some(pointer) = seat.pointer.take() {
+            seat.cursor = None;
             if pointer.version() >= 3 {
                 pointer.release();
             }
@@ -359,12 +384,17 @@ impl Dispatch<wl_pointer::WlPointer, u32> for State {
         event: wl_pointer::Event,
         id: &u32,
         _: &Connection,
-        _: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         let enter = match &event {
             wl_pointer::Event::Enter { surface, .. } => state.surface_id(surface),
             _ => None,
         };
+        if enter.is_some()
+            && let wl_pointer::Event::Enter { serial, .. } = &event
+        {
+            state.show_cursor(*id, proxy, *serial, qh);
+        }
         let Some(seat) = state
             .seats
             .get_mut(id)

@@ -5,7 +5,7 @@ use iced::{
 };
 use oxi_auth_ui::{
     Interaction, Phase,
-    view::{self, Message},
+    view::{self, Focus, Message},
     visuals::{KeyboardStatus, Visuals},
 };
 use oxiced::theme::theme_impl::OXITHEME;
@@ -17,6 +17,7 @@ pub struct LockScreen {
     locked: bool,
     visuals: Visuals,
     keyboard: KeyboardStatus,
+    focus: Focus,
 }
 impl LockScreen {
     pub fn new() -> std::io::Result<Self> {
@@ -27,6 +28,7 @@ impl LockScreen {
             locked: false,
             visuals: Visuals::load(view::Purpose::Lock),
             keyboard: KeyboardStatus::default(),
+            focus: Focus::Submit,
         })
     }
     fn start(&mut self) {
@@ -44,6 +46,12 @@ impl LockScreen {
         self.worker = None;
         self.interaction.cancel();
         self.interaction.notice = "Authentication unavailable. Press Enter to retry.".into();
+        self.focus = Focus::Submit;
+    }
+    fn cancel(&mut self) {
+        self.worker = None;
+        self.interaction.cancel();
+        self.focus = Focus::Submit;
     }
     fn submit(&mut self) {
         if self.interaction.phase == Phase::Idle {
@@ -65,10 +73,15 @@ impl Application for LockScreen {
                 self.start();
             }
             Event::KeyboardStatus(status) => self.keyboard = status,
-            Event::Message(Message::Submit) => self.submit(),
-            Event::Message(Message::Cancel) => {
-                self.worker = None;
-                self.interaction.cancel();
+            Event::Message(Message::Submit) => {
+                self.focus = Focus::Submit;
+                self.submit();
+            }
+            Event::Message(Message::Cancel) => self.cancel(),
+            Event::Message(Message::Focus(focus)) => {
+                if focus.enabled(&self.interaction, self.locked) {
+                    self.focus = focus;
+                }
             }
             Event::Input {
                 event:
@@ -81,15 +94,37 @@ impl Application for LockScreen {
                 ..
             } => match key.as_ref() {
                 Key::Named(Named::Escape) => {
-                    self.worker = None;
-                    self.interaction.cancel();
+                    self.cancel();
                 }
-                Key::Named(Named::Enter) => self.submit(),
-                Key::Named(Named::Backspace) if self.interaction.phase == Phase::Prompt => {
+                Key::Named(Named::Tab) => {
+                    self.focus = self
+                        .focus
+                        .next(&self.interaction, self.locked, modifiers.shift());
+                }
+                Key::Named(Named::Enter) => {
+                    if self.focus == Focus::Cancel {
+                        self.cancel();
+                    } else {
+                        self.submit();
+                    }
+                }
+                Key::Named(Named::Space) | Key::Character(" ") if self.focus != Focus::Input => {
+                    if self.focus == Focus::Cancel {
+                        self.cancel();
+                    } else {
+                        self.submit();
+                    }
+                }
+                Key::Named(Named::Backspace)
+                    if self.interaction.phase == Phase::Prompt && self.focus == Focus::Input =>
+                {
                     self.interaction.input.pop()
                 }
-                Key::Character("u") if modifiers.control() => self.interaction.input.clear(),
+                Key::Character("u") if modifiers.control() && self.focus == Focus::Input => {
+                    self.interaction.input.clear()
+                }
                 _ if self.interaction.phase == Phase::Prompt
+                    && self.focus == Focus::Input
                     && !modifiers.control()
                     && !modifiers.alt()
                     && !modifiers.logo() =>
@@ -114,13 +149,18 @@ impl Application for LockScreen {
                     changed = true;
                     match event {
                         oxi_pam::Event::Prompt(attempt, prompt) => {
-                            self.interaction.receive(attempt, prompt);
+                            if self.interaction.receive(attempt, prompt)
+                                && self.interaction.phase == Phase::Prompt
+                            {
+                                self.focus = Focus::Input;
+                            }
                         }
                         oxi_pam::Event::Finished(attempt, success) => {
                             self.worker = None;
                             if self.interaction.complete(attempt, success) {
                                 return Action::AuthenticatedUnlock;
                             }
+                            self.focus = Focus::Submit;
                         }
                     }
                 }
@@ -143,11 +183,12 @@ impl Application for LockScreen {
             .spacing(OXITHEME.padding_lg)
             .align_x(iced::Alignment::Center)
             .push(self.visuals.heading())
-            .push(view::prompt_card(
+            .push(view::prompt_card_focused(
                 &self.identity,
                 &self.interaction,
                 self.locked,
                 view::Purpose::Lock,
+                Some(self.focus),
             ))
             .push(self.keyboard.view());
         if !self.visuals.notice.is_empty() {
@@ -178,16 +219,108 @@ impl Application for LockScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn ui_actions_before_protocol_readiness_never_begin_authentication_or_unlock() {
-        let mut app = LockScreen {
+    fn fixture() -> LockScreen {
+        LockScreen {
             identity: "Private fixture".into(),
             interaction: Interaction::default(),
             worker: None,
             locked: false,
             visuals: Visuals::default(),
             keyboard: KeyboardStatus::default(),
-        };
+            focus: Focus::Submit,
+        }
+    }
+    fn press(
+        app: &mut LockScreen,
+        key: Key,
+        text: Option<&str>,
+        modifiers: iced::keyboard::Modifiers,
+    ) {
+        app.update(Event::Input {
+            output: 1,
+            event: IcedEvent::Keyboard(iced::keyboard::Event::KeyPressed {
+                modified_key: key.clone(),
+                key,
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers,
+                text: text.map(Into::into),
+                repeat: false,
+            }),
+        });
+    }
+    #[test]
+    fn password_click_focus_tab_reverse_tab_and_clear_activation_do_not_unlock() {
+        let mut app = fixture();
+        app.locked = true;
+        let attempt = app.interaction.begin().unwrap();
+        app.interaction.receive(
+            attempt,
+            oxi_auth_ui::Prompt {
+                kind: oxi_auth_ui::PromptKind::Secret,
+                text: "Private password".into(),
+            },
+        );
+        app.update(Event::Message(Message::Focus(Focus::Input)));
+        press(
+            &mut app,
+            Key::Character("x".into()),
+            Some("private"),
+            iced::keyboard::Modifiers::empty(),
+        );
+        assert_eq!(app.interaction.input.masked(), "•••••••");
+        press(
+            &mut app,
+            Key::Named(Named::Tab),
+            None,
+            iced::keyboard::Modifiers::empty(),
+        );
+        assert_eq!(app.focus, Focus::Submit);
+        press(
+            &mut app,
+            Key::Character("x".into()),
+            Some("ignored"),
+            iced::keyboard::Modifiers::empty(),
+        );
+        assert_eq!(app.interaction.input.masked(), "•••••••");
+        press(
+            &mut app,
+            Key::Named(Named::Tab),
+            None,
+            iced::keyboard::Modifiers::empty(),
+        );
+        assert_eq!(app.focus, Focus::Cancel);
+        press(
+            &mut app,
+            Key::Named(Named::Tab),
+            None,
+            iced::keyboard::Modifiers::SHIFT,
+        );
+        assert_eq!(app.focus, Focus::Submit);
+        app.update(Event::Message(Message::Focus(Focus::Input)));
+        press(
+            &mut app,
+            Key::Named(Named::Tab),
+            None,
+            iced::keyboard::Modifiers::SHIFT,
+        );
+        assert_eq!(app.focus, Focus::Cancel);
+        press(
+            &mut app,
+            Key::Named(Named::Enter),
+            None,
+            iced::keyboard::Modifiers::empty(),
+        );
+        assert_eq!(app.interaction.phase, Phase::Idle);
+        assert!(app.interaction.input.is_empty());
+        assert!(app.interaction.attempt.is_none());
+        assert!(app.locked);
+    }
+    #[test]
+    fn ui_actions_before_protocol_readiness_never_begin_authentication_or_unlock() {
+        let mut app = fixture();
         assert_eq!(app.update(Event::Message(Message::Submit)), Action::Redraw);
         assert!(app.worker.is_none());
         assert!(app.interaction.attempt.is_none());

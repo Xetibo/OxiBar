@@ -10,7 +10,10 @@ actual Iced CPU frames. They check latest configure acknowledgement, non-NULL
 opaque SHM pixels and native RGB byte order, integer/fractional geometry, output
 hotplug/removal, denied and
 external-finish destruction, readiness-before-callback, authenticated final sync,
-missing-protocol refusal, malformed configure and crash-without-unlock.
+missing-protocol refusal, malformed configure and crash-without-unlock. A native
+pointer fixture validates the Enter serial, visible ARGB cursor pixels and actual
+Iced button clicks on the lock surface. Controller checks cover response click focus,
+Tab/Shift+Tab traversal, focused editing and Clear without authenticating/unlocking.
 `oxi-pam` tests compile a private PAM module and load it through test-only
 `pam_start_confdir`; production always uses the fixed system service. They exercise
 the real PAM library, information/error/visible/secret MFA prompts, wrong answers,
@@ -27,7 +30,7 @@ the current user's desktop session or credentials.
 
 `nix build .#oxilock .#oxisession` builds independent authentication packages and
 runs their selected Cargo tests. `checks.<system>.authentication-unit` runs all
-four authentication crates (30 normal tests plus the test-only ignored PAM child
+four authentication crates (32 normal tests plus the test-only ignored PAM child
 entry); `authentication-clippy` runs strict all-targets Clippy. Bounded appearance
 and asset decoding, truthful Caps inference, repeat retirement and widget wake
 deadlines have service-free checks. A private p2p logind fixture transfers actual
@@ -50,6 +53,8 @@ The sleep fixture uses legacy VGA/pixman and a protected block-backed Nix store;
 pinned virtio-GPU fences stall after S3. Hyprland retains virtio-GPU coverage.
 Use raw-frame OCR for opaque-card readiness/dialog presence; PAM results and
 process/seat state, not OCR or sleeps alone, gate authentication assertions.
+The VM greeter inherits `ICED_BACKEND=wgpu` and deliberately nonexistent Vulkan
+ICD paths; its binary must still start and complete login through CPU rendering.
 Deployment examples are in `AUTH_DEPLOYMENT.md`.
 
 ## Strategy
@@ -62,7 +67,8 @@ Deployment examples are in `AUTH_DEPLOYMENT.md`.
 
 ## Current Unit Coverage
 
-- SDK/release: actual-completion app handoff validation, owned interval cancellation,
+- SDK/release: actual-completion app handoff validation, restoration of the original
+  session graphics/font environment, owned interval cancellation,
   quiet root-filtered filesystem watches, process-resident code/deferred vtable
   cleanup, shared example views/config/modal state and Network stale-edit replies.
 
@@ -83,7 +89,8 @@ Deployment examples are in `AUTH_DEPLOYMENT.md`.
 - `tray`: StatusNotifier address normalization, tray label fallback, DBusMenu label cleanup, item/hover/context-menu state update, dynamic popup metrics, popup/action rendering, and error draining.
 - `workspaces`: active workspace state update, empty launch behavior, view construction, and error draining without requiring Hyprland.
 - Runner: XDG precedence/hidden masking, localized fields/actions, inherited/cyclic
-  icon themes, argument expansion, stable catalogs and bounded ranked matching;
+  icon themes, argument expansion, symlinked Nix-profile app entries and exact
+  executable/desktop-class aliases, stable catalogs and bounded ranked matching;
   latest-running/pending cancellation, scope reactivation, metadata load/save races,
   private versioned state, exact-provider activation and stale displayed identities.
 - IPC: command validation, configured socket path, a real command/acknowledgement round trip and stale-socket recovery.
@@ -156,6 +163,9 @@ Deployment examples are in `AUTH_DEPLOYMENT.md`.
 - Tools: bounded calculator parsing, all provider prefixes, quoted argument vectors,
   bookmark/action validation, immutable edited actions, opt-out history clearing,
   no clipboard text in identity/usage state and actual failed copy outcomes.
+- Commands: prefix isolation/merged-search opt-in, literal quoted argv, first-PATH
+  precedence, executable symlinks, absolute paths, subsequence matches, immutable terminal actions,
+  stale identity rejection and cancellation.
 - Provider validation: pinned library lifetime, rejection before adoption/writes,
   longest-prefix cancellation and sparse live favorite changes. Filesystem tests
   cover nonrecursive missing parents, created roots and prompt owned watcher drop.
@@ -163,13 +173,13 @@ Deployment examples are in `AUTH_DEPLOYMENT.md`.
 ## Refined UI and Native Display Runtime Verification
 
 `scripts/ui-smoke.py` runs only inside an owned isolated compositor. Supply the host
-and Clock/System/Notifications/Audio/Bluetooth/Stats/Applications/Tools DLLs:
+and Clock/System/Notifications/Audio/Bluetooth/Stats/Applications/Commands/Tools DLLs:
 
 ```sh
 nix develop --impure --file nix/gui-tests.nix -c \
   python scripts/run-isolated.py -- \
   python scripts/ui-smoke.py "$OXIBAR" "$CLOCK" "$SYSTEM" "$NOTIFICATIONS" \
-    "$AUDIO" "$BLUETOOTH" "$STATS" "$APPLICATIONS" "$TOOLS"
+    "$AUDIO" "$BLUETOOTH" "$STATS" "$APPLICATIONS" "$COMMANDS" "$TOOLS"
 ```
 
 For unwrapped local Cargo binaries/libraries, prefix this command with
@@ -179,7 +189,8 @@ It checks actual clicked-button geometry, icon-only host/provider bars and live 
 width changes, attached clock/left navigation/inbox, centered 800×480 OxiShut-style
 session tiles and native confirmation, 1440×960 settings, live default-provider enablement without
 restart, indexing/search/activation of an owned desktop-entry fixture and calculator
-copy. Three-column pointer drag and its content preview, coherent Base24/accent and
+copy. A separate `>` command fixture checks provider isolation and actual activation
+with literal quoted arguments. Three-column pointer drag and its content preview, coherent Base24/accent and
 real monitor Preview/Keep/Revert/sparse-save plus bottom-bar placement are covered. The fixture owns
 its XDG config/data/state, immutable base symlink, bus, mock logind/power profiles,
 MPRIS player, null-device PulseAudio server, virtual pointer and compositor;
@@ -207,8 +218,8 @@ during animated layout changes are not a reliable animation timing assertion.
 The smoke enables backtraces, retains panic diagnostics and fails if the daemon's
 retry loop catches a panic. A restarted daemon cannot satisfy the run.
 
-Installer verification uses private fake-library fixtures: missing Applications or
-OxiPaste files must fail before any installation, all thirteen libraries must install with
+Installer verification uses private fake-library fixtures: missing Applications,
+Commands or OxiPaste files must fail before any installation, all fourteen libraries must install with
 correct contents/mode, and absolute/relative `CARGO_TARGET_DIR` plus custom
 `XDG_CONFIG_HOME` must work. `bash -n scripts/install-plugins.sh` checks syntax.
 
@@ -247,14 +258,15 @@ are separate known boundaries, not inferred from headless success.
 - `nix build .#oxibar .#oxibar-audio .#oxibar-bluetooth .#oxibar-system` after native backend/API
   changes, with more plugin package targets as needed.
 
-For this runner integration, build `oxibar`, `oxibar-applications`, and a retained
+For this runner integration, build `oxibar`, `oxibar-applications`, `oxibar-commands`,
+`oxibar-tools`, and a retained
 bar plugin such as `oxibar-clock`. While new files are still untracked, use the
 local-path flake reference so Nix sees them:
 
 ```sh
 nix develop path:. -c env -u HYPRLAND_INSTANCE_SIGNATURE cargo test --workspace
 nix develop path:. -c cargo clippy --workspace --all-targets -- -D warnings
-nix build path:.#oxibar path:.#oxibar-applications path:.#oxibar-clock --no-link
+nix build path:.#oxibar path:.#oxibar-applications path:.#oxibar-commands path:.#oxibar-tools path:.#oxibar-clock --no-link
 ```
 
 A `path:.` import also includes ignored build directories before Cargo source

@@ -5,6 +5,8 @@ use iced::futures::{
     future::{Either, select},
 };
 use std::{
+    collections::BTreeMap,
+    ffi::OsString,
     os::unix::{fs::PermissionsExt, process::CommandExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -25,6 +27,44 @@ pub enum Handoff {
     Direct(u32),
 }
 static NEXT_UNIT: AtomicU64 = AtomicU64::new(0);
+
+fn application_environment(
+    environment: impl IntoIterator<Item = (OsString, OsString)>,
+) -> BTreeMap<OsString, OsString> {
+    let mut environment: BTreeMap<_, _> = environment.into_iter().collect();
+    if environment
+        .get(std::ffi::OsStr::new("OXIBAR_APP_ENV_SAVED"))
+        .is_some_and(|value| value == "1")
+    {
+        for key in ["LD_LIBRARY_PATH", "FONTCONFIG_FILE", "VK_ICD_FILENAMES"] {
+            let original = environment.remove(std::ffi::OsStr::new(&format!("OXIBAR_APP_{key}")));
+            environment.remove(std::ffi::OsStr::new(key));
+            if let Some(value) = original.filter(|value| !value.is_empty()) {
+                environment.insert(key.into(), value);
+            }
+        }
+    }
+    environment.retain(|key, _| {
+        !matches!(
+            key.to_str(),
+            Some(
+                "INVOCATION_ID"
+                    | "JOURNAL_STREAM"
+                    | "WAYLAND_SOCKET"
+                    | "NOTIFY_SOCKET"
+                    | "LISTEN_PID"
+                    | "LISTEN_FDS"
+                    | "LISTEN_FDNAMES"
+                    | "SYSTEMD_EXEC_PID"
+                    | "OXIBAR_APP_ENV_SAVED"
+                    | "OXIBAR_APP_LD_LIBRARY_PATH"
+                    | "OXIBAR_APP_FONTCONFIG_FILE"
+                    | "OXIBAR_APP_VK_ICD_FILENAMES"
+            )
+        )
+    });
+    environment
+}
 
 /// Call from a worker, never from rendering. User-systemd is preferred; a host
 /// without that manager gets an independently grouped, reaped direct child.
@@ -156,21 +196,9 @@ async fn handoff(
         std::process::id(),
         NEXT_UNIT.fetch_add(1, Ordering::Relaxed)
     );
-    let environment: Vec<String> = std::env::vars_os()
+    let environment: Vec<String> = application_environment(std::env::vars_os())
+        .into_iter()
         .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
-        .filter(|(key, _)| {
-            !matches!(
-                key.as_str(),
-                "INVOCATION_ID"
-                    | "JOURNAL_STREAM"
-                    | "WAYLAND_SOCKET"
-                    | "NOTIFY_SOCKET"
-                    | "LISTEN_PID"
-                    | "LISTEN_FDS"
-                    | "LISTEN_FDNAMES"
-                    | "SYSTEMD_EXEC_PID"
-            )
-        })
         .map(|(key, value)| format!("{key}={value}"))
         .collect();
     let mut properties = vec![
@@ -180,7 +208,7 @@ async fn handoff(
         ("CollectMode", Value::from("inactive-or-failed")),
         ("StandardInput", Value::from("null")),
         ("StandardOutput", Value::from("null")),
-        ("StandardError", Value::from("null")),
+        ("StandardError", Value::from("journal")),
         ("Environment", Value::from(environment)),
         (
             "ExecStart",
@@ -246,10 +274,12 @@ pub fn direct(arguments: Vec<String>, directory: Option<PathBuf>) -> Result<Hand
     let mut command = Command::new(&arguments[0]);
     command
         .args(&arguments[1..])
+        .env_clear()
+        .envs(application_environment(std::env::vars_os()))
         .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     if let Some(directory) = directory {
         command.current_dir(directory);
     }
@@ -480,6 +510,46 @@ mod tests {
         assert!(direct(vec![], None).is_err());
         assert!(launch(vec!["bad\0argument".into()], None).is_err());
         assert!(resolve("/missing/oxibar-program", None).is_err());
+    }
+    #[test]
+    fn application_handoff_restores_session_graphics_and_drops_shell_service_metadata() {
+        let environment = application_environment(
+            [
+                ("OXIBAR_APP_ENV_SAVED", "1"),
+                ("OXIBAR_APP_LD_LIBRARY_PATH", ""),
+                ("OXIBAR_APP_FONTCONFIG_FILE", "/session/fonts.conf"),
+                ("OXIBAR_APP_VK_ICD_FILENAMES", "/session/driver.json"),
+                ("LD_LIBRARY_PATH", "/oxibar/libs"),
+                ("FONTCONFIG_FILE", "/oxibar/fonts.conf"),
+                ("VK_ICD_FILENAMES", "/oxibar/driver.json"),
+                ("WAYLAND_DISPLAY", "wayland-private"),
+                ("PATH", "/session/bin"),
+                ("INVOCATION_ID", "shell"),
+                ("WAYLAND_SOCKET", "9"),
+                ("NOTIFY_SOCKET", "/private/socket"),
+                ("LISTEN_FDS", "2"),
+            ]
+            .map(|(key, value)| (key.into(), value.into())),
+        );
+        assert!(!environment.contains_key(std::ffi::OsStr::new("LD_LIBRARY_PATH")));
+        assert_eq!(
+            environment[std::ffi::OsStr::new("FONTCONFIG_FILE")],
+            "/session/fonts.conf"
+        );
+        assert_eq!(
+            environment[std::ffi::OsStr::new("VK_ICD_FILENAMES")],
+            "/session/driver.json"
+        );
+        assert_eq!(
+            environment[std::ffi::OsStr::new("WAYLAND_DISPLAY")],
+            "wayland-private"
+        );
+        assert_eq!(environment.len(), 4);
+        let unwrapped = application_environment([("LD_LIBRARY_PATH".into(), "/user/libs".into())]);
+        assert_eq!(
+            unwrapped[std::ffi::OsStr::new("LD_LIBRARY_PATH")],
+            "/user/libs"
+        );
     }
     #[test]
     fn relative_executable_uses_the_requested_working_directory() {

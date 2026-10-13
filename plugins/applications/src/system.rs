@@ -691,6 +691,7 @@ pub(crate) fn search_ranked(
 ) -> Vec<Match> {
     let matcher = SkimMatcherV2::default().ignore_case();
     let query = query.trim();
+    let normalized = query.to_lowercase();
     let mut matches: Vec<Match> = Vec::with_capacity(limit.min(50));
     for (index, entry) in entries.iter().enumerate() {
         if cancel.is_cancelled() {
@@ -700,8 +701,24 @@ pub(crate) fn search_ranked(
             Some(0)
         } else {
             std::iter::once(&entry.name)
+                .chain([&entry.executable, &entry.window_class, &entry.desktop_id])
                 .chain(&entry.keywords)
-                .filter_map(|candidate| matcher.fuzzy_match(candidate, query))
+                .filter_map(|candidate| {
+                    let text = candidate.to_lowercase();
+                    if text == normalized
+                        || text.strip_suffix(".desktop") == Some(normalized.as_str())
+                    {
+                        Some(1000)
+                    } else if text.starts_with(&normalized) {
+                        Some(500 - (text.len() as i64).min(100))
+                    } else if let Some(position) = text.find(&normalized) {
+                        Some(300 - (position as i64).min(100))
+                    } else {
+                        matcher
+                            .fuzzy_match(candidate, query)
+                            .map(|score| score.min(199))
+                    }
+                })
                 .max()
         };
         let Some(score) = score else {
@@ -846,6 +863,32 @@ mod tests {
         )
         .unwrap();
         assert!(load_entries_from(&[user, system], &config(), &[]).is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn nix_profile_desktop_symlinks_and_executable_aliases_are_searchable() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("oxibar-profile-apps-{}", std::process::id()));
+        let store = root.join("store");
+        let profile = root.join("profile");
+        fs::create_dir_all(store.join("applications")).unwrap();
+        fs::create_dir_all(&profile).unwrap();
+        fs::write(store.join("applications/nheko.desktop"), "[Desktop Entry]\nType=Application\nName=nheko\nExec=nheko %u\nKeywords=Matrix;chat;\nStartupWMClass=nheko\n").unwrap();
+        fs::write(store.join("applications/ai.opencode.desktop.desktop"), "[Desktop Entry]\nType=Application\nName=OpenCode\nExec=opencode-desktop %U\nStartupWMClass=ai.opencode.desktop\n").unwrap();
+        symlink(store.join("applications"), profile.join("applications")).unwrap();
+        let entries = load_entries_from(&[profile], &config(), &[]);
+        assert_eq!(entries.len(), 2);
+        for (query, executable) in [
+            ("nheko", "nheko"),
+            ("opencode-desktop", "opencode-desktop"),
+            ("ai.opencode.desktop", "opencode-desktop"),
+        ] {
+            let found = search(&entries, query, 7);
+            assert!(!found.is_empty(), "missing {query}");
+            assert_eq!(entries[found[0].index].argv, [executable]);
+            assert_eq!(found[0].score, 1000, "exact alias {query}");
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

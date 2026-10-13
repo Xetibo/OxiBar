@@ -35,9 +35,12 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 - Status: localized fields/actions, inherited icons, filesystem refresh, usage/
   favorites and coalesced cancellable searches implemented.
+- Resolved: PATH commands no longer crowd desktop entries in default merged search;
+  they have a separate prefix-scoped provider. Application executable/desktop-class
+  aliases and comparable exact-match scores retain discoverability of Nix-profile apps.
 - Remaining gaps: DBusActivatable-only entries and a persistent mtime index cache.
   Large configured result lists do not yet scroll keyboard selection automatically.
-  Tools' file/command candidates skip non-UTF8 paths rather than lossy retargeting.
+  Tools' files and Commands' executables skip non-UTF8 paths rather than lossy retargeting.
 - Clipboard text is bounded, opt-in and ephemeral; non-text/oversized selections
   are not captured. Compositors without data-control keep other Tools providers
   usable but cannot provide native clipboard copy/history.
@@ -190,8 +193,9 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Resolved: provider switches now load Applications immediately, and Nix profile
   directories supplement incomplete session XDG paths while preserving precedence.
 - Resolved: the development installer omitted Applications despite enabled config,
-  leaving the dock without a catalog. It now preflights all thirteen libraries, includes
-  Applications and respects custom build/config roots. The Nix host supplies a pinned
+  leaving the dock without a catalog. It now preflights all fourteen libraries,
+  includes Applications, Commands and OxiPaste and respects custom build/config roots.
+  The Nix host supplies a pinned
   Applications fallback after user-installed libraries, still requiring enablement.
 
 ### Persistent Clipboard Integration
@@ -288,6 +292,10 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Native user-manager app handoff escapes the shell termination cgroup where
   supported. Direct fallback creates a reaped process group but cannot escape an
   existing systemd cgroup without a user manager.
+- Resolved: packaged/development shell graphics and font overrides no longer leak
+  into handed-off apps. Post-exec application errors now retain stderr diagnostics.
+  OpenCode opens under a private compositor; its earlier desktop-session Electron
+  SIGTRAP is not reproduced there, so its hardware-specific cause remains unproven.
 
 ## UI Theme Debt
 
@@ -319,6 +327,12 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Rebuild-time inhibitor FD inheritance is resolved: unrelated descriptors are
   retired at locker exec, and private lease checks tolerate bounded asynchronous
   cleanup while retaining their live-child ownership assertions.
+- Resolved: locker mouse interaction now publishes a visible native cursor and
+  explicit response focus; Tab/Shift+Tab reaches enabled input/buttons without
+  moving secrets into ordinary widgets. Private protocol and controller checks pass.
+- Resolved: greeter startup selects CPU rendering before GPU initialization.
+  Authentication packaging no longer pins the compositor to a software Vulkan ICD;
+  the Cage login/lock/suspend VM passes with deliberately invalid Vulkan settings.
 - Actual DRM/firmware behavior beyond the tested virtual devices still needs hardware
   coverage. The pinned virtio-GPU fence queue stalls after QEMU S3; the sleep fixture
   uses legacy VGA/pixman while Hyprland retains normal virtio-GPU tests. No production

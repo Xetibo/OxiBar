@@ -491,7 +491,7 @@ pub extern "Rust" fn runner_cancel(model: PluginModel) {
 }
 #[unsafe(no_mangle)]
 pub extern "Rust" fn runner_prefixes(_: PluginModel) -> Vec<String> {
-    [">", "=", "/", "@", "!", ":"]
+    ["=", "/", "@", "!", ":"]
         .into_iter()
         .map(str::to_owned)
         .collect()
@@ -629,7 +629,7 @@ pub extern "Rust" fn settings_schema() -> Vec<SettingDescriptor> {
         ),
         SettingDescriptor::new(
             "tools.terminal",
-            "Command terminal",
+            "Named action terminal",
             SettingKind::Arguments,
             Some("kitty".into()),
             ApplyMode::Live,
@@ -639,13 +639,6 @@ pub extern "Rust" fn settings_schema() -> Vec<SettingDescriptor> {
             "File and bookmark opener",
             SettingKind::Arguments,
             Some("xdg-open".into()),
-            ApplyMode::Live,
-        ),
-        SettingDescriptor::new(
-            "tools.command_terminal",
-            "Run commands in terminal",
-            SettingKind::Boolean,
-            Some(true.into()),
             ApplyMode::Live,
         ),
         SettingDescriptor::new(

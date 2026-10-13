@@ -3,9 +3,7 @@ use iced::futures::{StreamExt, executor::block_on};
 use oxibar_plugin_api::worker::CancelToken;
 
 fn configuration() -> config::Config {
-    let table: TomlTable = "[tools]\nfile_roots = []\ncommand_terminal = false"
-        .parse()
-        .unwrap();
+    let table: TomlTable = "[tools]\nfile_roots = []".parse().unwrap();
     config::read(&table).unwrap()
 }
 
@@ -34,7 +32,7 @@ fn collect<T: Send + 'static>(task: Task<T>) -> Vec<T> {
 }
 
 #[test]
-fn explicit_prefixes_select_typed_arguments_calculator_bookmarks_actions_files_and_history() {
+fn explicit_prefixes_select_calculator_bookmarks_actions_files_and_history() {
     let mut config = configuration();
     config.clipboard = true;
     config.bookmarks = vec![config::Bookmark {
@@ -50,7 +48,6 @@ fn explicit_prefixes_select_typed_arguments_calculator_bookmarks_actions_files_a
         directory: None,
     }];
     let index = index::Index {
-        commands: BTreeMap::from([("printf".into(), "/bin/printf".into())]),
         files: vec!["/tmp/Fixture Document.txt".into()],
     };
     let clipboard = clipboard::Snapshot {
@@ -73,10 +70,7 @@ fn explicit_prefixes_select_typed_arguments_calculator_bookmarks_actions_files_a
         )
         .unwrap()
     };
-    let command = search("> printf '%s' 'hello world; untouched'");
-    assert!(
-        matches!(&command[0].intent, query::Intent::Execute { argv, terminal: false, .. } if argv == &["/bin/printf", "%s", "hello world; untouched"])
-    );
+    assert!(search("> printf '%s' 'hello world; untouched'").is_empty());
     assert!(
         matches!(&search("= 6 * 7")[0].intent, query::Intent::Copy { text, identity } if text == "42" && identity == "calculator:42")
     );

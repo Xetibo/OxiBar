@@ -344,7 +344,7 @@ fn default_launcher_providers_are_sparse_live_settings_and_explicit_disable_wins
     let snapshot = host.config_snapshot();
     assert_eq!(
         oxibar::config::get_allowed_plugins(&snapshot.effective),
-        ["libapplications.so", "libtools.so"]
+        ["libapplications.so", "libcommands.so", "libtools.so"]
     );
     assert!(
         !host
@@ -357,7 +357,7 @@ fn default_launcher_providers_are_sparse_live_settings_and_explicit_disable_wins
     )));
     assert_eq!(
         oxibar::config::get_allowed_plugins(&host.config_snapshot().effective),
-        ["libapplications.so"]
+        ["libapplications.so", "libcommands.so"]
     );
     host.drive(Message::Settings(settings::Action::EnableDefaultProviders(
         false,

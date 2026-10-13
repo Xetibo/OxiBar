@@ -13,6 +13,8 @@
   to the configured root relationship; unrelated logs must not cause reindex loops.
 - Launch external apps through the shared argument-based user-manager handoff from
   worker context. Never direct-launch again after uncertain submission acceptance.
+  Keep shell-only graphics/library/font overrides out of child apps; preserve and
+  restore the incoming session environment rather than stripping legitimate user settings.
 - Measure actual compositor presentation for first-frame gates. Keep measurement
   traces outside watched fixtures and preserve normal idle behavior when disabled.
 

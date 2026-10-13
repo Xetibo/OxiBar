@@ -12,7 +12,7 @@ use iced_runtime::{
 };
 use wayland_client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
-    protocol::{wl_buffer, wl_compositor, wl_output, wl_registry, wl_shm, wl_surface},
+    protocol::{wl_buffer, wl_compositor, wl_output, wl_pointer, wl_registry, wl_shm, wl_surface},
 };
 use wayland_protocols::{
     ext::session_lock::v1::client::{
@@ -272,6 +272,20 @@ pub(crate) struct State {
 }
 
 impl State {
+    pub(crate) fn show_cursor(
+        &mut self,
+        id: u32,
+        pointer: &wl_pointer::WlPointer,
+        serial: u32,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let (Some(seat), Some(compositor), Some(shm)) =
+            (self.seats.get_mut(&id), &self.compositor, &self.shm)
+            && let Err(error) = seat.show_cursor(pointer, serial, compositor, shm, qh)
+        {
+            self.input_error(&format!("Cannot create lock cursor: {error}"));
+        }
+    }
     pub(crate) fn keyboard_status(&mut self, status: oxi_auth_ui::visuals::KeyboardStatus) {
         self.events.push_back(Pending::KeyboardStatus(status));
     }

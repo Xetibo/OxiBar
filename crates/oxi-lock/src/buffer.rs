@@ -5,7 +5,7 @@ use iced_tiny_skia::graphics::Viewport;
 use memmap2::{MmapMut, MmapOptions};
 use wayland_client::{
     Proxy, QueueHandle,
-    protocol::{wl_buffer, wl_shm, wl_shm_pool},
+    protocol::{wl_buffer, wl_compositor, wl_pointer, wl_shm, wl_shm_pool, wl_surface},
 };
 
 use crate::backend::{Error, State};
@@ -117,4 +117,74 @@ impl Drop for Buffer {
     }
 }
 
+pub(crate) struct Cursor {
+    surface: wl_surface::WlSurface,
+    buffer: wl_buffer::WlBuffer,
+    _map: MmapMut,
+}
+impl Cursor {
+    pub fn new(
+        compositor: &wl_compositor::WlCompositor,
+        shm: &wl_shm::WlShm,
+        qh: &QueueHandle<State>,
+    ) -> Result<Self, Error> {
+        const WIDTH: usize = 16;
+        const HEIGHT: usize = 24;
+        let file = File::from(rustix::fs::memfd_create(
+            c"oxilock-cursor",
+            rustix::fs::MemfdFlags::CLOEXEC,
+        )?);
+        file.set_len((WIDTH * HEIGHT * 4) as u64)?;
+        // Static cursor pixels are never rewritten while the compositor uses them.
+        let mut map = unsafe { MmapOptions::new().map_mut(&file)? };
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let edge = y < 16 && x <= y / 2;
+                let stem = (12..22).contains(&y) && (4..7).contains(&x);
+                let pixel: u32 = if (edge && (x == 0 || x == y / 2 || y == 15))
+                    || (stem && (x == 4 || x == 6 || y == 21))
+                {
+                    0xff000000
+                } else if edge || stem {
+                    0xffffffff
+                } else {
+                    0
+                };
+                let offset = (y * WIDTH + x) * 4;
+                map[offset..offset + 4].copy_from_slice(&pixel.to_ne_bytes());
+            }
+        }
+        use std::os::fd::AsFd;
+        let pool = shm.create_pool(file.as_fd(), map.len() as i32, qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            WIDTH as i32,
+            HEIGHT as i32,
+            WIDTH as i32 * 4,
+            wl_shm::Format::Argb8888,
+            qh,
+            (),
+        );
+        pool.destroy();
+        Ok(Self {
+            surface: compositor.create_surface(qh, ()),
+            buffer,
+            _map: map,
+        })
+    }
+    pub fn show(&self, pointer: &wl_pointer::WlPointer, serial: u32) {
+        pointer.set_cursor(serial, Some(&self.surface), 0, 0);
+        self.surface.attach(Some(&self.buffer), 0, 0);
+        self.surface.damage(0, 0, 16, 24);
+        self.surface.commit();
+    }
+}
+impl Drop for Cursor {
+    fn drop(&mut self) {
+        self.surface.destroy();
+        self.buffer.destroy();
+    }
+}
+
 wayland_client::delegate_noop!(State: ignore wl_shm_pool::WlShmPool);
+wayland_client::delegate_noop!(State: ignore wl_buffer::WlBuffer);

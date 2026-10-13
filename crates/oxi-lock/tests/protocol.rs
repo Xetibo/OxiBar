@@ -32,7 +32,10 @@ use wayland_protocols::{
 use wayland_server::{
     Client, DataInit, Dispatch, Display, DisplayHandle, GlobalDispatch, New, Resource,
     backend::{ClientData, ClientId, DisconnectReason, GlobalId},
-    protocol::{wl_buffer, wl_compositor, wl_output, wl_region, wl_shm, wl_shm_pool, wl_surface},
+    protocol::{
+        wl_buffer, wl_compositor, wl_output, wl_pointer, wl_region, wl_seat, wl_shm, wl_shm_pool,
+        wl_surface,
+    },
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,6 +48,7 @@ enum Policy {
     Hotplug,
     Missing,
     Malformed,
+    Pointer,
 }
 
 #[derive(Default)]
@@ -55,6 +59,7 @@ struct Record {
     unlocked: usize,
     destroyed: usize,
     removed: usize,
+    cursors: usize,
 }
 #[derive(Default)]
 struct Controls {
@@ -94,6 +99,9 @@ impl Fixture {
                     (),
                 );
             }
+            if policy == Policy::Pointer {
+                handle.create_global::<Server, wl_seat::WlSeat, _>(9, ());
+            }
             handle.insert_client(server, control.clone()).unwrap();
             let mut state = Server {
                 controls: control.clone(),
@@ -102,6 +110,7 @@ impl Fixture {
                 locked: false,
                 initial: Some(initial),
                 hotplugged: false,
+                pointer: None,
             };
             let start = Instant::now();
             while !control.stop.load(Ordering::Acquire) && start.elapsed() < Duration::from_secs(8)
@@ -137,6 +146,7 @@ struct Surface {
     buffer: Option<wl_buffer::WlBuffer>,
     scale: i32,
     destination: Option<(i32, i32)>,
+    cursor: bool,
 }
 type SurfaceData = Arc<Mutex<Surface>>;
 struct LockData {
@@ -149,6 +159,7 @@ struct BufferData {
     width: i32,
     height: i32,
     stride: i32,
+    format: wl_shm::Format,
 }
 struct Server {
     controls: Arc<Controls>,
@@ -157,6 +168,7 @@ struct Server {
     locked: bool,
     initial: Option<GlobalId>,
     hotplugged: bool,
+    pointer: Option<wl_pointer::WlPointer>,
 }
 
 macro_rules! global {
@@ -199,6 +211,64 @@ noop!(wl_region::WlRegion, ());
 noop!(wl_buffer::WlBuffer, BufferData);
 noop!(fractional::WpFractionalScaleV1, ());
 
+impl GlobalDispatch<wl_seat::WlSeat, ()> for Server {
+    fn bind(
+        _: &mut Self,
+        _: &DisplayHandle,
+        _: &Client,
+        resource: New<wl_seat::WlSeat>,
+        _: &(),
+        init: &mut DataInit<'_, Self>,
+    ) {
+        let seat = init.init(resource, ());
+        seat.capabilities(wl_seat::Capability::Pointer);
+        seat.name("private-pointer".into());
+    }
+}
+impl Dispatch<wl_seat::WlSeat, ()> for Server {
+    fn request(
+        state: &mut Self,
+        _: &Client,
+        _: &wl_seat::WlSeat,
+        request: wl_seat::Request,
+        _: &(),
+        _: &DisplayHandle,
+        init: &mut DataInit<'_, Self>,
+    ) {
+        if let wl_seat::Request::GetPointer { id } = request {
+            state.pointer = Some(init.init(id, ()));
+        }
+    }
+}
+impl Dispatch<wl_pointer::WlPointer, ()> for Server {
+    fn request(
+        state: &mut Self,
+        _: &Client,
+        _: &wl_pointer::WlPointer,
+        request: wl_pointer::Request,
+        _: &(),
+        _: &DisplayHandle,
+        _: &mut DataInit<'_, Self>,
+    ) {
+        if let wl_pointer::Request::SetCursor {
+            serial,
+            surface: Some(surface),
+            hotspot_x,
+            hotspot_y,
+        } = request
+        {
+            assert_eq!((serial, hotspot_x, hotspot_y), (42, 0, 0));
+            surface
+                .data::<SurfaceData>()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .cursor = true;
+            state.controls.record.lock().unwrap().cursors += 1;
+        }
+    }
+}
+
 impl GlobalDispatch<wl_shm::WlShm, ()> for Server {
     fn bind(
         _: &mut Self,
@@ -208,7 +278,9 @@ impl GlobalDispatch<wl_shm::WlShm, ()> for Server {
         _: &(),
         init: &mut DataInit<'_, Self>,
     ) {
-        init.init(resource, ()).format(wl_shm::Format::Xrgb8888);
+        let shm = init.init(resource, ());
+        shm.format(wl_shm::Format::Xrgb8888);
+        shm.format(wl_shm::Format::Argb8888);
     }
 }
 impl GlobalDispatch<wl_output::WlOutput, usize> for Server {
@@ -289,10 +361,13 @@ impl Dispatch<wl_shm_pool::WlShmPool, Arc<File>> for Server {
             format,
         } = request
         {
-            assert_eq!(
+            let wayland_server::WEnum::Value(format) = format else {
+                panic!("unknown pixel format");
+            };
+            assert!(matches!(
                 format,
-                wayland_server::WEnum::Value(wl_shm::Format::Xrgb8888)
-            );
+                wl_shm::Format::Xrgb8888 | wl_shm::Format::Argb8888
+            ));
             init.init(
                 id,
                 BufferData {
@@ -301,6 +376,7 @@ impl Dispatch<wl_shm_pool::WlShmPool, Arc<File>> for Server {
                     width,
                     height,
                     stride,
+                    format,
                 },
             );
         }
@@ -405,13 +481,41 @@ impl Dispatch<wl_surface::WlSurface, SurfaceData> for Server {
     fn request(
         state: &mut Self,
         _: &Client,
-        _: &wl_surface::WlSurface,
+        proxy: &wl_surface::WlSurface,
         request: wl_surface::Request,
         data: &SurfaceData,
         handle: &DisplayHandle,
         _: &mut DataInit<'_, Self>,
     ) {
         let mut surface = data.lock().unwrap();
+        if surface.cursor {
+            match request {
+                wl_surface::Request::Attach { buffer, .. } => surface.buffer = buffer,
+                wl_surface::Request::Commit => {
+                    let buffer = surface.buffer.as_ref().unwrap();
+                    let data = buffer.data::<BufferData>().unwrap();
+                    assert_eq!(
+                        (data.width, data.height, data.format),
+                        (16, 24, wl_shm::Format::Argb8888)
+                    );
+                    let mut pixels = vec![0; (data.stride * data.height) as usize];
+                    data.file.read_exact_at(&mut pixels, data.offset).unwrap();
+                    assert!(
+                        pixels
+                            .chunks_exact(4)
+                            .any(|pixel| u32::from_ne_bytes(pixel.try_into().unwrap()) == 0)
+                    );
+                    assert!(
+                        pixels.chunks_exact(4).any(|pixel| u32::from_ne_bytes(
+                            pixel.try_into().unwrap()
+                        ) == 0xffffffff)
+                    );
+                    buffer.release();
+                }
+                _ => {}
+            }
+            return;
+        }
         match request {
             wl_surface::Request::Attach { buffer, .. } => {
                 assert_eq!(surface.acknowledged, 2);
@@ -426,6 +530,7 @@ impl Dispatch<wl_surface::WlSurface, SurfaceData> for Server {
                     .as_ref()
                     .expect("A lock commit must never contain a NULL buffer");
                 let data = buffer.data::<BufferData>().unwrap();
+                assert_eq!(data.format, wl_shm::Format::Xrgb8888);
                 let factor = match state.policy {
                     Policy::Scaled => 2.0,
                     Policy::Fractional => 1.25,
@@ -465,6 +570,13 @@ impl Dispatch<wl_surface::WlSurface, SurfaceData> for Server {
                 if !state.locked {
                     state.locked = true;
                     state.lock.as_ref().unwrap().locked();
+                    if state.policy == Policy::Pointer {
+                        let pointer = state.pointer.as_ref().unwrap();
+                        pointer.enter(42, proxy, 40.0, 20.0);
+                        pointer.button(43, 1, 272, wl_pointer::ButtonState::Pressed);
+                        pointer.button(44, 2, 272, wl_pointer::ButtonState::Released);
+                        pointer.frame();
+                    }
                     if state.policy == Policy::Finished {
                         state.lock.as_ref().unwrap().finished();
                     }
@@ -535,6 +647,7 @@ struct App {
     external: bool,
     outputs: BTreeSet<u32>,
     ready: Option<UnixStream>,
+    pointer: bool,
 }
 impl Application for App {
     type Message = ();
@@ -550,13 +663,13 @@ impl Application for App {
                     !self.crash,
                     "Private fixture simulates a locker crash after Locked"
                 );
-                if !self.hotplug && !self.external {
+                if !self.hotplug && !self.external && !self.pointer {
                     return Action::AuthenticatedUnlock;
                 }
             }
             Event::OutputAdded(id) => {
                 self.outputs.insert(id);
-                if !self.hotplug && !self.external {
+                if !self.hotplug && !self.external && !self.pointer {
                     return Action::AuthenticatedUnlock;
                 }
             }
@@ -566,11 +679,17 @@ impl Application for App {
                     return Action::AuthenticatedUnlock;
                 }
             }
+            Event::Message(()) if self.pointer => return Action::AuthenticatedUnlock,
             _ => {}
         }
         Action::None
     }
     fn view(&self, _: &Output) -> Element<'_, ()> {
+        if self.pointer {
+            return iced::widget::container(iced::widget::button("Click").on_press(()))
+                .center(iced::Fill)
+                .into();
+        }
         iced::widget::container(iced::widget::text("Private lock fixture"))
             .center(iced::Fill)
             .into()
@@ -586,7 +705,23 @@ fn app() -> App {
         external: false,
         outputs: BTreeSet::new(),
         ready: None,
+        pointer: false,
     }
+}
+
+#[test]
+fn native_pointer_sets_visible_cursor_and_click_reaches_widgets_on_lock_surface() {
+    let mut fixture = Fixture::new(Policy::Pointer);
+    let mut app = app();
+    app.pointer = true;
+    assert_eq!(
+        fixture.client().unwrap().run(app, None).unwrap(),
+        Exit::Authenticated
+    );
+    let record = fixture.controls.record.lock().unwrap();
+    assert_eq!(record.cursors, 1);
+    assert_eq!(record.unlocked, 1);
+    assert!(record.commits.len() >= 2);
 }
 
 #[test]

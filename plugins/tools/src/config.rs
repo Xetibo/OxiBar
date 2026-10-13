@@ -20,7 +20,6 @@ pub struct Config {
     pub limit: usize,
     pub terminal: Vec<String>,
     pub opener: Vec<String>,
-    pub command_terminal: bool,
     pub roots: Vec<PathBuf>,
     pub file_limit: usize,
     pub bookmarks: Vec<Bookmark>,
@@ -182,10 +181,6 @@ pub fn read(table: &Table) -> Result<Config, String> {
         limit: number("max_entries", 7, 1, 50) as usize,
         terminal: words(values.get("terminal"), "kitty")?,
         opener: words(values.get("opener"), "xdg-open")?,
-        command_terminal: values
-            .get("command_terminal")
-            .and_then(Value::as_bool)
-            .unwrap_or(true),
         roots: list("file_roots", &["~/Documents", "~/Downloads"])?
             .iter()
             .map(|text| expand_path(text))

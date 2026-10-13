@@ -128,11 +128,11 @@ def main():
         root = Path(temporary)
         config = root / "config" / "oxibar"
         (config / "plugins").mkdir(parents=True)
-        required = {"libclock.so", "libaudio.so", "libbluetooth.so", "libnotifications.so", "libsystem.so", "libstats.so", "libapplications.so", "libtools.so"}
+        required = {"libclock.so", "libaudio.so", "libbluetooth.so", "libnotifications.so", "libsystem.so", "libstats.so", "libapplications.so", "libcommands.so", "libtools.so"}
         for library in args.libraries:
             (config / "plugins" / Path(library).name).symlink_to(Path(library).resolve())
         assert required <= {Path(library).name for library in args.libraries}
-        initial = sorted(required - {"libapplications.so", "libtools.so"})
+        initial = sorted(required - {"libapplications.so", "libcommands.so", "libtools.so"})
         base = root / "base.toml"
         base.write_text(f'''plugins={json.dumps(initial)}
 [bar]
@@ -157,6 +157,9 @@ backlight_root={json.dumps(str(root / "backlight"))}
 file_roots=[]
 clipboard_enabled=false
 refresh_seconds=3600
+[commands]
+command_terminal=false
+refresh_seconds=3600
 [applications]
 refresh_seconds=3600
 [notifications]
@@ -171,6 +174,13 @@ timeout_ms=10000
         applications.mkdir(parents=True)
         launcher_action = root / "launcher-action"
         (applications / "oxibar-private.desktop").write_text(f"[Desktop Entry]\nType=Application\nName=Oxibar private launcher fixture\nExec={shlex.quote(sys.executable)} -c {shlex.quote('from pathlib import Path; Path(' + repr(str(launcher_action)) + ').touch()')}\n")
+        command_bin = root / "bin"
+        command_bin.mkdir()
+        command_action = root / "command-action"
+        command = command_bin / "oxibar-private-command"
+        command.write_text(f"#!{sys.executable}\nimport json, sys\nfrom pathlib import Path\nPath({str(command_action)!r}).write_text(json.dumps(sys.argv[1:]))\n")
+        command.chmod(0o755)
+        env["PATH"] = str(command_bin) + os.pathsep + env["PATH"]
         pointer = root / "pointer"
         xml = os.environ["OXIBAR_TEST_VIRTUAL_POINTER_XML"]
         subprocess.run(["wayland-scanner", "client-header", xml, str(root / "virtual-pointer.h")], check=True)
@@ -415,9 +425,9 @@ timeout_ms=10000
             settings_geometry = {key: layer("OxiBar settings")[key] for key in ("address", "x", "y", "w", "h")}
             picture("launcher-preferences")
             control("@launcher/default-providers")
-            wait(lambda: setting("launcher.default_plugins") == ["libapplications.so", "libtools.so"], "GUI default provider switch")
+            wait(lambda: setting("launcher.default_plugins") == ["libapplications.so", "libcommands.so", "libtools.so"], "GUI default provider switch")
             assert "launcher.default_plugins" not in status()["restart_required"]
-            wait(lambda: {"Applications", "Tools"} <= set(status()["loaded_plugins"]), "live default providers")
+            wait(lambda: {"Applications", "Commands", "Tools"} <= set(status()["loaded_plugins"]), "live default providers")
             assert {key: layer("OxiBar settings")[key] for key in settings_geometry} == settings_geometry
             picture("launcher-preferences-saved")
             keyboard("-k", "Escape")
@@ -427,6 +437,13 @@ timeout_ms=10000
             wait(lambda: any(row["provider"] == "Applications" for row in status()["launcher_results"]), "live application search")
             keyboard("-k", "Return")
             wait(lambda: launcher_action.exists() and not status()["launcher_open"], "owned application activation")
+            button("launcher", output)
+            layer("OxiBar launcher")
+            keyboard('> oxibar-private-command "literal argument" "$HOME;no-shell"')
+            wait(lambda: status()["launcher_results"] and all(row["provider"] == "Commands" for row in status()["launcher_results"]), "separate command provider scope")
+            keyboard("-k", "Return")
+            wait(lambda: command_action.exists() and not status()["launcher_open"], "owned command activation")
+            assert json.loads(command_action.read_text()) == ["literal argument", "$HOME;no-shell"]
             button("launcher", output)
             layer("OxiBar launcher")
             time.sleep(.4)
@@ -553,7 +570,7 @@ timeout_ms=10000
             cli("config", "set", "bar.auto_hide", "false")
             wait(bar_visible, "disabling auto-hide restores bar")
             assert layer("OxiBar", output)["address"] == bar_address
-            print(json.dumps(dict(icon_only_bar_and_live_labels=True, oxishut_session_tiles=True, clock_controls_attached=True, left_navigation=True, system_controls_without_duplicate_session=True, button_anchor=True, inbox_in_bar=True, session_confirmation=True, session_commands=True, larger_settings=True, animated_nested_settings=True, sidebar_pointer_selection_all_motion_modes=True, reduced_motion_and_narrow_navigation=True, header_reset_and_compact_stable_footer=True, gui_live_default_providers=True, live_application_search_and_activation=True, actual_three_column_layout_drag=True, base24_accent=True, native_monitor_snapping_and_overlap_restore=True, native_monitors_preview_save_revert=True, bottom_bar_geometry=True, audio_dropdown_escape=True, shared_live_music_notification_placement=True, pointer_reveal_and_dropdown_pinning=True)), flush=True)
+            print(json.dumps(dict(icon_only_bar_and_live_labels=True, oxishut_session_tiles=True, clock_controls_attached=True, left_navigation=True, system_controls_without_duplicate_session=True, button_anchor=True, inbox_in_bar=True, session_confirmation=True, session_commands=True, larger_settings=True, animated_nested_settings=True, sidebar_pointer_selection_all_motion_modes=True, reduced_motion_and_narrow_navigation=True, header_reset_and_compact_stable_footer=True, gui_live_default_providers=True, live_application_search_and_activation=True, separate_command_scope_and_literal_activation=True, actual_three_column_layout_drag=True, base24_accent=True, native_monitor_snapping_and_overlap_restore=True, native_monitors_preview_save_revert=True, bottom_bar_geometry=True, audio_dropdown_escape=True, shared_live_music_notification_placement=True, pointer_reveal_and_dropdown_pinning=True)), flush=True)
         finally:
             stop(hover_pointer)
             stop(daemon)

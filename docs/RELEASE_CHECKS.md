@@ -11,7 +11,7 @@ nix develop -c cargo fmt --all -- --check
 nix develop -c rustfmt --edition 2024 --check crates/layershellev/src/lib.rs crates/layershellev/src/performance.rs
 nix develop -c cargo test --workspace
 nix develop -c cargo clippy --workspace --all-targets -- -D warnings
-nix build .#oxibar .#oxibar-example .#oxibar-applications .#oxibar-tools
+nix build .#oxibar .#oxibar-example .#oxibar-applications .#oxibar-commands .#oxibar-tools
 ```
 
 The preceding overview release verification built all fourteen outputs: host and thirteen
@@ -26,8 +26,8 @@ tests and two complete final isolated UI runs passed. These prove icon-only/live
 host and provider labels, centered 800×480 session tiles/native confirmation,
 application indexing/owned launch and post-drag button anchoring. The overview smoke
 proves actual SVG dock pixels with Applications absent from XDG and supplied through
-the configured library fallback. Current private installer fixtures verify all-thirteen
-preflight, no partial write on missing Applications and custom build/config roots.
+the configured library fallback. Current private installer fixtures verify all-fourteen
+preflight, no partial write on missing Applications/Commands/OxiPaste and custom build/config roots.
 See `TESTING.md` and the current continuity entry in `DECISIONS.md` for reproduction
 and the earlier unlocated-panic diagnostic limitation.
 

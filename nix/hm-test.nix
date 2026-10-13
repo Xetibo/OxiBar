@@ -59,6 +59,13 @@
       defaults.xdg.configFile."oxibar/plugins/liboxipaste.so".target
       == "custom-config/oxibar/plugins/liboxipaste.so"
       && toString defaults.xdg.configFile."oxibar/plugins/liboxipaste.so".source == "${packages.oxibar-oxipaste}/lib/liboxipaste.so";
+    defaultCommandsEnabled =
+      builtins.elem "libcommands.so" defaultBase.plugins
+      && builtins.elem (toString packages.oxibar-commands) (builtins.map toString defaults.home.packages);
+    defaultCommandsInstalled =
+      defaults.xdg.configFile."oxibar/plugins/libcommands.so".target
+      == "custom-config/oxibar/plugins/libcommands.so"
+      && toString defaults.xdg.configFile."oxibar/plugins/libcommands.so".source == "${packages.oxibar-commands}/lib/libcommands.so";
     enabledBaseOnly = base.plugins == ["libclock.so"];
     disabledCatalogInstalled = builtins.hasAttr "oxibar/plugins/libexample.so" disabled.xdg.configFile;
     overridesUnmanaged = !(builtins.hasAttr "oxibar/overrides.toml" disabled.xdg.configFile);

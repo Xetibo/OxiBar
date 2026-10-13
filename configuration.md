@@ -18,8 +18,8 @@ any provider; a user-installed library always takes precedence.
 
 For manual development installation, run `nix develop -c cargo build --workspace`
 then `scripts/install-plugins.sh` (or pass `release` after a release build). The
-installer includes Applications, respects `CARGO_TARGET_DIR` and `XDG_CONFIG_HOME`,
-and verifies all thirteen plugin files before installing any of them. Restart after
+installer includes Applications, Commands and OxiPaste, respects `CARGO_TARGET_DIR`
+and `XDG_CONFIG_HOME`, and verifies all fourteen plugin files before installing any of them. Restart after
 replacing initialized libraries; build the host and plugins together.
 
 ## Top-level keys
@@ -533,8 +533,10 @@ Load `libapplications.so` in `plugins = [...]` for desktop application search.
 It is packaged as `oxibar-applications` and included in the Home Manager module's
 default plugins. If you supply a custom plugin package list, include it there.
 No separate OxiRun executable or legacy OxiRun library is needed. Other plugins
-can opt into search through the shared API's optional runner hooks. `libtools.so`
-(`oxibar-tools`, also in the default Home Manager set) adds the other providers.
+can opt into search through the shared API's optional runner hooks. `libcommands.so`
+(`oxibar-commands`) provides terminal/PATH commands; `libtools.so` (`oxibar-tools`)
+provides calculator, files, bookmarks, named actions and clipboard. Both are in the
+default Home Manager set.
 The longest advertised prefix selects a provider scope; unprefixed searches may
 combine providers. The footer lists prefixes and status, and stars toggle favorites
 through sparse GUI overrides. Activations retain the displayed provider/local ID.
@@ -568,7 +570,7 @@ refresh_seconds = 300
 | `default_plugins` | string array | `[]` | Additional installed provider filenames, deduplicated with `plugins`; live. |
 
 Settings → Launcher has a **Default launcher plugins** switch for installed
-Applications and Tools, plus individual provider switches and diagnostics. It
+Applications, Commands and Tools, plus individual provider switches and diagnostics. It
 writes a sparse `launcher.default_plugins` list and loads installed providers
 immediately; it does not install libraries or initialize a second copy.
 Turning it off does not remove a provider explicitly enabled in ordinary/Nix
@@ -577,7 +579,7 @@ Turning it off does not remove a provider explicitly enabled in ordinary/Nix
 ```toml
 plugins = ["libclock.so"]
 [launcher]
-default_plugins = ["libapplications.so", "libtools.so"]
+default_plugins = ["libapplications.so", "libcommands.so", "libtools.so"]
 ```
 
 ### `[applications]` — application provider
@@ -592,7 +594,9 @@ default_plugins = ["libapplications.so", "libtools.so"]
 | `icon_theme` | string | `"auto"` | Live GTK4/GTK3/KDE icon-theme detection, or an explicit theme; inherited parents and hicolor fallback. |
 | `favorites` | string array | `[]` | Live desktop/action IDs; normally changed with result stars. |
 
-The provider searches desktop entry names, categories, keywords and generic names.
+The provider searches desktop entry names, executable names, desktop IDs,
+`StartupWMClass`, categories, keywords and generic names. Exact names/aliases rank
+above partial and fuzzy matches, including Nix-profile entries such as Nheko.
 Empty search combines favorites/recent usage with alphabetical fallback. XDG user data
 directories take precedence over system directories, including hidden-entry
 masking. Commands use argument-based process launching and support common desktop
@@ -605,11 +609,43 @@ precedence. An empty index reports its searched directories. Filesystem changes 
 debouncing; the interval is a fallback. Latest-only index/query workers cancel
 superseded work. See `docs/TECHNICAL_DEBT.md` for remaining desktop-entry coverage.
 
-### `[tools]` — commands, calculator, files, bookmarks and clipboard
+Application handoff restores the session's original graphics/font environment
+before spawning children, keeping Oxibar's Nix wrapper/development overrides local
+to the shell. Application stderr goes to the transient user service's journal, or
+the parent's stderr on direct fallback; inspect `journalctl --user -b -u 'oxibar-app-*.service'`
+when an application exits immediately after a successful executable handoff.
+
+### `[commands]` — terminal command provider
+
+Enable/install `libcommands.so` (`oxibar-commands`) and type `> command arguments`.
+PATH executable indexing, terminal wrapping, favorites and usage belong to this
+provider. By default it only participates in `>` searches, so PATH programs do not
+crowd desktop applications. `search_unprefixed = true` opts into merged searches.
+Verified absolute executable paths also work with `>`; quote paths containing spaces.
+
+```toml
+[commands]
+max_entries = 7
+terminal = "kitty"          # include execution flags required by your terminal
+command_terminal = true     # false runs the argument vector directly
+search_unprefixed = false
+favorites = []
+refresh_seconds = 300
+```
+
+Arguments are parsed literally with no implicit shell expansion. Explicitly name
+a shell for shell syntax. Results capture their complete argument vector, including
+terminal settings, so edited queries cannot retarget an old row. The result limit
+is `1..50`; refresh is `1..3600` seconds and restart-only. Other preferences apply live.
+
+When migrating from Tools command search, move `tools.command_terminal` to
+`commands.command_terminal` and copy any custom terminal prefix to
+`commands.terminal`. Keep `tools.terminal` if named terminal actions use it.
+
+### `[tools]` — calculator, files, bookmarks, actions and clipboard
 
 | Prefix | Provider | Action |
 | --- | --- | --- |
-| `> ` | PATH command | Parse quoted arguments; execute directly, optionally in a terminal. |
 | `= ` | Calculator | Evaluate bounded arithmetic/functions and copy the result. |
 | `/ ` | Files | Search cached configured roots and open the exact UTF-8 path. |
 | `@ ` | Bookmarks | Open a configured URL through the argument-based opener. |
@@ -620,14 +656,13 @@ Calculator copy works with history disabled. Clipboard capture is opt-in, in mem
 only, limited to UTF-8 text up to 16 KiB each and 512 KiB total. Disabling it clears
 history immediately; nothing is persisted in usage/favorites. Native data-control
 prefers ext-data-control with wlr compatibility. Unsupported compositors show a
-diagnostic while commands/files/bookmarks remain usable.
+diagnostic while files/bookmarks/named actions remain usable.
 
 ```toml
 [tools]
 max_entries = 7
-terminal = "kitty"
+terminal = "kitty"          # only for named actions with terminal = true
 opener = "xdg-open"
-command_terminal = true
 file_roots = ["~/Documents", "~/Downloads"]
 file_limit = 20000
 favorites = []
@@ -645,10 +680,10 @@ preferences apply live. Bookmark/action IDs are unique ASCII letters/digits/`-_.
 actions may set `directory`. Commands use quoted argument lists with no implicit
 shell evaluation; explicitly name a shell if shell syntax is intended.
 
-Usage counts live in `$XDG_STATE_HOME/oxibar/{applications,tools}-usage.toml`
+Usage counts live in `$XDG_STATE_HOME/oxibar/{applications,commands,tools}-usage.toml`
 (default `~/.local/state/oxibar`), with owner-only atomic writes. Initial state loads
 before local counts are saved; unsupported/corrupt state is diagnosed and retained.
-Stars save only the corresponding `applications.favorites` or `tools.favorites`
+Stars save only the corresponding `applications.favorites`, `commands.favorites` or `tools.favorites`
 override. Query/title/clipboard text is omitted from `oxibar status` diagnostics.
 
 ### `[ipc]` — command socket

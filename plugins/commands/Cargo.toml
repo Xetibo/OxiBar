@@ -1,0 +1,15 @@
+[package]
+name = "commands"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+oxibar-plugin-api = { path = "../../crates/oxibar-plugin-api" }
+iced = { version = "0.14.0", features = ["advanced", "tokio"] }
+shell-words = "1.1"
+
+[dev-dependencies]
+iced_runtime = "0.14"

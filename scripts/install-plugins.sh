@@ -14,6 +14,7 @@ plugins=(
   battery
   bluetooth
   clock
+  commands
   network
   notifications
   oxipaste

@@ -741,7 +741,8 @@ impl OxiBar {
                 .into_iter()
                 .map(str::to_owned)
                 .collect();
-        files.extend(["libapplications.so", "libtools.so", "libsystem.so"].map(str::to_owned));
+        files.extend(crate::config::DEFAULT_RUNNER_PLUGINS.map(str::to_owned));
+        files.insert("libsystem.so".into());
         let primary = self.config.directory.join("plugins");
         for directory in crate::plugins::plugin_directories(&primary) {
             if let Ok(entries) = std::fs::read_dir(directory) {

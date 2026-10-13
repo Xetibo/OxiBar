@@ -1,0 +1,8 @@
+''
+  if [ "''${OXIBAR_APP_ENV_SAVED:-}" != 1 ]; then
+    export OXIBAR_APP_LD_LIBRARY_PATH="''${LD_LIBRARY_PATH-}"
+    export OXIBAR_APP_FONTCONFIG_FILE="''${FONTCONFIG_FILE-}"
+    export OXIBAR_APP_VK_ICD_FILENAMES="''${VK_ICD_FILENAMES-}"
+    export OXIBAR_APP_ENV_SAVED=1
+  fi
+''

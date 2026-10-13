@@ -28,7 +28,7 @@ protocol readiness before sleep. Both authentication screens use shared themes,
 clock/date and optional bounded wallpaper/avatar assets.
 
 ```sh
-nix build .#oxibar .#oxibar-applications .#oxibar-tools .#oxibar-clock
+nix build .#oxibar .#oxibar-applications .#oxibar-commands .#oxibar-tools .#oxibar-clock
 nix run .#oxibar
 ```
 
@@ -47,9 +47,12 @@ nix develop -c cargo build --workspace
 scripts/install-plugins.sh
 ```
 
-The installer includes Applications and OxiPaste and checks all thirteen libraries before writing
-anything. It respects `CARGO_TARGET_DIR` and `XDG_CONFIG_HOME`; pass `release` after
+The installer includes Applications, Commands and OxiPaste and checks all fourteen
+libraries before writing anything. It respects `CARGO_TARGET_DIR` and `XDG_CONFIG_HOME`; pass `release` after
 a release build. Restart Oxibar after replacing initialized plugin libraries.
+
+Launcher PATH commands use the separate Commands provider and `>` prefix. Desktop
+application searches stay uncluttered; see [provider configuration](configuration.md#commands--terminal-command-provider).
 
 ```nix
 {

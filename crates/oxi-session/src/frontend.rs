@@ -155,6 +155,7 @@ impl Greeter {
             Message::Session(session) => self.model.select(session),
             Message::Auth(view::Message::Submit) if self.power.is_none() => self.model.submit(),
             Message::Auth(view::Message::Cancel) => self.model.cancel(),
+            Message::Auth(view::Message::Focus(_)) => {}
             Message::Key(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(keyboard::key::Named::Escape),
                 ..

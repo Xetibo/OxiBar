@@ -16,7 +16,11 @@ actions. Each registered output has a lock role, configure/ack state, two
 release-aware opaque SHM buffers and an Iced CPU-renderer/cache. Integer scaling
 and fractional-scale/viewport destinations preserve exact surface-local geometry.
 Output removal retires its input focus and resources. Input uses per-seat contexts,
-rejects retired devices and supplies no clipboard service. Authentication is an
+rejects retired devices and supplies no clipboard service. Each pointer owns an
+immutable ARGB SHM cursor surface, published with the native Enter serial. Explicit
+application focus traverses enabled response/submit/cancel controls; mouse response
+focus and keyboard editing share the zeroized transaction rather than a text widget.
+Authentication is an
 application capability; only its explicit success action can request unlock.
 Readiness follows `locked`, and successful/external unlock is followed by display
 sync before returning. Renderer errors and process loss never send unlock.
@@ -49,7 +53,9 @@ transient D-Bus descriptor copies from extending inhibitor ownership in the chil
 while preserving Rust's spawn-error channel until exec. Failure aborts spawning.
 
 The greeter is a standard fullscreen xdg-shell Iced application, independent of
-layer-shell and the locker. Its root-peer-validated greetd client serializes one
+layer-shell and the locker. Its binary selects the CPU renderer before starting
+threads or probing GPU adapters, so Vulkan discovery is not a login prerequisite.
+Its root-peer-validated greetd client serializes one
 bounded request at a time, drains cancelled replies before retry, and holds response
 serialization in zeroized storage. A system-only desktop catalog resolves trusted
 executables to argument arrays and explicit XDG environment values. Authentication,
@@ -64,6 +70,8 @@ before it returns success to greetd. Instance-specific exit binds both signature
 and owned PID. NixOS supplies root PAM/greetd policy and the greeter account; Home
 Manager only configures the per-user application. Real VM tests verify that both
 kiosk processes retire before a new UID acquires the active seat/VT.
+Authentication packages resolve runtime libraries through RPATH and supply fonts
+without imposing a Vulkan ICD or library-path override on the kiosk compositor.
 
 Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, and dynamic plugin crates.
 
@@ -156,8 +164,10 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   views remain separate modules.
 - `plugins/stats/`: bounded proc-file snapshots and a visible-only, cancellable
   refresh stream shared by all displays.
-- `plugins/tools/`: pure typed configuration/calculator/search, cached PATH/file
-  indexes and one owned native data-control clipboard connection.
+- `plugins/commands/`: cached bounded PATH indexing, explicit-prefix command search,
+  immutable argument/terminal actions and independent usage/favorites.
+- `plugins/tools/`: pure typed configuration/calculator/search, a cached file index
+  and one owned native data-control clipboard connection.
 - `plugins/oxipaste/src/service/`: persistent clipboard ownership lives in the
   enabled provider's resident stream, independently of UI visibility. `history.rs`
   owns compatible bounded atomic storage, `native.rs` owns cancellable Wayland
@@ -236,6 +246,9 @@ paste handoff use the same scoped surface cleanup.
   Modal Escape and text-field traversal are scoped to the current modal ID.
 - The host also owns a keyboard-focused launcher overlay. Opening it reuses the resident renderer and plugin models; closing or activating a result removes only that surface. Compositor bindings invoke `oxibar launcher` over a runtime Unix socket.
 - Optional runner providers return bounded result data with stable provider-local launch indexes. The host caches a globally ranked list on state updates and dispatches activation only to the selected provider's existing `launch` hook.
+- PATH commands are prefix-scoped by default, with an explicit opt-in for merged
+  search. Application names/executable/desktop-class aliases use comparable exact,
+  partial and fuzzy scores so installed desktop entries remain discoverable.
 - Per-output bars share one plugin model/subscription per plugin. Optional
   context-aware views receive output name, native scale and an instance identifier;
   `bar_view` also receives the output-local label preference and takes precedence
@@ -626,7 +639,9 @@ OSD placement; changing topics reconfigures the existing surface.
 - `applications`: resident OxiRun application/icon index, fuzzy matching, terminal
   support, localized fields/actions, inherited icons, filesystem refresh and
   usage/favorite ranking; runner/dock share immutable catalogs and stable IDs.
-- `tools`: commands, calculator, files, bookmarks, named argument actions and
+- `commands`: `>` PATH/absolute executable search, optional terminal wrapping,
+  immutable argv and independent usage/favorites; merged search is opt-in.
+- `tools`: calculator, files, bookmarks, named argument actions and
   opt-in native clipboard history with cancellable cached searches.
 - `stats`: cached CPU, memory and uptime summaries with visible-only refresh.
 - `example`: separately packaged SDK reference with shared views, live schema,
@@ -680,7 +695,11 @@ job completion before submission and reports the actual accepted result. An
 uncertain or accepted failure cannot trigger a second direct execution. Definite
 unsupported/unavailable managers fall back to argument-based, reaped process-group
 launch; that fallback cannot promise independent cgroup ownership. Caller-only
-service/activation FD variables are removed from the new unit's environment.
+service/activation FD variables are removed from both launch paths. The Nix shell
+wrapper/development shell preserve the incoming graphics/font environment before
+applying their own runtime settings; handoff restores those originals for children.
+Unwrapped session overrides remain authoritative. Transient service stderr is
+journaled and direct fallback inherits stderr for post-exec failure diagnosis.
 
 Home Manager startup is opt-in and bound to a configured compositor session target.
 Enabled packages and disabled installed catalog packages are separate; immutable
@@ -712,7 +731,7 @@ responsiveness are verified alongside the existing shell flows.
 ## Nix Packaging
 
 - The shared Home Manager module and `nixosModules.home-manager` export install
-  and enable the default provider set, including the persistent clipboard provider.
+  and enable the default provider set, including separate command search and the persistent clipboard provider.
   Explicit `config.plugins` selections replace that set; `extraPlugins` remains an
   installed-only catalog. The persistent clipboard backend ships inside its
   provider library and needs no separately installed or started daemon.

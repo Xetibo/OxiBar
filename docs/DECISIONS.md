@@ -1,5 +1,46 @@
 # Decisions
 
+## 2026-10-13: Launcher command isolation and native authentication input/rendering
+
+- Extract PATH command indexing/search/terminal wrapping from Tools into optional
+  `plugins/commands` / `libcommands.so` / `oxibar-commands`. Keep named configured
+  actions in Tools and `Terminal=true` desktop handling in Applications. Commands
+  defaults to `>` only; `commands.search_unprefixed` explicitly restores merged
+  suggestions. Include it in the Home Manager, launcher-default switch and fourteen-
+  library development installer. Move command preferences to `[commands]`.
+- The installed Nheko and OpenCode desktop entries are valid and reachable through
+  Nix profile data roots. Default PATH suggestions used higher raw scores and could
+  crowd desktop results out of the global seven rows. Search executable/desktop-ID/
+  window-class aliases with comparable exact/prefix/partial/fuzzy scores and verify
+  both desktop entries through a symlinked-profile fixture.
+- Preserve original incoming library/font/Vulkan settings before Nix wrapper/dev-
+  shell overrides; restore them through the shared SDK for transient and direct app
+  handoffs. Keep actual user overrides and the no-duplicate uncertain-submission
+  rule. Journal transient stderr and inherit direct stderr for post-exec failures.
+  OpenCode opens in an owned Sway/private HOME/bus with inherited and restored
+  development graphics; earlier user-service Electron SIGTRAPs are present in the
+  journal but their original stderr was discarded and the crash is not reproduced.
+- The locker already received pointer events but never published a cursor and its
+  masked response had no focus target. Add a per-seat immutable ARGB cursor and
+  explicit shared response/submit/cancel focus. Tab/Shift+Tab skip disabled controls;
+  mouse response focus, Enter/Space button activation and focused-only editing retain
+  bounded zeroized secrets. New prompts automatically focus the response. Only PAM
+  success remains an unlock capability.
+- Select the greeter's `tiny-skia` backend at binary entry before any worker threads
+  or GPU adapter initialization, overriding inherited wgpu preferences. Authentication
+  Nix packages use RPATH for runtime libraries and fonts without forcing a Vulkan ICD
+  on Cage/Hyprland. Keep root-peer greetd validation and acknowledged seat handoff.
+- Normal workspace tests, strict Clippy, targeted provider/auth checks, the private
+  user-manager lifetime/no-duplicate fixture, all twelve Home Manager checks and
+  fourteen-library installer preflight/custom-root checks pass. Nix host, Applications,
+  Commands, Tools and authentication packages build. The real Cage VM passes with
+  invalid Vulkan ICD paths and inherited `ICED_BACKEND=wgpu`, including login, seat
+  transfer, lock/unlock, two suspend/resume paths and crash recovery.
+- The packaged private Hyprland UI smoke passes actual separate command-provider
+  activation with literal quoted arguments alongside desktop application activation
+  and the retained UI flows. Preserve existing command subsequence matching when
+  extracting the provider.
+
 ## 2026-10-13: Plugin-owned persistent clipboard backend
 
 - Empty history was caused by an enabled view-only provider without a running

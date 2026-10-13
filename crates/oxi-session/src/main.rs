@@ -1,6 +1,10 @@
 use oxi_session::{catalog::Catalog, frontend, ipc::Client, model};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Select CPU rendering before any worker can start; never probe login-seat GPU drivers.
+    unsafe {
+        std::env::set_var("ICED_BACKEND", "tiny-skia");
+    }
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.as_slice() == ["--help"] {
         println!(

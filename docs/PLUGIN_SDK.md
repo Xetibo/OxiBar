@@ -27,7 +27,7 @@ load diagnostics and enablement. Inspection reads symbols without initializing a
 model or starting a subscription. Home Manager's `extraPlugins` installs disabled
 catalog entries; `config.plugins` installs and enables libraries in the Nix base.
 GUI changes write sparse plugin selections and take effect live. The launcher
-defaults switch manages `launcher.default_plugins` for Applications/Tools; the host
+defaults switch manages `launcher.default_plugins` for Applications/Commands/Tools; the host
 loads its deduplicated union with ordinary `plugins`, without initializing every
 installed library.
 
@@ -115,11 +115,14 @@ Call `launch::launch(arguments, working_directory)` from worker context; it is a
 blocking facade around bounded native user-manager calls. It resolves an executable
 and prefers an independent transient `app.slice` service, subscribes before
 submission and waits for actual job completion. Caller-only service/activation FD
-environment is not forwarded. Never launch again after uncertain acceptance.
+environment is not forwarded. Oxibar's packaged/development runtime graphics/font
+overrides are restored to their original session values in both launch paths;
+unwrapped session overrides remain intact. Transient stderr is journaled and direct
+fallback inherits stderr. Never launch again after uncertain acceptance.
 
 Definite unavailable/unsupported managers use `launch::direct`: argument vectors,
 a new process group and a reaped child. That fallback does not move a process out
-of an existing systemd cgroup. Apps, Tools, calendar and locker handoffs share this
+of an existing systemd cgroup. Apps, Commands, Tools, calendar and locker handoffs share this
 implementation; only an explicit user-configured calendar command uses a shell.
 
 ## UI, commands and stable actions

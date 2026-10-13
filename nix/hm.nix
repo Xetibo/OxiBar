@@ -13,6 +13,7 @@ self: {
     oxibar-battery
     oxibar-bluetooth
     oxibar-clock
+    oxibar-commands
     oxibar-network
     oxibar-notifications
     oxibar-oxipaste
