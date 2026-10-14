@@ -30,14 +30,23 @@ acknowledged handoff. Catalog fixtures verify direct argv/field-code expansion,
 hidden/unavailable entries and administrator ownership rules.
 Frontend fixtures receive real private greetd prompts, click the actual masked
 Iced response, edit captured keys with missing text payloads and modified characters,
-cycle Tab/Shift+Tab, reject editing from focused buttons and cancel without handoff.
+cycle full-form Tab/Shift+Tab, choose trusted sessions with arrows and reject editing
+from focused buttons. Clear retains an immediately editable prompt; changing user
+drains and cancels the old attempt. Automatic selected-user preparation, fresh prompts
+after failed answers and PAM-worker cancel errors reuse the same healthy connection.
+Username-view event identity rejects delayed captured submits after a new prompt;
+power confirmation has its own focus cycle and dismissal resumes authentication.
+An actual Iced username editor receives Ctrl+A, typing, Tab and later keys in one
+batch, then Enter with trailing keys, checking synchronous native focus departure
+and preservation of the selected username.
+Bounded account parsing checks UID ranges and excludes service/noninteractive users.
 Multiple prompts automatically regain input focus; only an acknowledged start exits.
 Authentication integration must use private fixtures or the dedicated VM, never
 the current user's desktop session or credentials.
 
 `nix build .#oxilock .#oxisession` builds independent authentication packages and
 runs their selected Cargo tests. `checks.<system>.authentication-unit` runs all
-four authentication crates (36 normal tests plus the test-only ignored PAM child
+four authentication crates (40 normal tests plus the test-only ignored PAM child
 entry); `authentication-clippy` runs strict all-targets Clippy. Bounded appearance
 and asset decoding, truthful Caps inference, repeat retirement and widget wake
 deadlines have service-free checks. A private p2p logind fixture transfers actual
@@ -48,7 +57,9 @@ A non-close-on-exec descriptor regression detects child-owned inhibitor copies;
 an exec-failure check preserves spawn error reporting. On x86-64,
 `checks.x86_64-linux.authentication-cage` and `authentication-hyprland` boot real
 NixOS VMs with disposable credentials, greetd, PAM and real DRM. They assert
-failed-auth retention, retry, prompt Tab/Shift+Tab editing isolation, old
+automatic default-user password preparation without Continue, failed-auth retention,
+immediate retry, keyboard user changes through an unknown account, full-form
+Tab/Shift+Tab editing isolation, old
 greeter/compositor retirement, UID 1000,
 Wayland environment isolation, seat0/VT1 ownership, logout and different-PID crash
 recovery. Native checks also cover decoded assets, permission-gated power
@@ -59,8 +70,9 @@ protocol readiness before delay-lease release, visible locked resume, reacquired
 inhibition, watcher-stop child preservation and authenticated unlock after resume.
 The sleep fixture uses legacy VGA/pixman and a protected block-backed Nix store;
 pinned virtio-GPU fences stall after S3. Hyprland retains virtio-GPU coverage.
-Use raw-frame OCR for opaque-card readiness/dialog presence; PAM results and
-process/seat state, not OCR or sleeps alone, gate authentication assertions.
+Use the driver's raw and preprocessed OCR variants for card/dialog readiness;
+PAM results and process/seat state, not OCR or sleeps alone, gate authentication
+assertions.
 The VM greeter inherits `ICED_BACKEND=wgpu` and deliberately nonexistent Vulkan
 ICD paths; its binary must still start and complete login through CPU rendering.
 Deployment examples are in `AUTH_DEPLOYMENT.md`.

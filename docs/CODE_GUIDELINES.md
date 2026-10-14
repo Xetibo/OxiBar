@@ -31,6 +31,9 @@
 - Masked authentication input uses explicit application focus, not ordinary widget
   focus. Route prompt keys even when Iced marks them captured, preserve native
   username editing outside prompts and use modified character keys when text is absent.
+  Keep one logical form focus. Native inputs must relinquish focus during Tab/submit
+  event dispatch, before later batched keys; deferred focus tasks are insufficient.
+  Retain native-widget context on delayed events across view changes.
 - PAM is a fixed administrator-owned current-user policy, never a user-selected
   service. Keep blocking conversations in the private cancellable worker, reject
   missing service configuration, and never map errors or cancellation to unlock.
@@ -38,6 +41,10 @@
   set: system PAM modules and EGL vendors must share a compatible native ABI.
 - Greeter IPC authenticates its root peer, bounds complete frames and serializes
   requests. Drain cancellation before reusing an authentication conversation. Parse
+  normal protocol errors separately from transport/protocol corruption; worker
+  cleanup failure must not discard a healthy connection or authenticate a user.
+  Automatic prompt preparation must wait for cancellation acknowledgement and stop
+  on create-session errors rather than retrying them indefinitely. Parse
   administrator-owned session metadata into argv without shell re-interpretation;
   only an acknowledged authenticated start permits successful kiosk exit.
 - Authentication appearance parsing and image allocation are bounded; greeter

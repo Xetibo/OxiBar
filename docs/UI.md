@@ -23,11 +23,17 @@
   response prompts focus the input automatically; typing only edits that input.
   Use opaque themed backgrounds and centered bounded cards with explicit progress
   and failure feedback.
-- Greeters offer a trusted session picker and username field before authentication,
-  then reuse masked multi-prompt interaction with the same explicit response/action
-  focus as the locker. Response clicks and Tab/Shift+Tab must reach the input and
-  enabled buttons; captured keyboard events must not disable password editing.
-  New prompts focus the response, and cancellation restores username focus.
+- Greeters select a regular user automatically and prepare the password prompt
+  immediately. Show the selected name with an explicit Change user action and a
+  manually editable username, alongside the trusted session picker. Tab/Shift+Tab
+  traverse every enabled control, including user/session selection, response,
+  actions, reconnect and power confirmation. Arrow keys change a focused session;
+  Enter/Space activate actions. Native username input loses widget focus when the
+  controller focuses another control, before later keys in the same batch can edit
+  it. Captured keyboard events must not disable password editing or submit stale
+  username events into a new prompt. New prompts
+  focus the response; Clear/Escape erase it without requiring another Continue.
+  Rejected credentials retain feedback and prepare a fresh prompt for the same user.
   Preserve failure feedback and session
   choice on rejected starts; show explicit starting state until the login manager
   acknowledges handoff. Generic window-close events cannot accept a login.
@@ -35,8 +41,9 @@
   with a scroll fallback for small outputs or long prompts. Image/configuration
   failures retain an opaque fallback and readable feedback. Keyboard indicators
   distinguish known state from unknown initial Caps Lock state. Pre-login power
-  actions require a visible confirmation and permission checks; dismissal restores
-  username focus without accepting a login. Static composition respects reduced motion.
+  actions require a visible confirmation and permission checks; dismissal resumes
+  the selected user's prompt or username editor without accepting a login. Static
+  composition respects reduced motion.
 
 - Use `oxiced::theme::theme_impl::OXITHEME` for colors and theme-derived styling.
 - `OXITHEME` is the safe compatibility handle for the explicitly delivered

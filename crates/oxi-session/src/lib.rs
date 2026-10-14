@@ -81,3 +81,4 @@ pub mod frontend;
 pub mod ipc;
 pub mod kiosk;
 pub mod model;
+mod users;

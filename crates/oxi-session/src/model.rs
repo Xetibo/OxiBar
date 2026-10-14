@@ -14,6 +14,7 @@ pub struct Model {
     pub(crate) sessions: Vec<Session>,
     pub(crate) selected: Option<Session>,
     pub(crate) cancelling: bool,
+    pub(crate) retry_prompt: bool,
 }
 impl Model {
     pub fn new(client: Client, catalog: Catalog) -> Self {
@@ -30,13 +31,16 @@ impl Model {
             sessions: catalog.sessions,
             selected,
             cancelling: false,
+            retry_prompt: false,
         }
     }
     pub fn can_choose_user(&self) -> bool {
         self.interaction.attempt.is_none() && !self.cancelling && !self.busy()
     }
     pub fn can_choose_session(&self) -> bool {
-        matches!(self.handoff.phase(), Phase::Choosing | Phase::Authenticated)
+        (matches!(self.handoff.phase(), Phase::Choosing | Phase::Authenticated)
+            || (self.handoff.phase() == Phase::Authenticating
+                && self.interaction.phase == AuthPhase::Prompt))
             && !self.cancelling
             && !self.busy()
     }
@@ -113,11 +117,24 @@ impl Model {
             _ => {}
         }
     }
+    pub(crate) fn prepare(&mut self) {
+        if self.client.is_some()
+            && self.can_choose_user()
+            && self.interaction.phase == AuthPhase::Idle
+        {
+            let notice = std::mem::take(&mut self.interaction.notice);
+            self.submit();
+            if self.interaction.notice.is_empty() {
+                self.interaction.notice = notice;
+            }
+        }
+    }
     pub fn cancel(&mut self) {
         if matches!(self.handoff.phase(), Phase::Starting | Phase::Handoff) {
             return;
         }
         let active = self.interaction.cancel().is_some();
+        self.retry_prompt = false;
         self.handoff.cancel();
         if active {
             self.cancelling = true;
@@ -159,13 +176,18 @@ impl Model {
         self.interaction.cancel();
         self.handoff.cancel();
         self.cancelling = false;
+        self.retry_prompt = false;
         self.interaction.notice = "Login service disconnected. Reconnect to retry.".into();
     }
     pub fn poll(&mut self) -> bool {
         loop {
             let reply = match self.client.as_mut().map(Client::poll) {
                 Some(Ok(Some(reply))) => reply,
-                Some(Err(_)) => {
+                Some(Err(error)) => {
+                    eprintln!(
+                        "oxisession: login service request failed: {:?}",
+                        error.kind()
+                    );
                     self.connection_failed();
                     break;
                 }
@@ -179,14 +201,22 @@ impl Model {
             match operation {
                 Operation::Cancel => {
                     self.cancelling = false;
-                    if !matches!(response, Response::Success) {
-                        self.connection_failed();
+                    match response {
+                        Response::Success => {}
+                        // greetd removes the configuring session before cancelling its worker.
+                        // An exited PAM worker can return a cleanup error on a live connection.
+                        Response::Error { description, .. } => {
+                            if self.interaction.notice.is_empty() {
+                                self.interaction.notice = description;
+                            }
+                        }
+                        _ => self.connection_failed(),
                     }
                 }
                 Operation::Create(attempt) | Operation::Respond(attempt)
                     if self.interaction.attempt == Some(attempt) =>
                 {
-                    self.authentication_reply(attempt, response)
+                    self.authentication_reply(attempt, operation, response)
                 }
                 Operation::Start(attempt)
                     if self.interaction.attempt == Some(attempt)
@@ -214,7 +244,7 @@ impl Model {
         }
         self.handoff.phase() == Phase::Handoff
     }
-    fn authentication_reply(&mut self, attempt: Attempt, response: Response) {
+    fn authentication_reply(&mut self, attempt: Attempt, operation: Operation, response: Response) {
         match response {
             Response::AuthMessage {
                 auth_message_type,
@@ -255,6 +285,7 @@ impl Model {
             }
             Response::Error { description, .. } => {
                 self.cancel();
+                self.retry_prompt = matches!(operation, Operation::Respond(_));
                 self.interaction.notice = description;
             }
         }

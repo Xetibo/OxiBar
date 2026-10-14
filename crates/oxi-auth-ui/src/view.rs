@@ -84,6 +84,7 @@ pub fn prompt_card_focused<'a>(
 ) -> Element<'a, Message> {
     let input_enabled = Focus::Input.enabled(interaction, ready);
     let submit_enabled = Focus::Submit.enabled(interaction, ready);
+    let clear_enabled = matches!(purpose, Purpose::Lock) || input_enabled;
     let label = interaction
         .prompt
         .as_ref()
@@ -170,13 +171,13 @@ pub fn prompt_card_focused<'a>(
                 oxi_plugin::surface_button(oxi_plugin::text("Clear"), false)
                     .style(move |theme, status| {
                         let mut style = oxi_plugin::flat_secondary_bg_button_style(theme, status);
-                        if focus == Some(Focus::Cancel) {
+                        if focus == Some(Focus::Cancel) && clear_enabled {
                             style.border.color = OXITHEME.primary;
                             style.border.width = 2.0;
                         }
                         style
                     })
-                    .on_press(Message::Cancel),
+                    .on_press_maybe(clear_enabled.then_some(Message::Cancel)),
             ),
     );
     body = body.push(

@@ -111,6 +111,19 @@ is reported before interactive locking; a fullscreen overlay is not a lock fallb
 
 ## Appearance and input
 
+The greeter automatically selects the lowest-UID regular interactive local account
+within `/etc/login.defs`'s `UID_MIN`/`UID_MAX` range (1000–60000 if unset). Bounded,
+root-owned `/etc/passwd` data excludes greeter/service accounts and noninteractive
+shells. It immediately requests and focuses that user's authentication prompt;
+Continue submits a response rather than being required to make password entry ready.
+Use **Change user** to edit the username and **Use this user** or Enter to prepare
+another account. Accounts supplied through NSS can also be entered manually.
+
+After rejected credentials, the prompt is prepared again with failure feedback.
+An exited PAM worker's cancel cleanup error does not disconnect the login service.
+A real socket/protocol failure still requires Reconnect. Changing user and power
+confirmation clear responses and drain the active conversation before another starts.
+
 The user locker reads `$XDG_CONFIG_HOME/oxibar/auth.toml` (or
 `~/.config/oxibar/auth.toml`). The greeter reads administrator-owned
 `/etc/oxibar/auth.toml`; `services.oxisession.settings` generates that file.
@@ -145,9 +158,13 @@ Missing/invalid assets keep an opaque themed fallback. Cards remain centered wit
 a scroll fallback on small outputs or long prompts. Secret responses are masked,
 bounded and zeroized; no password-bearing Iced text-input widget or clipboard is
 used. New locker and greeter prompts focus the response; clicking it restores focus.
-Tab/Shift+Tab cycle enabled input/buttons, Enter activates the focused control and
-Space activates buttons; typing only edits the focused response. Escape clears/cancels
-an attempt, and Ctrl+U clears the response. Greeter cancellation restores username focus.
+Tab/Shift+Tab cycle all enabled greeter controls, including user/session selection,
+response, buttons, reconnect and power confirmation. Arrow keys change the focused
+session, Enter activates the focused control and Space activates buttons. Username
+Tab/Enter release native focus before later batched keys. Typing only edits the
+focused response or native username field. Greeter Clear/Escape and
+Ctrl+U erase the response while leaving its prompt ready; Change user cancels the
+old attempt and focuses username editing. Locker Escape clears/cancels its attempt.
 Escape never unlocks. The locker reports native XKB Caps/group state. The greeter
 shows the enforced kiosk layout and unknown Caps until observed keys establish it.
 On Hyprland the cursor-shape protocol uses the compositor's normal cursor theme,
@@ -209,7 +226,8 @@ nix build .#checks.x86_64-linux.authentication-hyprland
 Both packages and unit/Clippy checks are defined for `x86_64-linux` and
 `aarch64-linux`; real seat/VT VM checks run on x86-64. They use disposable accounts
 and credentials, real greetd/PAM/DRM, and assert UID, active seat/VT, kiosk retirement,
-rejected login, password focus traversal, logout and fresh-PID crash recovery.
+automatic user/prompt preparation, rejected-login retry, keyboard user changes,
+full-form focus traversal, logout and fresh-PID crash recovery.
 Native lockers cover assets,
 fractional scale/hotplug, Caps, held-key editing, failed-password retry and crash
 protection. Cage's VM additionally verifies both actual S3 paths, readiness before

@@ -57,14 +57,22 @@ while preserving Rust's spawn-error channel until exec. Failure aborts spawning.
 The greeter is a standard fullscreen xdg-shell Iced application, independent of
 layer-shell and the locker. Its binary selects the CPU renderer before starting
 threads or probing GPU adapters, so Vulkan discovery is not a login prerequisite.
-Its prompt controller shares explicit response/submit/cancel focus with the locker,
-honors response clicks and receives captured as well as ignored keyboard events
-during authentication. New prompts focus the zeroized response; modified character
-keys supply text when the backend omits a text payload. Ordinary username input
-retains native widget handling before authentication and regains focus after cancel.
+Its controller owns explicit full-form focus for user/session selection, masked
+responses, actions, reconnect and power confirmation. Native username editing
+relinquishes focus synchronously on Tab/submit, before later events in the same
+batch. Captured events retain their originating username-view identity so a
+delayed submit cannot answer a new password prompt.
+New prompts focus the zeroized response; modified character keys supply text when
+the backend omits a text payload. Bounded administrator-owned local account metadata
+selects the lowest-UID regular interactive user. The greeter prepares that user's
+conversation immediately, while changing user drains cancellation before adopting
+the new name. Clear retains the ready prompt; rejected responses prepare a fresh one.
 Its root-peer-validated greetd client serializes one
 bounded request at a time, drains cancelled replies before retry, and holds response
-serialization in zeroized storage. A system-only desktop catalog resolves trusted
+serialization in zeroized storage. A normal cancel error from an exited PAM worker
+does not imply socket loss: greetd has already removed the configuring session.
+Transport/protocol failures still retire the connection and cannot accept a login.
+A system-only desktop catalog resolves trusted
 executables to argument arrays and explicit XDG environment values. Authentication,
 session selection and start acknowledgement remain separate states; only accepted
 start permits normal frontend exit. The surrounding kiosk owner then releases the

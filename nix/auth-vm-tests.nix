@@ -125,11 +125,11 @@ in
       def visible(pattern):
           deadline = time.monotonic() + 60
           while time.monotonic() < deadline:
-              if re.search(pattern, machine.get_screen_text()):
+              if any(re.search(pattern, text, re.IGNORECASE) for text in machine.get_screen_text_variants()):
                   return
               time.sleep(0.5)
           machine.screenshot("missing-greeter-text")
-          print(machine.get_screen_text())
+          print(machine.get_screen_text_variants())
           print(machine.succeed("journalctl -u greetd --no-pager; ps -eo user,pid,comm,args"))
           raise Exception("Greeter did not display " + pattern)
 
@@ -142,33 +142,57 @@ in
           machine.screenshot("greeter-startup-failed")
           raise
       visible("Sign in")
+      visible("Tab.*focus")
       machine.succeed("${self.packages.${pkgs.stdenv.hostPlatform.system}.oxisession}/bin/oxisession --list-sessions | grep -F auth-fixture")
       machine.screenshot("greeter-${backend}")
       with subtest("pre-login power requires confirmation and Escape cancels"):
           machine.send_key("ctrl-shift-p")
-          visible("Cancel")
+          visible("[Cc]ancel")
           machine.screenshot("power-confirmation")
           machine.send_key("esc")
-          time.sleep(0.3)
-          assert "Cancel" not in machine.get_screen_text()
-          machine.send_key("ctrl-a")
-          machine.send_key("backspace")
+          visible("Tab.*focus")
       old = machine.succeed("pgrep -x .oxisession-wra").strip()
       compositor = machine.succeed("cat /run/user/$(id -u oxisession)/oxisession-kiosk-*/pid").strip()
 
       with subtest("failed authentication does not start a user session"):
-          machine.send_chars("alice\n")
-          time.sleep(2)
+          visible("Tab.*focus")
           machine.screenshot("password-prompt")
           machine.send_chars("wrongpass\n")
-          machine.wait_until_succeeds("journalctl -u greetd --no-pager | grep 'authentication failure'", timeout=60)
+          machine.wait_until_succeeds("journalctl -u greetd --no-pager | grep 'authentication failure' | grep -F 'user=alice'", timeout=60)
           time.sleep(2)
           machine.fail("test -e /home/alice/auth-fixture/uid")
           machine.succeed("kill -0 " + old)
           machine.screenshot("rejected-authentication")
+          visible("Tab.*focus")
+          assert "disconnected" not in machine.get_screen_text().lower()
+
+      with subtest("keyboard user change recovers from an unknown user without losing the login service"):
+          machine.send_key("shift-tab")
+          machine.send_key("shift-tab")
+          machine.send_key("ret")
+          visible("Use this user")
+          machine.send_key("ctrl-a")
+          machine.send_chars("private-missing-user\n")
+          visible("Tab.*focus")
+          failures = int(machine.succeed("journalctl -u greetd --no-pager | grep -c 'pam_authenticate: AUTH_ERR'"))
+          machine.send_chars("wrongpass\n")
+          machine.wait_until_succeeds("test $(journalctl -u greetd --no-pager | grep -c 'pam_authenticate: AUTH_ERR') -gt " + str(failures), timeout=60)
+          visible("Tab.*focus")
+          assert "disconnected" not in machine.get_screen_text().lower()
+          machine.send_key("shift-tab")
+          machine.send_key("shift-tab")
+          machine.send_key("ret")
+          visible("Use this user")
+          machine.send_key("ctrl-a")
+          machine.send_chars("alice")
+          machine.send_key("tab")
+          machine.send_chars("ignored")
+          machine.send_key("shift-tab")
+          machine.send_key("ret")
+          visible("Tab.*focus")
+          machine.screenshot("changed-user-password-ready")
 
       with subtest("accepted login releases kiosk seat before starting the selected UID"):
-          machine.send_key("ret")
           visible("Tab.*focus")
           machine.screenshot("retry-password-prompt")
           machine.send_key("tab")

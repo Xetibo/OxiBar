@@ -341,6 +341,19 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   keyboard events. It now shares explicit prompt focus, accepts captured keys while
   prompting and derives missing text from modified character keys. Private greetd
   frontend fixtures and the default Hyprland VM verify editing and focus traversal.
+- Resolved: greetd can report cancel cleanup failure after a failed PAM worker exits;
+  the greeter treated that normal reply as a disconnected service. Preserve the
+  root-validated connection after cleanup errors, drain before retry and retain
+  authentication feedback. True EOF and invalid frames still fail closed.
+- Resolved: empty startup username required Continue before password entry, and
+  prompt-only traversal omitted the rest of the form. Select a bounded local regular
+  account, prepare its prompt immediately, support explicit user changes and traverse
+  all enabled controls. Native username focus is cleared synchronously during
+  Tab/submit dispatch, preventing later batched keys from editing the old field.
+  Actual Iced batched-key checks and the Hyprland VM cover user switching; delayed
+  captured submits cannot consume a new password prompt.
+- Automatic account discovery currently uses trusted local passwd/login.defs data;
+  nonlocal NSS accounts remain available through manual username entry.
 - Resolved: greeter startup selects CPU rendering before GPU initialization.
   Authentication packaging no longer pins the compositor to a software Vulkan ICD;
   the Cage login/lock/suspend VM passes with deliberately invalid Vulkan settings.

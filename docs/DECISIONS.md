@@ -1,5 +1,36 @@
 # Decisions
 
+## 2026-10-14: Immediate selectable-user login and full-form keyboard navigation
+
+- greetd 0.10.3 removes its configuring session before cancelling the PAM worker.
+  An already-exited failed worker can return a normal cancel error on the still-live
+  stream. Treat that as completed cleanup, preserving failure feedback and the
+  root-validated connection; malformed replies and actual socket errors still retire it.
+- Discover the lowest-UID regular interactive local user from bounded root-owned
+  passwd/login.defs data, excluding service/noninteractive accounts. Prepare that
+  user's prompt on startup and after rejected responses. Change user cancels/drains
+  before committing an editable bounded username, including manually supplied NSS
+  accounts. Create errors do not trigger an automatic retry loop.
+- Use one greeter control focus for user/session selection, response/actions,
+  reconnect and power confirmation. Tab/Shift+Tab traverse enabled controls; arrows
+  select trusted sessions. Unfocus native username input synchronously during
+  Tab/Enter widget dispatch, before later batched keys, and stamp keyboard events
+  with their originating username-view context to reject delayed
+  captured submits. Clear/Escape retain a blank ready prompt; power dismissal resumes
+  preparation. Keep secrets outside ordinary text widgets and acknowledged-only exit.
+- Five frontend fixtures verify immediate password preparation,
+  failed-answer/cancel-error retry on one stream, user changes after draining,
+  actual masked-field clicks, complete form/power traversal, session arrows,
+  missing-text keys, stale username events and the start-acknowledgement gate.
+  Actual Iced username batches exercise Ctrl+A, Tab/Enter and trailing keys; retain
+  ordinary caret/selection behavior while preventing edits after focus departure.
+  All 40 authentication tests and strict all-target Clippy pass.
+- The default Hyprland VM passes real PAM startup without Continue, wrong-password
+  retry, unknown-user recovery on the same service, keyboard user switching and
+  editing isolation, accepted seat handoff, locker checks and crash recovery.
+  OCR readiness uses the driver's preprocessed variants: raw OCR missed visible
+  username-editor labels. PAM results and process/seat state remain the login gates.
+
 ## 2026-10-14: Exact application identities survive shared launcher aliases
 
 - Steam's system desktop entry is valid and indexed. Installed game shortcuts and
