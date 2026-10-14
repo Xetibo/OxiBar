@@ -354,6 +354,10 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   captured submits cannot consume a new password prompt.
 - Automatic account discovery currently uses trusted local passwd/login.defs data;
   nonlocal NSS accounts remain available through manual username entry.
+- Resolved: masked authentication responses lacked a text caret. The shared display
+  now blinks a themed caret while focused, resets on editing, clips long responses
+  and stays steady under reduced motion. Native render events establish idle widget
+  deadlines; CPU pixel and private Wayland checks verify actual blinking frames.
 - Resolved: greeter startup selects CPU rendering before GPU initialization.
   Authentication packaging no longer pins the compositor to a software Vulkan ICD;
   the Cage login/lock/suspend VM passes with deliberately invalid Vulkan settings.

@@ -17,6 +17,10 @@ default/button/text shapes. The shared masked password view receives a real nati
 XKB keymap, click and typing/Enter in one event batch to detect focus-order loss.
 Controller checks cover response click focus,
 Tab/Shift+Tab traversal, focused editing and Clear without authenticating/unlocking.
+CPU pixel checks verify the shared response caret at empty input and after masked
+editing, blink deadlines, focus/window blur and steady reduced-motion rendering.
+A private native lock fixture receives no input or application redraws after its
+prompt appears; distinct opaque SHM frames must still alternate caret on/off/on.
 `oxi-pam` tests compile a private PAM module and load it through test-only
 `pam_start_confdir`; production always uses the fixed system service. They exercise
 the real PAM library, information/error/visible/secret MFA prompts, wrong answers,
@@ -46,7 +50,7 @@ the current user's desktop session or credentials.
 
 `nix build .#oxilock .#oxisession` builds independent authentication packages and
 runs their selected Cargo tests. `checks.<system>.authentication-unit` runs all
-four authentication crates (40 normal tests plus the test-only ignored PAM child
+four authentication crates (42 normal tests plus the test-only ignored PAM child
 entry); `authentication-clippy` runs strict all-targets Clippy. Bounded appearance
 and asset decoding, truthful Caps inference, repeat retirement and widget wake
 deadlines have service-free checks. A private p2p logind fixture transfers actual

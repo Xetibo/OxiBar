@@ -21,6 +21,10 @@
   response and action controls with a theme accent ring. Enter activates the focused
   action (or submits from the response), and Space activates focused buttons. New
   response prompts focus the input automatically; typing only edits that input.
+  A focused response shows a themed caret, including when empty. Blink every 500 ms,
+  reset visibility on editing/focus, hide it outside input/window focus and keep it
+  steady under reduced motion. Keep responses single-line and scroll the display
+  horizontally so the end caret remains visible.
   Use opaque themed backgrounds and centered bounded cards with explicit progress
   and failure feedback.
 - Greeters select a regular user automatically and prepare the password prompt

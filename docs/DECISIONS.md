@@ -1,5 +1,20 @@
 # Decisions
 
+## 2026-10-14: Visible blinking authentication caret
+
+- The shared masked response had focus styling but no insertion caret. Add a private
+  paragraph renderer that carries only masked text or an explicitly visible prompt's
+  echo, keeping secret editing in the bounded zeroized transaction.
+- Show a text-colored 1 px caret at the response end, including empty input. Blink
+  at 500 ms, reset on focus/editing, hide outside input/window focus and keep it steady
+  under reduced motion. Clip and horizontally scroll long responses to the caret.
+- Deliver an Iced redraw event on every native lock frame, including the initial
+  focused frame, so widget deadlines drive idle blinking without application input.
+- Actual CPU pixels verify on/off/on, editing position, blur and reduced motion;
+  a private native lock surface verifies alternating SHM frames without input or
+  application redraws. All 42 authentication tests, strict all-target Clippy,
+  formatting and Nix locker/session package builds pass.
+
 ## 2026-10-14: Immediate selectable-user login and full-form keyboard navigation
 
 - greetd 0.10.3 removes its configuring session before cancelling the PAM worker.

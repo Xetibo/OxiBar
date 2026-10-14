@@ -1,5 +1,6 @@
 use zeroize::{Zeroize, Zeroizing};
 
+mod response;
 pub mod view;
 pub mod visuals;
 

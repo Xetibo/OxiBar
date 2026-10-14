@@ -55,6 +55,7 @@ enum Policy {
     Pointer,
     ThemedPointer,
     Password,
+    Caret,
 }
 
 #[derive(Default)]
@@ -67,6 +68,7 @@ struct Record {
     removed: usize,
     cursors: usize,
     shapes: Vec<cursor_device::Shape>,
+    caret_frames: Vec<Vec<u8>>,
 }
 #[derive(Default)]
 struct Controls {
@@ -540,12 +542,12 @@ impl Dispatch<lock::ExtSessionLockV1, ()> for Server {
                     2,
                     if state.policy == Policy::Malformed {
                         0
-                    } else if state.policy == Policy::Password {
+                    } else if matches!(state.policy, Policy::Password | Policy::Caret) {
                         800
                     } else {
                         80
                     },
-                    if state.policy == Policy::Password {
+                    if matches!(state.policy, Policy::Password | Policy::Caret) {
                         600
                     } else {
                         40
@@ -648,7 +650,7 @@ impl Dispatch<wl_surface::WlSurface, SurfaceData> for Server {
                     Policy::Fractional => 1.25,
                     _ => 1.0,
                 };
-                let logical = if state.policy == Policy::Password {
+                let logical = if matches!(state.policy, Policy::Password | Policy::Caret) {
                     (800, 600)
                 } else {
                     (80, 40)
@@ -686,6 +688,12 @@ impl Dispatch<wl_surface::WlSurface, SurfaceData> for Server {
                     data.width,
                     data.height,
                 ));
+                if state.policy == Policy::Caret {
+                    let mut record = state.controls.record.lock().unwrap();
+                    if record.caret_frames.last() != Some(&pixels) {
+                        record.caret_frames.push(pixels);
+                    }
+                }
                 buffer.release();
                 if !state.locked {
                     state.locked = true;
@@ -882,6 +890,78 @@ fn compositor_cursor_shapes_use_enter_serial_and_widget_interaction_without_cust
 struct PasswordApp {
     interaction: oxi_auth_ui::Interaction,
     focus: oxi_auth_ui::view::Focus,
+}
+
+struct CaretApp {
+    interaction: oxi_auth_ui::Interaction,
+    controls: Arc<Controls>,
+    ready: bool,
+}
+impl Application for CaretApp {
+    type Message = oxi_auth_ui::view::Message;
+    fn update(&mut self, event: Event<Self::Message>) -> Action {
+        match event {
+            Event::Locked => {
+                self.ready = true;
+                let attempt = self.interaction.begin().unwrap();
+                self.interaction.receive(
+                    attempt,
+                    oxi_auth_ui::Prompt {
+                        kind: oxi_auth_ui::PromptKind::Secret,
+                        text: "Password".into(),
+                    },
+                );
+                return Action::Redraw;
+            }
+            Event::Tick(_) if self.controls.record.lock().unwrap().caret_frames.len() >= 4 => {
+                return Action::AuthenticatedUnlock;
+            }
+            _ => {}
+        }
+        Action::None
+    }
+    fn view(&self, _: &Output) -> Element<'_, Self::Message> {
+        iced::widget::container(oxi_auth_ui::view::prompt_card_focused(
+            "Private idle caret fixture",
+            &self.interaction,
+            self.ready,
+            oxi_auth_ui::view::Purpose::Lock,
+            Some(oxi_auth_ui::view::Focus::Input),
+        ))
+        .center(iced::Fill)
+        .into()
+    }
+    fn background(&self) -> Color {
+        Color::from_rgb8(0x22, 0x66, 0xbb)
+    }
+}
+
+#[test]
+fn focused_password_caret_blinks_on_idle_native_lock_surface_without_input_or_application_redraws()
+{
+    let mut fixture = Fixture::new(Policy::Caret);
+    let app = CaretApp {
+        interaction: oxi_auth_ui::Interaction::default(),
+        controls: fixture.controls.clone(),
+        ready: false,
+    };
+    assert_eq!(
+        fixture.client().unwrap().run(app, None).unwrap(),
+        Exit::Authenticated
+    );
+    let record = fixture.controls.record.lock().unwrap();
+    assert_eq!(record.unlocked, 1);
+    assert_eq!(record.caret_frames.len(), 4);
+    assert_eq!(record.caret_frames[1], record.caret_frames[3]);
+    let changes = record.caret_frames[1]
+        .chunks_exact(4)
+        .zip(record.caret_frames[2].chunks_exact(4))
+        .filter(|(left, right)| left != right)
+        .count();
+    assert!(
+        (24..=50).contains(&changes),
+        "Only the thin caret should blink"
+    );
 }
 impl Application for PasswordApp {
     type Message = oxi_auth_ui::view::Message;

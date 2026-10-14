@@ -121,10 +121,10 @@ pub fn prompt_card_focused<'a>(
         )
         .push(
             mouse_area(
-                container(
-                    oxi_plugin::text(if value.is_empty() { " ".into() } else { value })
-                        .size(OXITHEME.font_xl),
-                )
+                container(crate::response::display(
+                    value,
+                    focus == Some(Focus::Input) && input_enabled,
+                ))
                 .padding(OXITHEME.padding_md)
                 .width(Length::Fill)
                 .style(move |theme| {

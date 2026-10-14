@@ -33,6 +33,9 @@ receives only a private same-UID socket; cancellation kills and reaps its proces
 group. Bounded zeroized frames carry attempt IDs, multiple prompt types and final
 authentication/account-policy results. Secret text stays in preallocated zeroizing
 storage; ordinary Iced messages/widgets receive masks instead of password strings.
+The shared response renderer retains only the mask or explicitly visible echo.
+Its paragraph and caret state schedule focused blink deadlines independently of
+authentication progress, with a steady caret under reduced motion.
 The PAM conversation owns native response allocations until PAM consumes them.
 Both processes disable core dumps and debugger attachment before handling input.
 
@@ -41,7 +44,9 @@ system-owned greeter settings/assets and per-user locker settings feed shared th
 tokens, bounded image decoding and opaque fallback composition. Native seat state
 supplies locker Caps/layout indicators. Repeat retains physical key identity, not
 text, and is retired with focus/devices; per-output widget wake deadlines preserve
-idle rendering. The CPU backend explicitly converts Iced BGRA to native XRGB.
+idle rendering. Each native frame delivers an Iced redraw event so widgets can
+schedule their first deadline even without input. The CPU backend explicitly
+converts Iced BGRA to native XRGB.
 
 The separate sleep owner subscribes to logind before taking a delay inhibitor.
 Its private child pipe opens the readiness gate only for a complete protocol-ready

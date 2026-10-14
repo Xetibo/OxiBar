@@ -195,10 +195,6 @@ impl Locker {
             }
             for slot in self.state.outputs.values_mut() {
                 if slot.wake_at.is_some_and(|deadline| now >= deadline) {
-                    slot.input
-                        .push(iced::Event::Window(iced::window::Event::RedrawRequested(
-                            now,
-                        )));
                     slot.dirty = true;
                     slot.wake_at = None;
                 }
@@ -505,6 +501,11 @@ impl Slot {
             &mut self.renderer,
         );
         let mut messages = Vec::new();
+        // Every rendered frame must let widgets schedule their next animation deadline.
+        self.input
+            .push(iced::Event::Window(iced::window::Event::RedrawRequested(
+                Instant::now(),
+            )));
         let (update, _) = ui.update(
             &std::mem::take(&mut self.input),
             self.cursor,
