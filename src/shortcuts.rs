@@ -32,6 +32,7 @@ enum Command {
     Category(usize),
     Control(usize),
     Next(bool),
+    Mode(bool),
     Activate,
     Window(i32),
     Move(i32, i32),
@@ -125,6 +126,20 @@ fn definitions() -> Vec<Definition> {
         "ArrowUp, Shift+Tab",
         Launcher,
         Command::Next(false),
+    );
+    add(
+        "launcher.next_mode",
+        "Launcher: next mode",
+        "Ctrl+Tab",
+        Launcher,
+        Command::Mode(true),
+    );
+    add(
+        "launcher.previous_mode",
+        "Launcher: previous mode",
+        "Ctrl+Shift+Tab",
+        Launcher,
+        Command::Mode(false),
     );
     add(
         "launcher.activate",
@@ -485,6 +500,7 @@ impl OxiBar {
                 match command {
                     Close => crate::launcher::Action::Close,
                     Next(forward) => crate::launcher::Action::MoveFocus(forward),
+                    Mode(forward) => crate::launcher::Action::CycleMode(forward),
                     Activate => crate::launcher::Action::LaunchFocused,
                     _ => return None,
                 },

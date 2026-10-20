@@ -227,6 +227,35 @@ pub extern "Rust" fn control_center_view(
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     with_model_read::<Model, _>(&model, |model| vec![views::controls(model, true)])
 }
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn subwidgets(_: PluginModel) -> Vec<oxibar_plugin_api::SubwidgetDescriptor> {
+    vec![oxibar_plugin_api::SubwidgetDescriptor {
+        id: "power".into(),
+        title: "Bluetooth".into(),
+    }]
+}
+#[unsafe(no_mangle)]
+pub extern "Rust" fn subwidget_view(
+    model: PluginModel,
+    id: &str,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| {
+        if id == "power" {
+            vec![views::quick_toggle(model)]
+        } else {
+            Vec::new()
+        }
+    })
+}
+#[unsafe(no_mangle)]
+pub extern "Rust" fn popup_metrics(model: PluginModel) -> oxibar_plugin_api::PluginPopupMetrics {
+    let height = with_model_read::<Model, _>(&model, views::popup_height).unwrap_or(420);
+    oxibar_plugin_api::PluginPopupMetrics {
+        popup_size: Some((460, height)),
+        ..Default::default()
+    }
+}
 #[unsafe(no_mangle)]
 pub extern "Rust" fn modal_view(
     model: PluginModel,
@@ -251,6 +280,39 @@ pub extern "Rust" fn subscription() -> *mut PluginStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn popup_height_tracks_devices_pairing_controls_and_removal() {
+        let (owner, _) = model(Table::new());
+        let height = || popup_metrics(owner.clone()).popup_size.unwrap().1;
+        let empty = height();
+        with_model_write::<Model, _>(&owner, |model| {
+            model.snapshot.adapters.push(system::Adapter {
+                path: "/fixture".into(),
+                name: "Fixture".into(),
+                powered: true,
+                discovering: false,
+                scanning: false,
+            });
+            model.adapter = Some("/fixture".into());
+            model.snapshot.available.push(system::BluetoothDevice {
+                path: "/fixture/device".into(),
+                adapter: "/fixture".into(),
+                mac: "00:00:00:00:00:00".into(),
+                name: "Headphones".into(),
+                icon: "audio-headphones".into(),
+                paired: false,
+                trusted: false,
+                connected: false,
+            });
+        });
+        let device = height();
+        assert!(device > empty);
+        with_model_write::<Model, _>(&owner, |model| model.snapshot.available[0].paired = true);
+        assert!(height() > device);
+        with_model_write::<Model, _>(&owner, |model| model.snapshot.available.clear());
+        assert!(height() < device);
+    }
 
     #[test]
     fn model_views_and_error_drain_are_deterministic() {

@@ -17,6 +17,10 @@ def shim(kind, root, arguments):
     if kind == "nmcli":
         if arguments == ["--version"]:
             print("nmcli tool, version 1.52.0")
+        elif "TYPE" in arguments and "device" in arguments:
+            print("wifi")
+        elif arguments[-2:] == ["radio", "wifi"]:
+            print("enabled")
         elif "--active" in arguments:
             print("Private WiFi:fixture-uuid:802-11-wireless:wlan-fixture")
         elif "NAME,UUID,TYPE" in arguments:

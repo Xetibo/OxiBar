@@ -711,6 +711,9 @@ dependencies = [
  "iced",
  "oxibar-plugin-api",
  "oxiced",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tracing",
 ]
 
@@ -5240,6 +5243,16 @@ dependencies = [
  "log",
  "once_cell",
  "pkg-config",
+]
+
+[[package]]
+name = "weather"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "oxibar-plugin-api",
+ "oxiced",
+ "serde_json",
 ]
 
 [[package]]

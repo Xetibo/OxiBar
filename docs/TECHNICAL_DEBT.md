@@ -5,7 +5,8 @@
 - Initial dock/widgets are implemented and verified. Running-window activation is
   currently a Hyprland adapter; other compositors retain pinned launches and
   output-aware widgets but need a window/focus capability adapter.
-- Dock auto-hide and weather are optional extensions, not enabled implementations.
+- Weather is implemented with opt-in requests and explicit coordinates. Dock
+  auto-hide remains an optional extension.
 - Generic output inventory still has its documented fallback polling/focus limits.
   The shared Hyprland window/workspace broker is event-driven.
 - Legacy providers default to resident subscriptions. Clock/Stats opt into owned
@@ -195,8 +196,8 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Resolved: provider switches now load Applications immediately, and Nix profile
   directories supplement incomplete session XDG paths while preserving precedence.
 - Resolved: the development installer omitted Applications despite enabled config,
-  leaving the dock without a catalog. It now preflights all fourteen libraries,
-  includes Applications, Commands and OxiPaste and respects custom build/config roots.
+  leaving the dock without a catalog. It now preflights all fifteen libraries,
+  includes Applications, Commands, OxiPaste and Weather and respects custom build/config roots.
   The Nix host supplies a pinned
   Applications fallback after user-installed libraries, still requiring enablement.
 
@@ -206,6 +207,9 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
   could appear empty when only the provider was enabled. The provider now owns
   native persistent capture in one resident, cancellable stream, including while
   its views/bar are hidden. Disable stops capture without deleting saved data.
+- Resolved: nonblocking producer pipe ends dropped/truncated large images. Only
+  capture reads are nonblocking; a private compositor verifies a large PNG end-to-end.
+  Native reconnect resolves a fresh live Wayland socket without reusing host FDs.
 - Direct shell access uses a registered provider-backed picker and window-command
   IPC; it no longer depends on a visible bar or a provider command ABI export.
 - Resolved: the shared Home Manager/NixOS module default omitted the clipboard
@@ -218,6 +222,18 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 - Paste relies on compositor virtual-keyboard support, native focus restoration
   and the configured application shortcut. Unsupported injection returns an error
   after copy; no compositor-specific focus heuristic is substituted.
+
+### Calendar and Weather Limits
+
+- Local calendar events support persisted date, optional local HH:MM, title,
+  location and description. CalDAV remains read-only and its existing parser is
+  date-oriented; remote event times, remote edits and local recurrence/time zones
+  are deferred. Next-event cards skip elapsed local times but use dates for CalDAV.
+- Calendar writes detect changed on-disk contents and preserve corrupt files.
+  There is no cross-process transaction lock or live local-event file watcher.
+- Weather uses bounded curl/Open-Meteo requests and an in-memory last-good cache;
+  no geolocation or disk cache. Live external API behavior is not part of isolated
+  tests; parsing/configuration/generation behavior is tested without network calls.
 
 ### Legacy Bar Label Capability
 

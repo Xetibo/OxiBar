@@ -22,6 +22,7 @@
   fontconfig,
   xdg-utils,
   wtype,
+  curl,
   adwaita-fonts,
   applicationsPlugin,
   ...
@@ -103,7 +104,7 @@ in
       patchelf --set-rpath "${runtimeLibPath}" "$out/bin/oxibar"
       wrapProgram "$out/bin/oxibar" \
         --run ${lib.escapeShellArg (import ./application-environment.nix)} \
-        --prefix PATH : "${lib.makeBinPath [fontconfig xdg-utils wtype]}" \
+        --prefix PATH : "${lib.makeBinPath [fontconfig xdg-utils wtype curl]}" \
         --set FONTCONFIG_FILE "${fontsConf}" \
         --set-default OXIBAR_PLUGIN_DIR "${applicationsPlugin}/lib" \
         --set VK_ICD_FILENAMES "${vkIcdFiles}"

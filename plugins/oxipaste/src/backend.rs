@@ -8,6 +8,44 @@ use iced::futures::{
 pub const MAX_ITEM_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_HISTORY_BYTES: usize = 64 * 1024 * 1024;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Filter {
+    #[default]
+    All,
+    Text,
+    Addresses,
+    Images,
+}
+impl Filter {
+    pub const ALL: [Self; 4] = [Self::All, Self::Text, Self::Addresses, Self::Images];
+    pub fn includes(self, item: &Item) -> bool {
+        let address = item.is_text()
+            && std::str::from_utf8(&item.bytes).is_ok_and(|text| {
+                let text = text.trim();
+                !text.contains('\n')
+                    && ["https://", "http://", "file://", "/", "./", "../"]
+                        .iter()
+                        .any(|prefix| text.starts_with(prefix))
+            });
+        match self {
+            Self::All => true,
+            Self::Text => item.is_text() && !address,
+            Self::Addresses => address,
+            Self::Images => item.mime.starts_with("image/"),
+        }
+    }
+}
+impl std::fmt::Display for Filter {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::All => "All",
+            Self::Text => "Text",
+            Self::Addresses => "Addresses",
+            Self::Images => "Images",
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
     pub bytes: Vec<u8>,
@@ -132,6 +170,44 @@ pub async fn act(action: Action) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn type_filters_intersect_search_without_treating_multiline_text_as_an_address() {
+        let items = [
+            Item {
+                bytes: b"Project Notes".to_vec(),
+                mime: "text/plain".into(),
+            },
+            Item {
+                bytes: b"https://example.org/notes".to_vec(),
+                mime: "text/plain".into(),
+            },
+            Item {
+                bytes: b"/tmp/notes.png".to_vec(),
+                mime: "text/uri-list".into(),
+            },
+            Item {
+                bytes: b"/tmp/notes\nmore notes".to_vec(),
+                mime: "text/plain".into(),
+            },
+            Item {
+                bytes: vec![0, 255, 10],
+                mime: "image/png".into(),
+            },
+        ];
+        let matching = |filter: Filter, query| {
+            items
+                .iter()
+                .filter(|item| filter.includes(item) && item.matches(query))
+                .count()
+        };
+        assert_eq!(matching(Filter::All, "notes"), 4);
+        assert_eq!(matching(Filter::Text, "notes"), 2);
+        assert_eq!(matching(Filter::Addresses, "notes"), 2);
+        assert_eq!(matching(Filter::Images, "image"), 1);
+        assert_eq!(matching(Filter::Images, "notes"), 0);
+        assert_eq!(items[4].bytes, [0, 255, 10]);
+    }
 
     #[test]
     fn lossy_bounded_preview_keeps_original_bytes_and_unicode_search() {

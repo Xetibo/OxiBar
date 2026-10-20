@@ -219,13 +219,14 @@ Cage GLES2 context before its owned child runs. It never acquires the user's sea
 ## Refined UI and Native Display Runtime Verification
 
 `scripts/ui-smoke.py` runs only inside an owned isolated compositor. Supply the host
-and Clock/System/Notifications/Audio/Bluetooth/Stats/Applications/Commands/Tools DLLs:
+and Clock/System/Notifications/Audio/Bluetooth/Stats/Applications/Commands/Tools DLLs;
+Weather is optional for its disabled-by-default Overview card:
 
 ```sh
 nix develop --impure --file nix/gui-tests.nix -c \
   python scripts/run-isolated.py -- \
   python scripts/ui-smoke.py "$OXIBAR" "$CLOCK" "$SYSTEM" "$NOTIFICATIONS" \
-    "$AUDIO" "$BLUETOOTH" "$STATS" "$APPLICATIONS" "$COMMANDS" "$TOOLS"
+    "$AUDIO" "$BLUETOOTH" "$STATS" "$APPLICATIONS" "$COMMANDS" "$TOOLS" "$WEATHER"
 ```
 
 For unwrapped local Cargo binaries/libraries, prefix this command with
@@ -236,7 +237,9 @@ width changes, attached clock/left navigation/inbox, centered 800×480 OxiShut-s
 session tiles and native confirmation, 1440×960 settings, live default-provider enablement without
 restart, indexing/search/activation of an owned desktop-entry fixture and calculator
 copy. A separate `>` command fixture checks provider isolation and actual activation
-with literal quoted arguments. The daemon deliberately starts with empty
+with literal quoted arguments. Ctrl+Tab / Ctrl+Shift+Tab are sent with search
+focused and must change mode in both directions without losing the query.
+The daemon deliberately starts with empty
 `WAYLAND_DISPLAY`; desktop/command children must receive the private live endpoint
 without `WAYLAND_SOCKET`, and native clipboard copy must still work.
 Three-column pointer drag and its content preview, coherent Base24/accent and
@@ -244,7 +247,7 @@ real monitor Preview/Keep/Revert/sparse-save plus bottom-bar placement are cover
 its XDG config/data/state, immutable base symlink, bus, mock logind/power profiles,
 MPRIS player, null-device PulseAudio server, virtual pointer and compositor;
 it never changes the real desktop/monitor/session. Additional assertions cover the
-640-high ordinary Audio dropdown and Escape, idempotent session open/toggle/close,
+adaptive ordinary Audio dropdown and Escape, idempotent session open/toggle/close,
 unchanged settings surface geometry on saves, shared notification/music edges and
 spacing with live bottom-left placement, and actual pointer reveal/hide with
 dropdown pinning. The hover fixture retains its virtual pointer until replacement;
@@ -257,6 +260,11 @@ zero-duration motion, after transitions settle.
 Real pointer drags exercise edge snapping and overlap restoration on both outputs
 before the existing native preview/Keep/Revert flow. Dedicated session tiles remain;
 embedded System content omits duplicate session actions.
+Clock re-click closes the attached center after switching pages. Overview renders
+shared provider cards. The integrated calendar modal is checked against its
+760×680 preference and 90% output bounds, then actual pointer/keyboard interactions
+add, edit and confirm-delete a local event in private XDG state. The saved ID stays
+stable on edit and deletion is verified in the persisted file.
 Optional screenshots are private. Capture after compositor animation settles,
 except the explicit intermediate/final sidebar images used for visual motion review.
 Read layer geometry after waiting, so resizing does not crop against an old position.
@@ -268,7 +276,7 @@ The smoke enables backtraces, retains panic diagnostics and fails if the daemon'
 retry loop catches a panic. A restarted daemon cannot satisfy the run.
 
 Installer verification uses private fake-library fixtures: missing Applications,
-Commands or OxiPaste files must fail before any installation, all fourteen libraries must install with
+Commands, OxiPaste or Weather files must fail before any installation, all fifteen libraries must install with
 correct contents/mode, and absolute/relative `CARGO_TARGET_DIR` plus custom
 `XDG_CONFIG_HOME` must work. `bash -n scripts/install-plugins.sh` checks syntax.
 
@@ -305,7 +313,7 @@ are separate known boundaries, not inferred from headless success.
 - `nix develop -c env -u HYPRLAND_INSTANCE_SIGNATURE cargo test --workspace`
 - `nix develop -c cargo clippy --workspace --all-targets -- -D warnings`
 - `nix build .#oxibar .#oxibar-audio .#oxibar-bluetooth .#oxibar-system` after native backend/API
-  changes, with more plugin package targets as needed.
+  changes, with more plugin package targets as needed, including `.#oxibar-weather`.
 
 For this runner integration, build `oxibar`, `oxibar-applications`, `oxibar-commands`,
 `oxibar-tools`, and a retained
@@ -536,7 +544,9 @@ Build Oxibar and its OxiPaste dylib from one workspace graph. Normal plugin test
 cover exact binary/MIME persistence, legacy migration, corrupt-file preservation,
 private permissions, failed-save rollback, bounded offline worker cancellation,
 cached-history retention on unavailable snapshots and stale manual snapshots
-losing to resident capture updates. The following opt-in checks require owned services:
+losing to resident capture updates. Type-filter fixtures intersect search without
+misclassifying multiline text. A 512 KiB transfer verifies a blocking producer and
+nonblocking reader preserve every byte. The following opt-in checks require owned services:
 
 ```sh
 nix develop -c nix develop --impure --file nix/gui-tests.nix -c \
@@ -566,6 +576,7 @@ private HOME/XDG roots so automatic capture cannot touch the user's history.
 
 The default smoke starts only Oxibar and proves its PID owns the clipboard service.
 It captures exact text/trailing newlines and binary images with all views closed,
+including a valid PNG with a ~393 KiB ancillary chunk that exceeds pipe capacity,
 continues after hiding the bar, copies exact MIME bytes, keeps Copy open and pastes
 into a raw terminal only after native focus release. It also checks payload-based
 deletion, no self-copy recapture/reorder, acknowledged PasteAndDelete, private

@@ -23,6 +23,7 @@ plugins=(
   stats
   system
   tools
+  weather
 )
 
 for plugin in "${plugins[@]}"; do

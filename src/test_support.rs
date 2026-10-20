@@ -36,6 +36,7 @@ pub struct FakePluginOptions {
     pub osd: bool,
     pub popup: bool,
     pub modal: bool,
+    pub modal_size: Option<(u32, u32)>,
     pub modal_closed: bool,
     pub panel: bool,
     pub toast: bool,
@@ -48,6 +49,8 @@ pub struct FakePluginOptions {
     pub runner_favorites: bool,
     pub live_settings: bool,
     pub control_center: bool,
+    pub control_center_available: Option<bool>,
+    pub subwidgets: bool,
 }
 
 impl FakePluginOptions {
@@ -136,6 +139,8 @@ struct FakePluginModel {
     runner_active: bool,
     runner_index: Option<usize>,
     favorites: Vec<String>,
+    control_center_available: bool,
+    modal_size: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Debug)]
@@ -280,6 +285,8 @@ impl TestHost {
             oxibar_plugin_api::with_model_write::<FakePluginModel, _>(&model, |state| {
                 state.runner_prefix = options.runner_prefix.map(str::to_owned);
                 state.runner_active = true;
+                state.control_center_available = options.control_center_available.unwrap_or(true);
+                state.modal_size = options.modal_size;
             });
             let funcs = Arc::new(fake_funcs(options));
             plugin_map.insert(name.clone(), (model, funcs));
@@ -486,6 +493,13 @@ impl TestHost {
     }
     pub fn control_center_widgets(&self) -> Vec<String> {
         self.bar.control_center_plugins()
+    }
+    pub fn set_control_center_available(&mut self, name: &str, available: bool) {
+        let model = &self.bar.plugins.get(name).expect("fixture provider").0;
+        oxibar_plugin_api::with_model_write::<FakePluginModel, _>(model, |state| {
+            state.control_center_available = available;
+        });
+        self.drive_plugin_record(name, "capabilities changed");
     }
     pub fn overview_surfaces(&self) -> Vec<(String, IcedId)> {
         self.bar
@@ -702,6 +716,11 @@ fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
         context_view: None,
         bar_view: None,
         control_center_view: options.control_center.then_some(fake_view),
+        control_center_available: options
+            .control_center_available
+            .map(|_| fake_control_center_available as oxibar_plugin_api::ControlCenterAvailableFn),
+        subwidgets: options.subwidgets.then_some(fake_subwidgets),
+        subwidget_view: options.subwidgets.then_some(fake_subwidget_view),
         filename: "libfake.so".to_owned(),
         settings_schema: (options.live_settings || options.runner_favorites)
             .then_some(fake_settings_schema),
@@ -725,6 +744,9 @@ fn fake_funcs(options: FakePluginOptions) -> PluginFuncs {
         subscription: fake_subscription,
         popup_view: options.popup.then_some(fake_popup_view),
         modal_view: options.modal.then_some(fake_modal_view),
+        modal_size: options
+            .modal_size
+            .map(|_| fake_modal_size as oxibar_plugin_api::ModalSizeFn),
         modal_closed: options.modal_closed.then_some(fake_modal_closed),
         panel_view: options.panel.then_some(fake_panel_view),
         toast_view: options.toast.then_some(fake_toast_view),
@@ -792,6 +814,39 @@ unsafe extern "Rust" fn fake_popup_metrics(model: PluginModel) -> PluginPopupMet
         .downcast_ref::<FakePluginModel>()
         .and_then(|model| model.dynamic_popup_metrics)
         .unwrap_or_default()
+}
+
+unsafe extern "Rust" fn fake_modal_size(model: PluginModel) -> (u32, u32) {
+    oxibar_plugin_api::with_model_read::<FakePluginModel, _>(&model, |model| {
+        model.modal_size.unwrap()
+    })
+    .unwrap()
+}
+
+unsafe extern "Rust" fn fake_control_center_available(model: PluginModel) -> bool {
+    oxibar_plugin_api::with_model_read::<FakePluginModel, _>(&model, |model| {
+        model.control_center_available
+    })
+    .unwrap_or(false)
+}
+
+unsafe extern "Rust" fn fake_subwidgets(
+    _: PluginModel,
+) -> Vec<oxibar_plugin_api::SubwidgetDescriptor> {
+    ["first", "second"]
+        .into_iter()
+        .map(|id| oxibar_plugin_api::SubwidgetDescriptor {
+            id: id.into(),
+            title: id.into(),
+        })
+        .collect()
+}
+
+unsafe extern "Rust" fn fake_subwidget_view(
+    model: PluginModel,
+    _: &str,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    unsafe { fake_view(model) }
 }
 
 unsafe extern "Rust" fn fake_update(

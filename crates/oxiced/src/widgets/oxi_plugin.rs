@@ -25,6 +25,8 @@ pub enum ShellIcon {
     Application,
     Overview,
     Clipboard,
+    Copy,
+    Delete,
 }
 
 pub fn icon<'a>(kind: ShellIcon) -> iced::widget::Svg<'a> {
@@ -66,6 +68,10 @@ pub fn icon<'a>(kind: ShellIcon) -> iced::widget::Svg<'a> {
         ShellIcon::Clipboard => {
             "<rect x='5' y='4' width='14' height='17' rx='2'/><rect x='9' y='2' width='6' height='4' rx='1'/><path d='M9 10h6M9 14h6M9 18h4'/>"
         }
+        ShellIcon::Copy => {
+            "<rect x='8' y='8' width='13' height='13' rx='2'/><path d='M16 8V3H3v13h5'/>"
+        }
+        ShellIcon::Delete => "<path d='M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7'/>",
     };
     svg(svg::Handle::from_memory(format!(
         "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'>{path}</svg>"

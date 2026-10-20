@@ -1,11 +1,12 @@
 use iced::{
     Element, Length,
-    widget::{Column, Row, Space, image},
+    widget::{Column, Row, Space, image, tooltip},
 };
 use oxibar_plugin_api::{PluginModel, PluginMsg, with_model_read};
 use oxiced::{
     theme::theme_impl::OXITHEME,
     widgets::{
+        oxi_picklist,
         oxi_plugin::{self, text},
         oxi_text_input,
     },
@@ -13,7 +14,7 @@ use oxiced::{
 
 use crate::{
     Message, Model,
-    backend::{Action, Item},
+    backend::{Action, Filter, Item},
     msg,
 };
 
@@ -82,10 +83,22 @@ pub(super) fn body(model: &Model, scroll: bool) -> Element<'static, PluginMsg> {
                 .push(clear),
         )
         .push(
-            oxi_text_input::text_input("Search clipboard…", &model.search, |query| {
-                msg(Message::Search(query))
-            })
-            .id("oxibar-oxipaste-search"),
+            Row::new()
+                .spacing(OXITHEME.padding_sm)
+                .align_y(iced::Alignment::Center)
+                .push(
+                    oxi_text_input::text_input("Search clipboard…", &model.search, |query| {
+                        msg(Message::Search(query))
+                    })
+                    .id("oxibar-oxipaste-search")
+                    .width(Length::Fill),
+                )
+                .push(
+                    oxi_picklist::pick_list(Filter::ALL.to_vec(), Some(model.filter), |filter| {
+                        msg(Message::Filter(filter))
+                    })
+                    .padding(OXITHEME.padding_sm),
+                ),
         )
         .push(
             text("Click an item to paste · Copy keeps this view open")
@@ -109,11 +122,17 @@ pub(super) fn body(model: &Model, scroll: bool) -> Element<'static, PluginMsg> {
         .spacing(OXITHEME.padding_sm)
         .width(Length::Fill);
     let mut count = 0;
-    for item in model.items.iter().filter(|item| item.matches(&query)) {
+    for item in model
+        .items
+        .iter()
+        .filter(|item| model.filter.includes(item) && item.matches(&query))
+    {
         count += 1;
         let mut paste = oxi_plugin::surface_button(preview(item), true).width(Length::Fill);
-        let mut copy = oxi_plugin::surface_button(text("Copy"), false);
-        let mut delete = oxi_plugin::surface_button(text("Delete"), false);
+        let mut copy =
+            oxi_plugin::surface_button(oxi_plugin::icon(oxi_plugin::ShellIcon::Copy), false);
+        let mut delete =
+            oxi_plugin::surface_button(oxi_plugin::icon(oxi_plugin::ShellIcon::Delete), false);
         if !model.busy {
             paste = paste.on_press(msg(Message::Act(Action::Copy(item.clone()), true)));
             copy = copy.on_press(msg(Message::Act(Action::Copy(item.clone()), false)));
@@ -125,15 +144,15 @@ pub(super) fn body(model: &Model, scroll: bool) -> Element<'static, PluginMsg> {
                 .align_y(iced::Alignment::Center)
                 .push(paste)
                 .push(
-                    Column::new()
+                    Row::new()
                         .spacing(OXITHEME.padding_sm)
-                        .push(copy)
-                        .push(delete),
+                        .push(tooltip(copy, text("Copy"), tooltip::Position::Bottom))
+                        .push(tooltip(delete, text("Delete"), tooltip::Position::Bottom)),
                 ),
         );
     }
     if count == 0 {
-        let empty = if !query.is_empty() {
+        let empty = if !query.is_empty() || model.filter != Filter::All {
             "No matching clipboard items"
         } else if model.health.is_some() || model.backend_health.is_some() {
             "Clipboard backend unavailable or starting"

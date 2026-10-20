@@ -211,6 +211,12 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
 - `plugins/clock/src/caldav.rs`: HTTPS-only CalDAV sync, current-month calendar queries, minimal iCalendar parsing, common recurrence expansion, and Nextcloud-compatible calendar query support.
 - Clock calendar refresh/launch jobs run outside the Iced executor through its
   runtime-independent worker; curl connection and total waits are bounded.
+- Calendar local events use private, bounded atomic XDG state storage and a shared
+  day/detail/editor modal. Local edits commit only after persistence; synchronized
+  CalDAV events remain read-only. Both sources feed calendar days and next-event cards.
+- Weather uses explicit configured coordinates, bounded HTTPS worker requests and
+  a shared last-good in-memory snapshot. Its refresh stream runs only while consumed;
+  requests remain disabled until configured and enabled.
 - `flake.nix` and `nix/*.nix`: Nix packaging for the host and dynamic plugin libraries. Crane builds one workspace dependency artifact derivation and reuses it for every host/plugin package so shared Rust dependencies are not rebuilt per plugin.
 
 ## Runtime Flow
@@ -229,6 +235,9 @@ ext-data-control/wlr-data-control writes await a display acknowledgement; an
 owner marker prevents self-copy from reordering history or undoing deletion.
 Already running compatible external services retain their name and use the
 provider's bounded refresh path instead of a second local history owner.
+The native owner opens its own resolved Wayland socket rather than consuming an
+inherited display FD. Capture pipes leave producers blocking and make only their
+read end nonblocking, so image transfers larger than pipe capacity complete.
 
 Command-driven provider pickers are registered, output-scoped host surfaces. They
 share provider state/subscriptions with embedded views, survive hiding a bar on a
@@ -271,6 +280,8 @@ paste handoff use the same scoped surface cleanup.
   instance, including Escape, replacement, compositor closure and output removal.
   Nonblocking cleanup tasks still update the model after their window disappears.
   Modal Escape and text-field traversal are scoped to the current modal ID.
+  Optional `modal_size(model)` supplies preferred logical dimensions, clamped to
+  90% of the source output; existing providers retain the default size.
 - The host also owns a keyboard-focused launcher overlay. Opening it reuses the resident renderer and plugin models; closing or activating a result removes only that surface. Compositor bindings invoke `oxibar launcher` over a runtime Unix socket.
 - Optional runner providers return bounded result data with stable provider-local launch indexes. The host caches a globally ranked list on state updates and dispatches activation only to the selected provider's existing `launch` hook.
 - PATH commands are prefix-scoped by default, with an explicit opt-in for merged
@@ -295,6 +306,11 @@ paste handoff use the same scoped surface cleanup.
   the host owns scrolling, cards, selection and output placement. Configured order
   is case-insensitive and deduplicated, and unsupported/unavailable providers are
   omitted. Opening/closing a center never initializes another plugin or service.
+- Its synthetic Overview composes optional provider subwidget descriptors/views
+  from those same models. Sparse live settings store ordered `Provider:id` cards
+  and column count; visible cards count as consumers of the provider's single
+  subscription. Model-aware control-center availability hides unusable pages
+  without unloading reconnecting services or their session capabilities.
 - By default the clock and Controls button open that center inside the owning bar,
    with fixed left navigation and independently scrolling long detail content.
    Bounded stretch content instead receives the available height without an

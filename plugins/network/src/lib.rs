@@ -55,6 +55,8 @@ pub struct Model {
     connected: Vec<ActiveNetwork>,
     saved: Vec<SavedConnection>,
     wifi: Vec<WifiNetwork>,
+    wifi_enabled: Option<bool>,
+    scanning: bool,
     editing: Option<EditState>,
     hovered_entry: Option<String>,
     saved_expanded: bool,
@@ -72,6 +74,8 @@ impl Model {
             connected: Vec::new(),
             saved: Vec::new(),
             wifi: Vec::new(),
+            wifi_enabled: None,
+            scanning: false,
             editing: None,
             hovered_entry: None,
             saved_expanded: false,
@@ -100,6 +104,7 @@ enum EditTarget {
 enum Message {
     TogglePopup,
     Refresh,
+    WifiPower(bool),
     ScanResult(Result<Snapshot, String>),
     ConnectWifi(String),
     ConnectConnection(String),
@@ -161,15 +166,30 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
         Message::TogglePopup => Some(Task::done(
             Arc::new(HOST_REQUEST_TOGGLE_POPUP.to_owned()) as PluginMsg
         )),
-        Message::Refresh => Some(Task::perform(async { scan_networks() }, |result| {
-            msg(Message::ScanResult(result))
-        })),
+        Message::Refresh => {
+            if model.scanning {
+                return None;
+            }
+            model.scanning = true;
+            Some(Task::perform(
+                oxibar_plugin_api::worker::run(scan_networks),
+                |result| msg(Message::ScanResult(result)),
+            ))
+        }
+        Message::WifiPower(enabled) => {
+            if model.wifi_enabled.is_none() || model.pending.is_some() {
+                return None;
+            }
+            run_action(model, NetworkAction::WifiPower(enabled), false)
+        }
         Message::ScanResult(result) => {
+            model.scanning = false;
             match result {
                 Ok(snapshot) => {
                     model.connected = snapshot.connected;
                     model.saved = snapshot.saved;
                     model.wifi = snapshot.wifi;
+                    model.wifi_enabled = snapshot.wifi_enabled;
                 }
                 Err(error) => model.errors.push(error),
             }
@@ -381,6 +401,109 @@ pub extern "Rust" fn control_center_view(
     with_model_read::<Model, _>(&model, |model| vec![network_controls(model, true)])
 }
 
+#[unsafe(no_mangle)]
+pub extern "Rust" fn subwidgets(_: PluginModel) -> Vec<oxibar_plugin_api::SubwidgetDescriptor> {
+    vec![oxibar_plugin_api::SubwidgetDescriptor {
+        id: "wifi".into(),
+        title: "Wi-Fi".into(),
+    }]
+}
+#[unsafe(no_mangle)]
+pub extern "Rust" fn subwidget_view(
+    model: PluginModel,
+    id: &str,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| {
+        if id == "wifi" {
+            vec![wifi_toggle(model)]
+        } else {
+            Vec::new()
+        }
+    })
+}
+fn wifi_toggle(model: &Model) -> Element<'static, PluginMsg> {
+    let Some(enabled) = model.wifi_enabled else {
+        return empty_text("No Wi-Fi adapter");
+    };
+    Column::new()
+        .spacing(OXITHEME.padding_md)
+        .push(
+            oxiced::widgets::oxi_toggler::toggler::<PluginMsg>(enabled)
+                .label("Wi-Fi")
+                .on_toggle_maybe(
+                    model
+                        .pending
+                        .is_none()
+                        .then_some(|enabled| msg(Message::WifiPower(enabled))),
+                ),
+        )
+        .push(
+            text(
+                model
+                    .connected
+                    .iter()
+                    .find(|network| network.kind.contains("wireless"))
+                    .map(|network| network.name.clone())
+                    .unwrap_or_else(|| {
+                        if enabled {
+                            "Not connected"
+                        } else {
+                            "Wi-Fi off"
+                        }
+                        .into()
+                    }),
+            )
+            .size(OXITHEME.font_md)
+            .style(text_muted),
+        )
+        .into()
+}
+#[unsafe(no_mangle)]
+pub extern "Rust" fn popup_metrics(model: PluginModel) -> oxibar_plugin_api::PluginPopupMetrics {
+    let height = with_model_read::<Model, _>(&model, |model| {
+        let line = OXITHEME.font_md * 1.3;
+        let row = line + OXITHEME.font_sm * 1.3 + OXITHEME.padding_xs * 3.0 + OXITHEME.padding_sm;
+        let count = model.connected.len()
+            + model.wifi.len()
+            + if model.saved_expanded {
+                model.saved.len()
+            } else {
+                0
+            };
+        let empty = usize::from(model.connected.is_empty()) + usize::from(model.wifi.is_empty());
+        let mut height = OXITHEME.padding_md * 2.0
+            + 20.0
+            + (line + OXITHEME.padding_md * 2.0) * 3.0
+            + row * count as f32
+            + (line + OXITHEME.padding_sm) * empty as f32;
+        if model.wifi_enabled.is_some() {
+            height += line * 2.0 + OXITHEME.padding_md + OXITHEME.padding_sm;
+        }
+        for name in model
+            .connected
+            .iter()
+            .map(|item| &item.name)
+            .chain(model.wifi.iter().map(|item| &item.ssid))
+            .chain(
+                model
+                    .saved
+                    .iter()
+                    .filter(|_| model.saved_expanded)
+                    .map(|item| &item.name),
+            )
+        {
+            height += line * (name.chars().count().saturating_sub(1) / 32) as f32;
+        }
+        height.ceil() as u32
+    })
+    .unwrap_or(POPUP_SIZE.1)
+    .min(900);
+    oxibar_plugin_api::PluginPopupMetrics {
+        popup_size: Some((POPUP_SIZE.0, height)),
+        ..Default::default()
+    }
+}
+
 fn network_controls(model: &Model, embedded: bool) -> Element<'static, PluginMsg> {
     let mut content = Column::new()
         .spacing(if embedded {
@@ -395,6 +518,9 @@ fn network_controls(model: &Model, embedded: bool) -> Element<'static, PluginMsg
         })
         .width(Length::Fill);
 
+    if model.wifi_enabled.is_some() {
+        content = content.push(wifi_toggle(model));
+    }
     let label = if model.pending.is_some() {
         "Working..."
     } else {
@@ -555,7 +681,7 @@ fn run_action(
     let generation = model.action_generation;
     let edit_generation = model.edit_generation;
     Some(Task::perform(
-        async move { run_network_action(action) },
+        oxibar_plugin_api::worker::run(move || run_network_action(action)),
         move |result| {
             msg(Message::ActionDone {
                 result,
@@ -924,6 +1050,42 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn popup_height_tracks_scan_results_and_saved_accordion_contents() {
+        let owner = plugin_model(Model::new(Table::new()));
+        let height = || popup_metrics(owner.clone()).popup_size.unwrap().1;
+        let empty = height();
+        with_model_write::<Model, _>(&owner, |model| {
+            model.wifi_enabled = Some(true);
+            model.wifi = (0..2)
+                .map(|index| WifiNetwork {
+                    ssid: format!("Wi-Fi {index}"),
+                    bssid: String::new(),
+                    signal: 80,
+                    security: "WPA2".into(),
+                    connected: false,
+                    active_uuid: None,
+                })
+                .collect();
+            model.saved = (0..3)
+                .map(|index| SavedConnection {
+                    name: format!("Saved {index}"),
+                    uuid: index.to_string(),
+                    kind: "wifi".into(),
+                })
+                .collect();
+        });
+        let collapsed = height();
+        assert!(collapsed > empty);
+        update(owner.clone(), msg(Message::ToggleSavedConnections));
+        assert!(height() > collapsed);
+        with_model_write::<Model, _>(&owner, |model| {
+            model.wifi.extend(vec![model.wifi[0].clone(); 100])
+        });
+        assert_eq!(height(), 900);
+        assert_eq!(popup_view(owner).unwrap().len(), 1);
+    }
 
     #[test]
     fn reads_scan_interval_from_config() {

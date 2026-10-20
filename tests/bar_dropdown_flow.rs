@@ -199,6 +199,15 @@ fn clock_controls_and_notification_inbox_share_the_bar_and_close_without_destroy
         "Audio".into(),
     )));
     assert_eq!(host.control_center_selected(), Some("Audio"));
+    host.drive(Message::FromSurface(
+        bar,
+        Box::new(Message::TogglePluginPopup("Clock".into())),
+    ));
+    assert!(host.control_center_window().is_none());
+    assert!(!host.popup_open());
+    assert_eq!(host.bar_windows(), vec![bar]);
+    host.drive(Message::TogglePluginPopup("Clock".into()));
+    assert_eq!(host.control_center_selected(), Some("Clock"));
     host.drive_plugin_toast_show("Notifications", "existing", 380, 140);
     host.drive(Message::TogglePluginPanel("Notifications".into()));
     assert!(host.control_center_window().is_none());

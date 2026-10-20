@@ -555,6 +555,23 @@ pub type ViewFn =
 /// and surface routing; the plugin reuses its existing model and messages.
 pub type ControlCenterViewFn = ViewFn;
 
+/// Optional cached capability check. Keep services resident while hiding empty controls.
+pub type ControlCenterAvailableFn = unsafe extern "Rust" fn(PluginModel) -> bool;
+
+/// Reusable, naturally sized bodies sharing the provider's model and subscription.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubwidgetDescriptor {
+    pub id: String,
+    pub title: String,
+}
+
+pub type SubwidgetsFn = unsafe extern "Rust" fn(PluginModel) -> Vec<SubwidgetDescriptor>;
+pub type SubwidgetViewFn =
+    unsafe extern "Rust" fn(
+        PluginModel,
+        &str,
+    ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
+
 #[derive(Debug, Clone)]
 pub struct SessionMenuEntry {
     pub action: String,
@@ -575,6 +592,9 @@ pub type ModalViewFn =
     unsafe extern "Rust" fn(
         model: PluginModel,
     ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error>;
+
+/// Optional preferred modal size in logical pixels. The host bounds it to the output.
+pub type ModalSizeFn = unsafe extern "Rust" fn(model: PluginModel) -> (u32, u32);
 
 /// Optional `modal_closed(model)` lifecycle notification. Cancel modal-owned
 /// work idempotently without blocking. Cleanup tasks remain valid after the

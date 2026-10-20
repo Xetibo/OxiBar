@@ -22,6 +22,7 @@ self: {
     oxibar-tools
     oxibar-tray
     oxibar-workspaces
+    oxibar-weather
   ];
   pluginLibraryName = pkg: "lib${lib.replaceStrings ["-"] ["_"] pkg.pname}.so";
 in {

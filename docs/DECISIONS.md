@@ -1,5 +1,54 @@
 # Decisions
 
+## 2026-10-20: Composed controls, local calendar and clipboard recovery
+
+- Add a synthetic Control Center Overview page with ordered `Provider:id` cards,
+  one to three columns and a live Add/Remove/Up/Down editor. Optional ABI-6
+  `subwidgets`/`subwidget_view` hooks reuse the existing provider model; visible
+  cards count as consumers without multiplying subscriptions. Bundled cards cover
+  media, volume, weather, next event, Wi-Fi and Bluetooth power.
+- Keep optional `control_center_available(model)` separate from load availability.
+  System hides unsupported brightness/profile domains and its page when neither
+  exists, while retaining session actions, the service owner and hotplug recovery.
+  Re-clicking Clock closes its attached center regardless of the selected page.
+- Compute Audio/Network/Bluetooth popup metrics from content, device lists,
+  wrapped text, paired actions and expanded sections, retaining capped scrolling.
+  Session tiles have no hover tooltip/highlight. Launcher Ctrl+Tab and
+  Ctrl+Shift+Tab cycle advertised prefix modes and All with query preservation;
+  shortcut settings remain live and context-scoped.
+- Calendar day clicks open built-in details and local CRUD, with optional external
+  launch kept explicit. Local events use bounded validated private XDG-state JSON,
+  atomic replacement, stable identities and expected-content conflict checks.
+  Corrupt data is preserved. A completed save after dismissal updates data without
+  reopening the modal. CalDAV stays read-only and date-granular; local recurrence,
+  time-zone editing and cross-process transaction locking remain deferred.
+- Add optional `modal_size(model)` to ABI 6 without changing required exports or
+  metadata layout. The host bounds preferred dimensions to 90% of the owning
+  output; Clock requests 760×680. Actual GUI verification caught the initially
+  missing Clock export despite passing fake-provider sizing tests.
+- Ship Weather as the fifteenth production library, including flake/module/Cargo
+  installer support. Open-Meteo requests require explicit enablement/coordinates,
+  use bounded runtime-independent HTTPS workers and retain one last-good in-memory
+  cache. Nix supplies curl for Weather and the existing CalDAV transport.
+- Compare the original `/home/dashie/gits/OxiPaste` filter behavior and restore
+  All/Text/Addresses/Images intersected with search. Copy/Delete are inline SVG
+  icon buttons. Resolve a fresh worker Wayland endpoint rather than borrowing the
+  host descriptor. Only clipboard capture's read pipe is nonblocking: a nonblocking
+  producer write end caused large image transfers to fail at pipe capacity.
+- Workspace normal tests/doctests and the workspace build pass. Owned isolated
+  Hyprland UI smoke verifies calendar persisted CRUD, Overview, clock dismissal
+  and bidirectional launcher mode hotkeys with the search focused. Owned clipboard
+  smoke verifies exact text/newlines, a valid ~393 KiB PNG, closed-view/bar capture,
+  native focus handoff, content-based deletion, private persistence and provider
+  disable/re-enable/restart. No real session, clipboard or monitor state is used
+  for these checks.
+- Strict all-target workspace Clippy, formatting, Nix host/Clock/Weather builds,
+  aligned Home Manager 25.11 module checks and fifteen-library installer fixtures
+  pass. The retained isolated release smoke also passes CalDAV/details/external
+  launch, network password, tray, notifications, desktop edits, hotplug and reopen
+  checks. Wait for the desktop editor's first interactive frame before its first
+  synthetic drag; layer discovery alone raced that frame in the legacy fixture.
+
 ## 2026-10-14: Visible blinking authentication caret
 
 - The shared masked response had focus styling but no insertion caret. Add a private

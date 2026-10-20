@@ -68,8 +68,13 @@
   remain in popups and existing informational tooltips.
 - Popup roots should use compact `OXITHEME.padding_sm` spacing, `OXITHEME.padding_md`/`padding_lg` padding, `Length::Fill`, and scrolling for long content.
 - Plugins with model-dependent popup content should export `popup_metrics(model)` and cap long content at the host max height with scrolling.
+- Popup height follows current text, devices, errors and expanded sections; empty
+  states shrink and added content grows before scrolling at the output limit.
 - Panel roots should use `OXITHEME.padding_md` padding, full width/height, and scrolling for long lists.
 - Modal content should rely on host-provided chrome, radius, shadow, border, and padding.
+- Forms may request a preferred modal size, bounded by the owning output. Calendar
+  days open integrated event details and local add/edit/delete forms with a clear
+  title-to-entries gap and themed inputs.
 - Interactive protocol modals distinguish input, displayed codes and explicit
   Allow/Reject decisions. Validate without discarding the pending prompt, keep
   actions reachable by scrolling, and show progress until the operation finishes.
@@ -92,6 +97,8 @@
   unmatched search. Healthy empty history explains how copying adds items; backend
   errors must remain visible alongside useful cached content.
 - Show provider prefixes, indexing/unavailable status and separate favorite actions.
+  Launcher mode shortcuts cycle advertised prefixes and All in both directions,
+  preserving search text; defaults are Ctrl+Tab and Ctrl+Shift+Tab.
   Terminal/PATH command results are prefix-scoped by default; merged application
   search is an explicit preference rather than command noise hiding desktop entries.
   Exact application names/desktop IDs stay ahead of helper-alias matches, including
@@ -128,6 +135,10 @@
   scrolls; stretch content receives the full bounded body height. Reaching another
   provider never requires scrolling past its content.
   The default 1440×960 settings surface provides room for forms and layout editing.
+- The control-center Overview composes natural-height provider subwidgets in an
+  ordered one-to-three-column grid. Edit cards exposes add/remove and up/down
+  ordering. Cards share provider state with full controls. Hide unavailable control
+  domains and omit an entirely unusable provider page.
 - Per-output bars may use independent layout, height, transparency and top/bottom
   placement and label preference. Popups and detached input overlays remain local to their source bar;
   all bars keep one shared model for each plugin.
@@ -157,16 +168,20 @@
   Open dropdowns underneath/above the button and clamp to output edges.
 - Control center and notification inbox use bar dropdowns by
   default. Clock opens the configured center/calendar entry; all provider views
-  retain one model. Closing a dropdown restores bar input/keyboard policy.
+  retain one model. Clicking Clock again closes its center from any selected page.
+  Closing a dropdown restores bar input/keyboard policy.
 - Every dropdown requests keyboard focus while open and closes with scoped Escape,
   including ordinary provider popups and standalone inbox panels.
 - Clipboard pickers distinguish row-click Paste from a separate Copy action that
   retains the picker. Copy must acknowledge success before dismissal/injection;
   paste releases native keyboard ownership first. Keep action failures visible
   across healthy background refreshes and preserve exact data outside previews.
+  Copy/Delete use inline icon buttons. All/Text/Addresses/Images filtering
+  intersects case-insensitive search without modifying original bytes or MIME.
 - Session uses a centered, output-bounded OxiShut-style overlay: three equal columns
   of large icon-only tiles, neutral theme fills, accent selection, disabled capability
-  styling, hover descriptions and a selected-action label. Native confirmation
+  styling and a selected-action label. Tiles have no hover highlight or tooltip.
+  Native confirmation
   retains the originating output after the menu closes.
 - Bar/Layout uses three equal Left/Center/Right columns of draggable cards with a
   noninteractive pointer preview and up/down alternatives. A stale gesture reports

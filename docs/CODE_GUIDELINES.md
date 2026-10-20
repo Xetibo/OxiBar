@@ -138,6 +138,11 @@
 - Embedded capability views reuse the existing model and return inner content;
   host surfaces own chrome and scrolling. Factor shared popup/embedded view logic
   without creating another subscription, backend or polling owner.
+- Reusable subwidgets expose stable provider-local IDs and natural-height inner
+  views. Model-aware page availability is separate from load-time availability;
+  hiding an unsupported domain must not stop its reconnecting service.
+- For nonblocking clipboard capture, set `NONBLOCK` on the read end only. External
+  producers must be able to write payloads larger than pipe capacity without EAGAIN.
 - Keep thread-affine native handles on their owning worker. Bound request queues
   and operation waits, coalesce replacement actions, reject expired/offline
   commands and resnapshot after reconnect rather than replaying stale actions.

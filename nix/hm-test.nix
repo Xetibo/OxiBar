@@ -88,6 +88,13 @@
       defaults.xdg.configFile."oxibar/plugins/libcommands.so".target
       == "custom-config/oxibar/plugins/libcommands.so"
       && toString defaults.xdg.configFile."oxibar/plugins/libcommands.so".source == "${packages.oxibar-commands}/lib/libcommands.so";
+    defaultWeatherEnabled =
+      builtins.elem "libweather.so" defaultBase.plugins
+      && builtins.elem (toString packages.oxibar-weather) (builtins.map toString defaults.home.packages);
+    defaultWeatherInstalled =
+      defaults.xdg.configFile."oxibar/plugins/libweather.so".target
+      == "custom-config/oxibar/plugins/libweather.so"
+      && toString defaults.xdg.configFile."oxibar/plugins/libweather.so".source == "${packages.oxibar-weather}/lib/libweather.so";
     enabledBaseOnly = base.plugins == ["libclock.so"];
     disabledCatalogInstalled = builtins.hasAttr "oxibar/plugins/libexample.so" disabled.xdg.configFile;
     overridesUnmanaged = !(builtins.hasAttr "oxibar/overrides.toml" disabled.xdg.configFile);

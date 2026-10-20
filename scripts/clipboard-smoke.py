@@ -8,11 +8,13 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 import threading
 import time
 import tty
+import zlib
 
 
 def receive(root):
@@ -171,6 +173,9 @@ async def main():
             copy_payload(selected)
             await wait(lambda: contains(selected), "capture exact text and trailing newline")
             png = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082")
+            # A valid ancillary chunk makes this transfer much larger than a pipe buffer.
+            chunk = b"tEXt" + b"Comment\0" + b"clipboard image transfer " * 16384
+            png = png[:-12] + struct.pack(">I", len(chunk) - 4) + chunk + struct.pack(">I", zlib.crc32(chunk)) + png[-12:]
             copy_payload(png, "image/png")
             await wait(lambda: contains(png), "capture binary image with original MIME")
             assert any(bytes(item[0]) == png and item[1] == "image/png" for item in await history())
@@ -201,11 +206,11 @@ async def main():
             run("wtype", "-s", "500", "-d", "10", "clipboard selected")
             await asyncio.sleep(.2)
             await picture("clipboard-embedded-search", bar, "OxiBar clipboard")
-            await click(bar, "OxiBar clipboard", 480, 185)
+            await click(bar, "OxiBar clipboard", 441, 193)
             await wait(lambda: run("wl-paste", "--no-newline").stdout == selected, "bundled backend Copy writes selected bytes")
             assert status()["oxipaste_open"], "Copy must keep picker open"
             assert received() == b"", "Copy must not type: " + repr(received())
-            await click(bar, "OxiBar clipboard", 160, 235)
+            await click(bar, "OxiBar clipboard", 160, 190)
             await wait(lambda: received() == selected, "bundled backend paste releases focus before typing")
             await wait(lambda: not status()["oxipaste_open"], "successful paste closes picker")
             await wait(lambda: hypr("activewindow").get("address") == target["address"], "application regains focus")
@@ -305,7 +310,7 @@ paste_shortcut="ctrl+v"
             await picture("clipboard-popup", bar, "OxiBar")
             # Reorder daemon history after the rendered snapshot; selection must stay exact.
             await call("Capture", "ays", [b"newer clipboard entry", "text/plain;charset=utf-8"])
-            await click(bar, "OxiBar", x + 493, y + 146)
+            await click(bar, "OxiBar", x + 457, y + 177)
             await wait(lambda: run("wl-paste", "--no-newline").stdout == selected, "Copy writes selected snapshot despite reordered history")
             assert status()["popup_open"] and received() == b"", "Copy must retain dropdown and not type"
             await picture("clipboard-copy", bar, "OxiBar")
@@ -313,7 +318,7 @@ paste_shortcut="ctrl+v"
             await click(bar, "OxiBar", x + 120, y + 66)
             run("wtype", "clipboard selected")
             await asyncio.sleep(.2)
-            await click(bar, "OxiBar", x + 160, y + 196)
+            await click(bar, "OxiBar", x + 160, y + 176)
             await wait(lambda: received() == selected, "row click pastes exact bytes into focused application")
             assert not status()["popup_open"]
             await wait(lambda: hypr("activewindow").get("address") == target["address"], "keyboard focus returned to application")
@@ -330,7 +335,7 @@ paste_shortcut="ctrl+v"
                 await wait(lambda: call("GetAll"), "failure-injectable daemon ready")
             before = await history()
             failure.touch()
-            await click(bar, "OxiBar", x + 160, y + 196)
+            await click(bar, "OxiBar", x + 160, y + 176)
             await asyncio.sleep(.3)
             assert status()["popup_open"] and received() == selected
             await call("PasteAndDelete", "t", [0], failed=True)
@@ -353,7 +358,7 @@ paste_shortcut="ctrl+v"
             # Device removal must publish focus loss even without keyboard Leave.
             stop(keyboard)
             await asyncio.sleep(.15)
-            await click(bar, "OxiBar", x + 160, y + 186)
+            await click(bar, "OxiBar", x + 160, y + 176)
             await wait(lambda: received() == selected * 2, "Ctrl+Shift+V pastes into owned terminal")
 
             # Shell commands own a centered picker, independent of a visible bar.
@@ -394,12 +399,12 @@ paste_shortcut="ctrl+v"
             run("wtype", "-M", "ctrl", "-k", "a", "-m", "ctrl", "-k", "BackSpace", "clipboard selected")
             await asyncio.sleep(.2)
             await picture("clipboard-command-search", bar, "OxiBar clipboard")
-            await click(bar, "OxiBar clipboard", 480, 210)
+            await click(bar, "OxiBar clipboard", 441, 193)
             await wait(lambda: run("wl-paste", "--no-newline").stdout == selected, "command picker Copy selects filtered history")
             assert status()["oxipaste_open"] and received() == selected * 2
             await asyncio.sleep(.2)
             await picture("clipboard-command-copy", bar, "OxiBar clipboard")
-            await click(bar, "OxiBar clipboard", 160, 235)
+            await click(bar, "OxiBar clipboard", 160, 190)
             await wait(lambda: received() == selected * 3, "command picker row pastes into owned terminal with bar hidden")
             await wait(lambda: not status()["oxipaste_open"] and not any(value["namespace"] == "OxiBar clipboard" for value in layers(bar)), "native clipboard picker closes after paste")
             await wait(lambda: hypr("activewindow").get("address") == target["address"], "command paste returns application focus")

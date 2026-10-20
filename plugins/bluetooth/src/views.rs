@@ -27,6 +27,77 @@ pub(super) fn bar(model: &Model, show_labels: bool) -> Element<'static, PluginMs
     .into()
 }
 
+pub(super) fn quick_toggle(model: &Model) -> Element<'static, PluginMsg> {
+    let Some(adapter) = model
+        .adapter
+        .as_deref()
+        .and_then(|path| model.snapshot.adapter(path))
+    else {
+        return copy("No Bluetooth adapter");
+    };
+    Column::new()
+        .spacing(OXITHEME.padding_md)
+        .push(
+            oxi_toggler::toggler::<PluginMsg>(adapter.powered)
+                .label("Bluetooth")
+                .on_toggle_maybe(
+                    (model.client.is_ready() && !model.busy())
+                        .then_some(|enabled| msg(Message::Power(enabled))),
+                ),
+        )
+        .push(copy(&format!(
+            "{} · {} connected",
+            adapter.name,
+            model
+                .snapshot
+                .connected
+                .iter()
+                .filter(|device| device.adapter == adapter.path)
+                .count()
+        )))
+        .into()
+}
+
+pub(super) fn popup_height(model: &Model) -> u32 {
+    let line = OXITHEME.font_md * 1.3;
+    let large = OXITHEME.font_lg * 1.3;
+    let selected = model
+        .adapter
+        .as_deref()
+        .and_then(|path| model.snapshot.adapter(path));
+    let mut height = OXITHEME.padding_md * 2.0 + 20.0;
+    height += if selected.is_some() {
+        (line + OXITHEME.padding_md * 2.0) * 2.0 + OXITHEME.padding_sm * 2.0
+    } else {
+        line + OXITHEME.padding_sm
+    };
+    for devices in [&model.snapshot.connected, &model.snapshot.available] {
+        height += large + OXITHEME.padding_sm;
+        let devices: Vec<_> = devices
+            .iter()
+            .filter(|device| selected.is_none_or(|adapter| adapter.path == device.adapter))
+            .collect();
+        if devices.is_empty() {
+            height += line + OXITHEME.padding_sm;
+        }
+        for device in devices {
+            height += large * (device.name.chars().count() as f32 / 22.0).ceil().max(1.0)
+                + line * 2.0
+                + OXITHEME.padding_xs
+                + OXITHEME.padding_sm * 3.0;
+            if device.paired {
+                height += line + OXITHEME.padding_md * 3.0;
+            }
+        }
+    }
+    if let Some(error) = model.health.as_ref().or(model.action_error.as_ref()) {
+        height += line * (error.chars().count() as f32 / 42.0).ceil().max(1.0)
+            + OXITHEME.padding_lg * 2.0
+            + OXITHEME.padding_sm;
+    }
+    (height.ceil() as u32).min(900)
+}
+
 pub(super) fn controls(model: &Model, embedded: bool) -> Element<'static, PluginMsg> {
     let gap = if embedded {
         OXITHEME.padding_lg

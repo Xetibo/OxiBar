@@ -1,7 +1,7 @@
 use crate::{app::OxiBar, messages::Message};
 use iced::{
     Alignment, Element, Length, Task,
-    widget::{Column, Row, Space, button, container, tooltip},
+    widget::{Column, Row, Space, button, container},
 };
 use iced_layershell::reexport::IcedId;
 use oxiced::{
@@ -257,6 +257,11 @@ impl OxiBar {
                     });
                 let tile = button(container(icon).center(Length::Fill))
                     .style(move |theme, status| {
+                        let status = if status == button::Status::Hovered {
+                            button::Status::Active
+                        } else {
+                            status
+                        };
                         let mut style = oxi_plugin::flat_primary_bg_button_style(theme, status);
                         if selected && enabled && status == button::Status::Active {
                             style.background = Some(OXITHEME.primary_bg_hover.into());
@@ -270,15 +275,7 @@ impl OxiBar {
                     .on_press_maybe(
                         enabled.then_some(Message::Session(Action::Choose(entry.action.clone()))),
                     );
-                row = row.push(
-                    tooltip(
-                        tile,
-                        text(format!("{} · {}", entry.label, entry.description))
-                            .size(OXITHEME.font_md),
-                        tooltip::Position::FollowCursor,
-                    )
-                    .gap(OXITHEME.padding_sm),
-                );
+                row = row.push(tile);
             }
             for _ in chunk.len()..3 {
                 row = row.push(Space::new().width(Length::FillPortion(1)));

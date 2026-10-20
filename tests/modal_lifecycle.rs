@@ -26,6 +26,44 @@ fn closures(host: &TestHost, plugin: &str) -> usize {
 }
 
 #[test]
+fn preferred_modal_size_is_bounded_to_source_output() {
+    let mut host = TestHost::with_plugins([(
+        "Clock",
+        FakePluginOptions {
+            modal_size: Some((4000, 3000)),
+            ..options()
+        },
+    )]);
+    host.drive(Message::OutputsChanged(Ok(OutputSnapshot {
+        backend: "fixture".into(),
+        outputs: vec![Output {
+            name: "sandbox".into(),
+            enabled: true,
+            focused: true,
+            physical_size: (1920, 1080),
+            logical_size: (960, 540),
+            scale: 2.0,
+            description: String::new(),
+            make: String::new(),
+            model: String::new(),
+            serial: String::new(),
+            position: (0, 0),
+            transform: 0,
+            refresh_hz: 60.0,
+            vrr: None,
+            modes: vec![],
+        }],
+    })));
+    let messages = host.drive(Message::OpenPluginModal("Clock".into()));
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, Message::OnOutput(_, inner)
+        if matches!(inner.as_ref(), Message::OpenModalLayer(_, (864, 486)))))
+    );
+}
+
+#[test]
 fn outside_press_is_scoped_to_actual_overlay_bounds_and_cancels_once() {
     let mut host = TestHost::with_plugins([("Bluetooth", options())]);
     host.drive(Message::OpenPluginModal("Bluetooth".to_owned()));

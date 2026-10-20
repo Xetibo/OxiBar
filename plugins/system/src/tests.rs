@@ -45,6 +45,30 @@ fn snapshot(sequence: u64, percent: u32) -> Snapshot {
     }
 }
 
+#[test]
+fn control_center_capability_tracks_domain_arrival_and_removal_without_disabling_session_provider()
+{
+    let model = oxibar_plugin_api::plugin_model(fixture());
+    assert!(!crate::control_center_available(model.clone()));
+    oxibar_plugin_api::with_model_write::<Model, _>(&model, |model| {
+        model.snapshot = snapshot(1, 50)
+    });
+    assert!(crate::control_center_available(model.clone()));
+    oxibar_plugin_api::with_model_write::<Model, _>(&model, |model| {
+        model.snapshot.backlights.clear()
+    });
+    assert!(crate::control_center_available(model.clone()));
+    oxibar_plugin_api::with_model_write::<Model, _>(&model, |model| {
+        model.snapshot.profiles.clear()
+    });
+    assert!(!crate::control_center_available(model.clone()));
+    assert!(
+        crate::session_menu(model)
+            .iter()
+            .any(|entry| entry.action == "power-off" && entry.enabled)
+    );
+}
+
 fn requests(task: Option<Task<PluginMsg>>) -> Vec<HostOsdRequest> {
     task.into_iter()
         .flat_map(collect)

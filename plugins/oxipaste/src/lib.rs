@@ -2,7 +2,7 @@ mod backend;
 mod service;
 mod view;
 
-use backend::{Action, Item};
+use backend::{Action, Filter, Item};
 use iced::{Element, Task};
 use oxibar_plugin_api::{
     ABI_VERSION, ApplyMode, HostPasteRequest, PluginMetadata, PluginModel, PluginMsg, PluginStream,
@@ -23,6 +23,7 @@ static HISTORY_LIMIT: OnceLock<usize> = OnceLock::new();
 struct Model {
     items: Vec<Arc<Item>>,
     search: String,
+    filter: Filter,
     shortcut: String,
     refreshing: bool,
     backend_revision: u64,
@@ -40,6 +41,7 @@ enum Message {
     Snapshot(Result<Vec<Arc<Item>>, String>, u64),
     Backend(service::Snapshot),
     Search(String),
+    Filter(Filter),
     Act(Action, bool),
     Finished(Result<(), String>, bool),
     Pasted(Result<(), String>),
@@ -99,6 +101,7 @@ pub extern "Rust" fn model(config: Table) -> (PluginModel, Option<Task<PluginMsg
         plugin_model(Model {
             items: Vec::new(),
             search: String::new(),
+            filter: Filter::All,
             shortcut,
             refreshing: false,
             backend_revision: 0,
@@ -164,6 +167,10 @@ pub extern "Rust" fn update(model: PluginModel, message: PluginMsg) -> Option<Ta
         }
         Message::Search(query) => {
             model.search = query;
+            None
+        }
+        Message::Filter(filter) => {
+            model.filter = filter;
             None
         }
         Message::Act(action, paste) => {

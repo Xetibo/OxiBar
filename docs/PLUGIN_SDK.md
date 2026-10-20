@@ -63,7 +63,10 @@ Exact signatures are API aliases; missing hooks keep legacy fallbacks.
 | `view_with_context` | Stable bar instance/output context; falls back to `view` |
 | `popup_view`, `modal_view`, `panel_view`, `toast_view` | Inner content only; host owns windows, chrome, output and routing |
 | `modal_closed` | Idempotent, nonblocking cancellation exactly once per retired modal; late cleanup tasks remain valid |
+| `modal_size` | `(model) -> (u32, u32)` preferred logical size; host clamps to 90% of the source output, otherwise legacy default |
 | `control_center_view` | Same shared model; falls back to popup then panel |
+| `control_center_available` | `(model) -> bool`; hide an unusable page without unloading its resident service |
+| `subwidgets`, `subwidget_view` | `(model) -> Vec<SubwidgetDescriptor>` with stable `id`/`title`, and `(model, &str) -> Result<Vec<Element>, io::Error>`; shared-model Overview cards |
 | `desktop_view`, `desktop_interactive` | Per-instance context and automatic input policy; normal legacy widgets remain interactive, read-only bodies return false |
 | `dock_entries` | Immutable `Arc<Vec<DockEntry>>` from the resident application index, with stable launch IDs |
 | `compositor_changed` | One host-cached compositor snapshot, including opaque window incarnations |
@@ -79,6 +82,10 @@ Exact signatures are API aliases; missing hooks keep legacy fallbacks.
 remain unchanged. Use the supplied `show_labels` value when constructing that
 view, rather than mutating a shared model: two outputs may choose different label
 preferences. Keep the required `view` export for hosts without this optional hook.
+Control-center availability, subwidgets and preferred modal size are likewise
+optional ABI 6 exports. Overview cards are subscription consumers, not additional
+models or service owners. Return natural-height card content without outer chrome
+or a full-height nested scroller.
 
 ## Tasks, streams and code lifetime
 
@@ -103,6 +110,9 @@ Each dylib can have independent Tokio TLS. Do not assume a host reactor is visib
 inside plugin code. Use runtime-independent async-io/zbus futures or own an
 explicit backend runtime. `LatestWorker` allows one running and one latest pending
 job; check its cancellation token inside bounded indexing/search loops.
+For serialized, bounded one-shot blocking jobs, `worker::run` uses a dedicated
+thread and a runtime-independent result channel. Gate overlapping jobs in the
+model and discard stale generations; it is not a per-frame/query worker pool.
 
 Use `worker::interval` for owned periodic streams. Filesystem ownership must retain
 unchanged watches and filter parent events to configured roots; the shared

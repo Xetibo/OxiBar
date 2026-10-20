@@ -9,7 +9,7 @@ use oxibar_plugin_api::{
     PluginMsg,
 };
 
-use crate::layout::{BarDimensions, BarSection, MODAL_SIZE, PANEL_WIDTH, popup_x};
+use crate::layout::{BarDimensions, BarSection, PANEL_WIDTH, popup_x};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -150,7 +150,7 @@ pub enum Message {
         height: u32,
         bar_size: BarDimensions,
     },
-    OpenModalLayer(IcedId),
+    OpenModalLayer(IcedId, (u32, u32)),
     CloseModalLayer(IcedId),
     OpenPanelLayer(IcedId),
     ClosePanelLayer(IcedId),
@@ -510,11 +510,11 @@ impl TryInto<LayershellCustomActionWithId> for Message {
                     }
                 })),
             )),
-            Message::OpenModalLayer(id) => Ok(LayershellCustomActionWithId::new(
+            Message::OpenModalLayer(id, size) => Ok(LayershellCustomActionWithId::new(
                 None,
                 LayershellCustomAction::NewLayerShell {
                     settings: NewLayerShellSettings {
-                        size: Some(MODAL_SIZE),
+                        size: Some(size),
                         layer: Layer::Overlay,
                         anchor: Anchor::empty(),
                         exclusive_zone: None,

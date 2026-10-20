@@ -653,6 +653,85 @@ pub extern "Rust" fn control_center_view(
 }
 
 #[unsafe(no_mangle)]
+pub extern "Rust" fn subwidgets(_: PluginModel) -> Vec<oxibar_plugin_api::SubwidgetDescriptor> {
+    [("media", "Now playing"), ("volume", "Volume")]
+        .into_iter()
+        .map(|(id, title)| oxibar_plugin_api::SubwidgetDescriptor {
+            id: id.into(),
+            title: title.into(),
+        })
+        .collect()
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn subwidget_view(
+    model: PluginModel,
+    id: &str,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| match id {
+        "media" => vec![media_card(
+            model.snapshot.player.as_ref(),
+            model.pending.is_some(),
+        )],
+        "volume" => vec![output_section(&model.snapshot)],
+        _ => Vec::new(),
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn popup_metrics(model: PluginModel) -> oxibar_plugin_api::PluginPopupMetrics {
+    let height = with_model_read::<Model, _>(&model, |model| {
+        let line = OXITHEME.font_md * 1.3;
+        let small = OXITHEME.font_sm * 1.3;
+        let card_padding = OXITHEME.padding_md * 2.0;
+        let media = model
+            .snapshot
+            .player
+            .as_ref()
+            .map_or(ARTWORK_PREVIEW_SIZE as f32, |player| {
+                let lines = ((player.title.chars().count() + player.artist.chars().count()) as f32
+                    / 28.0)
+                    .ceil()
+                    .max(2.0);
+                (line * lines + line + OXITHEME.padding_xs * 2.0 + 24.0 + OXITHEME.padding_sm * 3.0)
+                    .max(ARTWORK_PREVIEW_SIZE as f32)
+            })
+            + card_padding;
+        let full_device = line
+            + line
+            + OXITHEME.padding_md * 2.0
+            + 24.0
+            + small.max(16.0)
+            + OXITHEME.padding_sm * 3.0
+            + card_padding;
+        let device_height = |devices: &[AudioDevice]| {
+            if devices.is_empty() {
+                line * 2.0 + OXITHEME.padding_sm + card_padding
+            } else {
+                full_device
+            }
+        };
+        let error = model.device_error.as_ref().map_or(0.0, |error| {
+            line * (error.chars().count() as f32 / 45.0).ceil().max(1.0) + OXITHEME.padding_sm
+        });
+        (media
+            + device_height(&model.snapshot.outputs)
+            + device_height(&model.snapshot.inputs)
+            + error
+            + OXITHEME.padding_sm * 2.0
+            + OXITHEME.padding_md * 2.0
+            + 20.0)
+            .ceil() as u32
+    })
+    .unwrap_or(POPUP_SIZE.1)
+    .min(900);
+    oxibar_plugin_api::PluginPopupMetrics {
+        popup_size: Some((POPUP_SIZE.0, height)),
+        ..Default::default()
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "Rust" fn desktop_view(
     model: PluginModel,
     _: oxibar_plugin_api::PluginViewContext,
@@ -1137,6 +1216,21 @@ fn device_section(
     volume_msg: fn(u8) -> Message,
     mute_msg: fn(bool) -> Message,
 ) -> Element<'static, PluginMsg> {
+    if devices.is_empty() {
+        return card(
+            Column::new()
+                .spacing(OXITHEME.padding_sm)
+                .push(text(label).size(OXITHEME.font_md).style(text_primary))
+                .push(
+                    text("No devices available")
+                        .size(OXITHEME.font_md)
+                        .style(text_muted),
+                )
+                .into(),
+            OXITHEME.mantle_hover,
+        )
+        .into();
+    }
     let choices = devices.iter().map(AudioDevice::choice).collect::<Vec<_>>();
     let selected = selected_device(devices, default).map(AudioDevice::choice);
     let device = selected_device(devices, default);
@@ -1230,6 +1324,40 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn popup_height_grows_for_device_controls_and_wrapped_media_and_shrinks_when_removed() {
+        let (owner, _) = model(Table::new());
+        let height = || popup_metrics(owner.clone()).popup_size.unwrap().1;
+        let empty = height();
+        with_model_write::<Model, _>(&owner, |model| {
+            let device = AudioDevice {
+                name: "fixture".into(),
+                label: "Fixture".into(),
+                volume: 50,
+                muted: false,
+            };
+            model.snapshot.outputs.push(device.clone());
+            model.snapshot.inputs.push(device);
+        });
+        let devices = height();
+        assert!(devices > empty);
+        with_model_write::<Model, _>(&owner, |model| {
+            model.snapshot.player = Some(PlayerInfo {
+                service: "fixture".into(),
+                identity: "Player".into(),
+                title: "Long song title ".repeat(12),
+                artist: "Artist".into(),
+                status: "Playing".into(),
+                volume: 50,
+                art_url: None,
+            })
+        });
+        assert!(height() > devices);
+        assert!(height() <= 900);
+        with_model_write::<Model, _>(&owner, |model| model.snapshot = AudioSnapshot::default());
+        assert_eq!(height(), empty);
+    }
 
     #[test]
     fn reads_poll_interval_from_config() {

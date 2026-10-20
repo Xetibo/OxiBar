@@ -6,6 +6,7 @@ pub(crate) struct Snapshot {
     pub(crate) connected: Vec<ActiveNetwork>,
     pub(crate) saved: Vec<SavedConnection>,
     pub(crate) wifi: Vec<WifiNetwork>,
+    pub(crate) wifi_enabled: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -35,6 +36,7 @@ pub(crate) struct WifiNetwork {
 
 #[derive(Clone, Debug)]
 pub(crate) enum NetworkAction {
+    WifiPower(bool),
     ConnectWifi { ssid: String },
     ConnectConnection { uuid: String },
     Disconnect { uuid: String },
@@ -45,6 +47,9 @@ pub(crate) enum NetworkAction {
 impl NetworkAction {
     pub(crate) fn label(&self) -> String {
         match self {
+            NetworkAction::WifiPower(enabled) => {
+                format!("Turning Wi-Fi {}", if *enabled { "on" } else { "off" })
+            }
             NetworkAction::ConnectWifi { ssid } => format!("Connecting to {ssid}"),
             NetworkAction::ConnectConnection { .. } => "Connecting".to_owned(),
             NetworkAction::Disconnect { .. } => "Disconnecting".to_owned(),
@@ -57,11 +62,22 @@ impl NetworkAction {
 pub(crate) fn scan_networks() -> Result<Snapshot, String> {
     let connected = scan_active_connections()?;
     let saved = scan_saved_connections(&connected)?;
-    let wifi = scan_wifi_networks(&connected)?;
+    let devices = run_nmcli(&["-t", "-f", "TYPE", "device", "status"])?;
+    let wifi_enabled = if devices.lines().any(|kind| kind.trim() == "wifi") {
+        Some(run_nmcli(&["radio", "wifi"])? == "enabled")
+    } else {
+        None
+    };
+    let wifi = if wifi_enabled == Some(true) {
+        scan_wifi_networks(&connected)?
+    } else {
+        Vec::new()
+    };
     Ok(Snapshot {
         connected,
         saved,
         wifi,
+        wifi_enabled,
     })
 }
 
@@ -161,6 +177,9 @@ fn scan_wifi_networks(active: &[ActiveNetwork]) -> Result<Vec<WifiNetwork>, Stri
 
 pub(crate) fn run_network_action(action: NetworkAction) -> Result<String, String> {
     match action {
+        NetworkAction::WifiPower(enabled) => {
+            run_nmcli(&["radio", "wifi", if enabled { "on" } else { "off" }])
+        }
         NetworkAction::ConnectWifi { ssid } => connect_wifi(&ssid),
         NetworkAction::ConnectConnection { uuid } => run_nmcli_owned(vec![
             "connection".to_owned(),
@@ -229,6 +248,8 @@ fn connect_wifi_with_password(ssid: &str, password: &str) -> Result<String, Stri
 
 fn run_nmcli(args: &[&str]) -> Result<String, String> {
     let output = Command::new("nmcli")
+        .args(["--wait", "10"])
+        .env("LC_ALL", "C")
         .args(args)
         .output()
         .map_err(|e| format!("network: failed to run nmcli: {e}"))?;
@@ -237,6 +258,8 @@ fn run_nmcli(args: &[&str]) -> Result<String, String> {
 
 fn run_nmcli_owned(args: Vec<String>) -> Result<String, String> {
     let output = Command::new("nmcli")
+        .args(["--wait", "10"])
+        .env("LC_ALL", "C")
         .args(&args)
         .output()
         .map_err(|e| format!("network: failed to run nmcli: {e}"))?;

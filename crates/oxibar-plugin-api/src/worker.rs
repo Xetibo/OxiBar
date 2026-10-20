@@ -18,6 +18,24 @@ pub fn interval(duration: std::time::Duration) -> iced::futures::stream::BoxStre
     .boxed()
 }
 
+/// Run bounded blocking work without relying on a reactor shared across dylibs.
+pub async fn run<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let (send, receive) = oneshot::channel();
+    thread::Builder::new()
+        .name("oxibar-provider-job".into())
+        .spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job))
+                .unwrap_or_else(|_| Err("Provider worker panicked".into()));
+            let _ = send.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+    receive
+        .await
+        .map_err(|_| "Provider worker stopped".to_owned())?
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CancelToken(Arc<AtomicBool>);
 

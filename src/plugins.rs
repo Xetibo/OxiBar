@@ -55,6 +55,9 @@ pub struct PluginFuncs {
     pub context_view: Option<ContextViewFn>,
     pub bar_view: Option<oxibar_plugin_api::BarViewFn>,
     pub control_center_view: Option<ControlCenterViewFn>,
+    pub control_center_available: Option<oxibar_plugin_api::ControlCenterAvailableFn>,
+    pub subwidgets: Option<oxibar_plugin_api::SubwidgetsFn>,
+    pub subwidget_view: Option<oxibar_plugin_api::SubwidgetViewFn>,
     pub filename: String,
     pub settings_schema: Option<SettingsSchemaFn>,
     pub config_changed: Option<ConfigChangedFn>,
@@ -70,6 +73,7 @@ pub struct PluginFuncs {
     pub subscription: SubscriptionFn,
     pub popup_view: Option<PopupViewFn>,
     pub modal_view: Option<ModalViewFn>,
+    pub modal_size: Option<oxibar_plugin_api::ModalSizeFn>,
     pub modal_closed: Option<ModalClosedFn>,
     pub panel_view: Option<PanelViewFn>,
     pub toast_view: Option<ToastViewFn>,
@@ -195,6 +199,7 @@ unsafe fn load_one(
     let subscription: SubscriptionFn = unsafe { resolve(&lib, "subscription")? };
     let popup_view: Option<PopupViewFn> = unsafe { resolve_optional(&lib, "popup_view") };
     let modal_view: Option<ModalViewFn> = unsafe { resolve_optional(&lib, "modal_view") };
+    let modal_size = unsafe { resolve_optional(&lib, "modal_size") };
     let modal_closed = unsafe { resolve_optional(&lib, "modal_closed") };
     let panel_view: Option<PanelViewFn> = unsafe { resolve_optional(&lib, "panel_view") };
     let toast_view: Option<ToastViewFn> = unsafe { resolve_optional(&lib, "toast_view") };
@@ -225,6 +230,9 @@ unsafe fn load_one(
             context_view,
             bar_view: unsafe { resolve_optional(&lib, "bar_view") },
             control_center_view,
+            control_center_available: unsafe { resolve_optional(&lib, "control_center_available") },
+            subwidgets: unsafe { resolve_optional(&lib, "subwidgets") },
+            subwidget_view: unsafe { resolve_optional(&lib, "subwidget_view") },
             filename: path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -243,6 +251,7 @@ unsafe fn load_one(
             subscription,
             popup_view,
             modal_view,
+            modal_size,
             modal_closed,
             panel_view,
             toast_view,
@@ -315,6 +324,7 @@ pub(crate) fn inspect_library(path: &std::path::Path) -> LibraryInfo {
             ("panel", "panel_view"),
             ("toast", "toast_view"),
             ("control center", "control_center_view"),
+            ("subwidgets", "subwidget_view"),
             ("desktop", "desktop_view"),
             ("input policy", "desktop_interactive"),
             ("dock catalog", "dock_entries"),

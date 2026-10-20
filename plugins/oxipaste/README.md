@@ -64,6 +64,10 @@ The enabled provider owns one resident subscription, native Wayland connection
 and joined worker. It prefers ext-data-control and falls back to wlr-data-control.
 Capture does not depend on a visible bar or picker. Unsupported protocol/session
 errors appear in the shared view instead of silently showing an empty history.
+The worker resolves a live Wayland socket independently instead of consuming the
+host's inherited `WAYLAND_SOCKET` descriptor, including Hyprland endpoint recovery.
+Capture makes only the pipe's read end nonblocking: producers keep a blocking
+write end so images larger than a pipe buffer are captured completely.
 
 History uses `$XDG_CONFIG_HOME/oxipaste/items` (or `~/.config/oxipaste/items`), reads
 existing binary and legacy text history, and saves atomically with mode `0600`.
@@ -101,10 +105,13 @@ status includes `oxipaste_open` and `oxipaste_output`.
   The backend confirms a successful clipboard write before Oxibar dismisses its
   interactive surfaces, waits for native keyboard focus release and sends the
   configured paste shortcut.
-- **Copy** only changes the clipboard and retains the picker.
-- **Delete** targets the exact displayed payload; concurrent history reordering
+- Inline **Copy** and **Delete** icon buttons share one row. Copy only changes the
+  clipboard and retains the picker.
+- Delete targets the exact displayed payload; concurrent history reordering
   cannot retarget a row. **Clear all** clears the persistent history.
-- Search text/MIME, inspect image previews, or request a fresh history snapshot.
+- Filter **All**, **Text**, **Addresses** or **Images**, combined with text/MIME
+  search. Addresses include single-line URLs and paths; Text excludes addresses.
+  Inspect image previews or request a fresh history snapshot.
   Service/action errors remain visible and failed copies never inject a shortcut.
 
 `paste_shortcut` accepts `ctrl+v` or `ctrl+shift+v`. Paste requires compositor

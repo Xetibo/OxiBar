@@ -464,9 +464,7 @@ impl State {
         if self.io.len() >= 16 {
             return;
         }
-        if let Ok((read, write)) = rustix::pipe::pipe_with(
-            rustix::pipe::PipeFlags::CLOEXEC | rustix::pipe::PipeFlags::NONBLOCK,
-        ) {
+        if let Ok((read, write)) = capture_pipe() {
             offer.receive(mime, write.as_fd());
             self.io.push(Transfer {
                 file: File::from(read),
@@ -552,7 +550,10 @@ impl State {
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                             return true;
                         }
-                        Err(_) => return false,
+                        Err(problem) => {
+                            error = Some(format!("Clipboard capture failed: {problem}"));
+                            return false;
+                        }
                     }
                 }
             }
@@ -741,7 +742,18 @@ fn session(client: Arc<Client>, reader: &mut UnixStream) -> Result<(), String> {
                 .map_err(|_| wayland_client::ConnectError::NoCompositor)
                 .and_then(Connection::from_socket);
         }
-        Connection::connect_to_env()
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .ok_or(wayland_client::ConnectError::NoCompositor)?;
+        let display = oxibar_plugin_api::launch::wayland_display(
+            &runtime,
+            std::env::var_os("WAYLAND_DISPLAY").as_deref(),
+        )
+        .ok_or(wayland_client::ConnectError::NoCompositor)?;
+        // Independent clients need a fresh socket, never the host's inherited WAYLAND_SOCKET fd.
+        UnixStream::connect(runtime.join(display))
+            .map_err(|_| wayland_client::ConnectError::NoCompositor)
+            .and_then(Connection::from_socket)
     };
     let connection = connect()
         .map_err(|error| format!("Cannot connect clipboard backend to Wayland: {error}"))?;
@@ -808,6 +820,13 @@ fn session(client: Arc<Client>, reader: &mut UnixStream) -> Result<(), String> {
         poll(&connection, &mut queue, &mut state, reader, timeout)?;
     }
     Ok(())
+}
+
+fn capture_pipe() -> Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd), rustix::io::Errno> {
+    let (read, write) = rustix::pipe::pipe_with(rustix::pipe::PipeFlags::CLOEXEC)?;
+    // Clipboard producers expect blocking writes, especially for images larger than pipe capacity.
+    rustix::fs::fcntl_setfl(&read, rustix::fs::OFlags::NONBLOCK)?;
+    Ok((read, write))
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
@@ -1005,6 +1024,43 @@ impl Dispatch<ws::ZwlrDataControlSourceV1, Arc<Item>> for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_image_transfer_keeps_producer_blocking_and_captures_every_byte() {
+        let (read, write) = capture_pipe().unwrap();
+        assert!(
+            rustix::fs::fcntl_getfl(&read)
+                .unwrap()
+                .contains(rustix::fs::OFlags::NONBLOCK)
+        );
+        assert!(
+            !rustix::fs::fcntl_getfl(&write)
+                .unwrap()
+                .contains(rustix::fs::OFlags::NONBLOCK)
+        );
+        let payload: Vec<u8> = (0..512 * 1024).map(|index| (index % 251) as u8).collect();
+        let expected = payload.clone();
+        let producer = std::thread::spawn(move || {
+            std::fs::File::from(write).write_all(&payload).unwrap();
+        });
+        let mut read = std::fs::File::from(read);
+        let mut captured = Vec::new();
+        let mut buffer = [0; 8192];
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            assert!(Instant::now() < deadline, "clipboard transfer stalled");
+            match read.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(length) => captured.extend_from_slice(&buffer[..length]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(1))
+                }
+                Err(error) => panic!("clipboard transfer failed: {error}"),
+            }
+        }
+        producer.join().unwrap();
+        assert_eq!(captured, expected);
+    }
 
     #[test]
     fn preferred_capture_preserves_mime_and_skips_our_acknowledged_writes() {

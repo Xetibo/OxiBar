@@ -20,6 +20,10 @@ pub enum Action {
     Close,
     Select(String),
     SelectIndex(usize),
+    EditOverview,
+    AddCard(String),
+    RemoveCard(usize),
+    MoveCard(usize, bool),
 }
 
 #[derive(Default)]
@@ -27,14 +31,24 @@ pub(crate) struct ControlCenter {
     pub window_id: Option<IcedId>,
     pub attached_to: Option<IcedId>,
     pub selected: Option<String>,
+    pub editing_overview: bool,
 }
 
 impl OxiBar {
     pub(crate) fn control_center_plugins(&self) -> Vec<String> {
         let mut names = Vec::new();
         for configured in &self.config.snapshot.host.control_center_widgets {
-            if let Some((name, _)) = self.plugins.iter().find(|(name, (_, funcs))| {
+            if configured.eq_ignore_ascii_case("Overview") {
+                if !names.iter().any(|name: &String| name == "Overview") {
+                    names.push("Overview".into());
+                }
+                continue;
+            }
+            if let Some((name, _)) = self.plugins.iter().find(|(name, (model, funcs))| {
                 name.eq_ignore_ascii_case(configured)
+                    && funcs
+                        .control_center_available
+                        .is_none_or(|available| unsafe { available(model.clone()) })
                     && (funcs.control_center_view.is_some()
                         || funcs.popup_view.is_some()
                         || funcs.panel_view.is_some())
@@ -60,6 +74,53 @@ impl OxiBar {
 
     pub(crate) fn update_control_center(&mut self, action: Action) -> Task<Message> {
         match action {
+            Action::EditOverview => {
+                self.control_center.editing_overview = !self.control_center.editing_overview;
+                Task::none()
+            }
+            Action::AddCard(_) | Action::RemoveCard(_) | Action::MoveCard(..) => {
+                if self.config.jobs > 0 {
+                    return Task::none();
+                }
+                let mut widgets = self
+                    .config
+                    .snapshot
+                    .host
+                    .control_center_overview_widgets
+                    .clone();
+                match action {
+                    Action::AddCard(id)
+                        if self.subwidget_catalog().iter().any(|(key, _)| *key == id)
+                            && !widgets.contains(&id) =>
+                    {
+                        widgets.push(id)
+                    }
+                    Action::RemoveCard(index) if index < widgets.len() => {
+                        widgets.remove(index);
+                    }
+                    Action::MoveCard(index, forward) if index < widgets.len() => {
+                        let target = if forward {
+                            index.saturating_add(1)
+                        } else {
+                            index.saturating_sub(1)
+                        };
+                        if target < widgets.len() {
+                            widgets.swap(index, target);
+                        }
+                    }
+                    _ => return Task::none(),
+                }
+                self.config_job(
+                    Some(crate::config::Mutation::Set(
+                        "control_center.overview.widgets".into(),
+                        toml::Value::Array(widgets.into_iter().map(toml::Value::String).collect()),
+                    )),
+                    Some(self.config.snapshot.revision),
+                    None,
+                    None,
+                    false,
+                )
+            }
             Action::Toggle if self.control_center.window_id.is_some() => {
                 self.close_control_center()
             }
@@ -239,7 +300,9 @@ impl OxiBar {
             .spacing(OXITHEME.padding_lg)
             .width(Length::Fill);
         if let Some(selected) = &self.control_center.selected {
-            if let Some((model, funcs)) = self.plugins.get(selected) {
+            if selected == "Overview" {
+                body = body.push(self.control_overview_view());
+            } else if let Some((model, funcs)) = self.plugins.get(selected) {
                 let mut detail = Column::new()
                     .push(
                         text(selected)
@@ -333,6 +396,168 @@ impl OxiBar {
         .height(Length::Fill)
         .width(Length::Fill)
         .into()
+    }
+
+    fn subwidget_catalog(&self) -> Vec<(String, String)> {
+        self.plugins
+            .iter()
+            .flat_map(|(name, (model, funcs))| {
+                if funcs.subwidget_view.is_none() {
+                    return Vec::new();
+                }
+                funcs
+                    .subwidgets
+                    .map(|get| {
+                        unsafe { get(model.clone()) }
+                            .into_iter()
+                            .map(|widget| (format!("{name}:{}", widget.id), widget.title))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    pub(crate) fn control_center_uses_subwidgets(&self, provider: &str) -> bool {
+        self.control_center.selected.as_deref() == Some("Overview")
+            && self
+                .config
+                .snapshot
+                .host
+                .control_center_overview_widgets
+                .iter()
+                .any(|id| {
+                    id.split_once(':')
+                        .is_some_and(|(name, _)| name.eq_ignore_ascii_case(provider))
+                })
+    }
+
+    fn control_overview_view(&self) -> Element<'_, Message> {
+        let catalog = self.subwidget_catalog();
+        let editing = self.control_center.editing_overview;
+        let configured = &self.config.snapshot.host.control_center_overview_widgets;
+        let mut content = Column::new().spacing(OXITHEME.padding_lg).push(
+            Row::new()
+                .push(text("Overview").size(OXITHEME.font_xl))
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    oxi_plugin::surface_button(
+                        text(if editing { "Done" } else { "Edit cards" }),
+                        editing,
+                    )
+                    .on_press(Message::ControlCenter(Action::EditOverview)),
+                ),
+        );
+        if editing {
+            for (index, id) in configured.iter().enumerate() {
+                let label = catalog
+                    .iter()
+                    .find(|(key, _)| key == id)
+                    .map(|(_, title)| title.as_str())
+                    .unwrap_or(id);
+                let mut row = Row::new()
+                    .spacing(OXITHEME.padding_sm)
+                    .push(text(label.to_owned()).width(Length::Fill));
+                for (label, action, enabled) in [
+                    ("↑", Action::MoveCard(index, false), index > 0),
+                    (
+                        "↓",
+                        Action::MoveCard(index, true),
+                        index + 1 < configured.len(),
+                    ),
+                    ("Remove", Action::RemoveCard(index), true),
+                ] {
+                    row = row.push(
+                        oxi_plugin::surface_button(text(label), false).on_press_maybe(
+                            (enabled && self.config.jobs == 0)
+                                .then_some(Message::ControlCenter(action)),
+                        ),
+                    );
+                }
+                content = content.push(row);
+            }
+            for (id, title) in &catalog {
+                if !configured.contains(id) {
+                    content = content.push(
+                        oxi_plugin::surface_button(text(format!("Add {title}")), false)
+                            .on_press_maybe(
+                                (self.config.jobs == 0)
+                                    .then_some(Message::ControlCenter(Action::AddCard(id.clone()))),
+                            ),
+                    );
+                }
+            }
+        }
+        let columns = self
+            .config
+            .snapshot
+            .host
+            .control_center_overview_columns
+            .max(1);
+        let mut cards = Vec::new();
+        for id in configured {
+            let Some((_, title)) = catalog.iter().find(|(key, _)| key == id) else {
+                continue;
+            };
+            let Some((provider, widget)) = id.split_once(':') else {
+                continue;
+            };
+            let Some((name, (model, funcs))) = self
+                .plugins
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(provider))
+            else {
+                continue;
+            };
+            let Some(view) = funcs.subwidget_view else {
+                continue;
+            };
+            let mut card = Column::new()
+                .spacing(OXITHEME.padding_lg)
+                .width(Length::Fill)
+                .push(text(title.clone()).size(OXITHEME.font_lg));
+            match unsafe { view(model.clone(), widget) } {
+                Ok(elements) => {
+                    for element in elements {
+                        let provider = name.clone();
+                        card = card.push(
+                            element
+                                .map(move |message| map_plugin_message(provider.clone(), message)),
+                        );
+                    }
+                }
+                Err(error) => {
+                    card = card.push(text(error.to_string()).style(oxi_plugin::text_muted));
+                }
+            }
+            cards.push(oxi_plugin::settings_card(card).width(Length::FillPortion(1)));
+        }
+        let empty = cards.is_empty();
+        let mut cards = cards.into_iter();
+        loop {
+            let mut row = Row::new().spacing(OXITHEME.padding_lg).width(Length::Fill);
+            let mut count = 0;
+            for _ in 0..columns {
+                if let Some(card) = cards.next() {
+                    row = row.push(card);
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                break;
+            }
+            for _ in count..columns {
+                row = row.push(Space::new().width(Length::FillPortion(1)));
+            }
+            content = content.push(row);
+        }
+        if empty {
+            content = content.push(
+                text("Enable card providers in Settings, then add cards here.")
+                    .style(oxi_plugin::text_muted),
+            );
+        }
+        content.into()
     }
 }
 

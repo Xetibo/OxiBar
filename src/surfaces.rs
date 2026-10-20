@@ -136,8 +136,10 @@ impl OxiBar {
             Some(SurfaceKind::OxiPaste) => self.oxipaste_view(id),
             Some(SurfaceKind::Overview) => self.overview_view(id),
             Some(SurfaceKind::Launcher) => self.launcher.view(format!(
-                "{}: select · {}: launch · {}: close",
+                "{}: select · {} / {}: modes · {}: launch · {}: close",
                 self.shortcut_label("launcher.next"),
+                self.shortcut_label("launcher.next_mode"),
+                self.shortcut_label("launcher.previous_mode"),
                 self.shortcut_label("launcher.activate"),
                 self.shortcut_label("close")
             )),
@@ -249,11 +251,16 @@ impl OxiBar {
         let body = Column::from_vec(modal_elements)
             .width(Length::Fill)
             .height(Length::Fill);
+        let size = self
+            .modal_window_id
+            .and_then(|id| self.shell.registry.get(id))
+            .and_then(|record| record.size)
+            .unwrap_or(MODAL_SIZE);
         Container::new(body)
             .style(modal_surface_style)
             .padding(OXITHEME.padding_lg)
-            .width(MODAL_SIZE.0 as f32)
-            .height(MODAL_SIZE.1 as f32)
+            .width(size.0 as f32)
+            .height(size.1 as f32)
             .into()
     }
 

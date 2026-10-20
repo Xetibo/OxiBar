@@ -92,6 +92,74 @@ fn configured_widgets_use_available_shared_plugin_capabilities_in_order() {
 }
 
 #[test]
+fn overview_cards_share_subscription_and_live_edits_preserve_provider_state() {
+    let mut host = TestHost::with_plugins([(
+        "Custom",
+        FakePluginOptions {
+            subwidgets: true,
+            visible_subscription: true,
+            ..Default::default()
+        },
+    )]);
+    set(&mut host, "bar.start", Value::Array(vec![]));
+    set(&mut host, "bar.center", Value::Array(vec![]));
+    set(&mut host, "bar.end", Value::Array(vec![]));
+    set(
+        &mut host,
+        "control_center.overview.widgets",
+        Value::Array(vec![]),
+    );
+    assert!(host.subscribed_plugins().is_empty());
+    host.drive(Message::ControlCenter(Action::Open));
+    assert_eq!(host.control_center_selected(), Some("Overview"));
+    host.drive(Message::ControlCenter(Action::AddCard(
+        "Custom:first".into(),
+    )));
+    host.drive(Message::ControlCenter(Action::AddCard(
+        "Custom:second".into(),
+    )));
+    host.drive(Message::ControlCenter(Action::AddCard(
+        "Custom:first".into(),
+    )));
+    assert_eq!(host.subscribed_plugins(), ["Custom"]);
+    host.drive_plugin_record("Custom", "shared state");
+    host.drive(Message::ControlCenter(Action::MoveCard(1, false)));
+    assert_eq!(
+        host.config_snapshot().host.control_center_overview_widgets,
+        ["Custom:second", "Custom:first"]
+    );
+    host.drive(Message::ControlCenter(Action::RemoveCard(0)));
+    host.drive(Message::ControlCenter(Action::Close));
+    assert!(host.subscribed_plugins().is_empty());
+    assert_eq!(host.seen_by_plugin("Custom"), ["shared state"]);
+    assert_eq!(
+        host.config_snapshot().host.control_center_overview_widgets,
+        ["Custom:first"]
+    );
+}
+
+#[test]
+fn disappearing_control_domain_selects_an_available_page_without_unloading_provider() {
+    let mut host = TestHost::with_plugins([(
+        "System",
+        FakePluginOptions {
+            control_center: true,
+            control_center_available: Some(true),
+            ..Default::default()
+        },
+    )]);
+    host.drive(Message::ControlCenter(Action::Open));
+    host.drive(Message::ControlCenter(Action::Select("System".into())));
+    assert_eq!(host.control_center_selected(), Some("System"));
+    host.set_control_center_available("System", false);
+    assert_eq!(host.control_center_widgets(), ["Overview"]);
+    assert_eq!(host.control_center_selected(), Some("Overview"));
+    host.set_control_center_available("System", true);
+    assert_eq!(host.control_center_widgets(), ["Overview", "System"]);
+    assert_eq!(host.seen_by_plugin("System").len(), 2);
+}
+
+#[test]
 fn control_center_actions_and_async_modals_follow_the_source_output() {
     let mut host = TestHost::with_plugins([("Network", FakePluginOptions::all_surfaces())]);
     set(
@@ -131,7 +199,7 @@ fn control_center_actions_and_async_modals_follow_the_source_output() {
     assert!(host.modal_open());
     assert!(messages.iter().any(
         |message| matches!(message, Message::OnOutput(Some(output), inner)
-        if output == "DP-2" && matches!(inner.as_ref(), Message::OpenModalLayer(_)))
+        if output == "DP-2" && matches!(inner.as_ref(), Message::OpenModalLayer(..)))
     ));
     assert_eq!(host.control_center_window(), Some(center));
     assert_eq!(

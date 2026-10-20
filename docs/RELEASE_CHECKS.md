@@ -26,8 +26,8 @@ tests and two complete final isolated UI runs passed. These prove icon-only/live
 host and provider labels, centered 800×480 session tiles/native confirmation,
 application indexing/owned launch and post-drag button anchoring. The overview smoke
 proves actual SVG dock pixels with Applications absent from XDG and supplied through
-the configured library fallback. Current private installer fixtures verify all-fourteen
-preflight, no partial write on missing Applications/Commands/OxiPaste and custom build/config roots.
+the configured library fallback. Current private installer fixtures verify all-fifteen
+preflight, no partial write on missing Applications/Commands/OxiPaste/Weather and custom build/config roots.
 See `TESTING.md` and the current continuity entry in `DECISIONS.md` for reproduction
 and the earlier unlocated-panic diagnostic limitation.
 
@@ -70,7 +70,7 @@ nix develop --impure --file nix/gui-tests.nix -c python scripts/run-isolated.py 
 
 The smoke exercises installed/disabled catalog state, SDK modal Escape/replacement,
 actual settings application while an OSD is visible, launcher activation, CalDAV
-fixture/day launch, secure network password save, native tray dbusmenu selection,
+fixture/built-in day modal and explicit external launch, secure network password save, native tray dbusmenu selection,
 notification toast/panel/inline reply/DND, two desktop instances with actual drag/
 resize, stale revision retention, output hotplug and ten reopen cycles. Network and
 HTTPS calendar calls use owned fixture executables; tray and notifications use the
@@ -89,7 +89,7 @@ nix eval --impure --json --expr \
 
 Use a Home Manager release aligned with the pinned nixpkgs. The test checks all
 module assertions, no startup unit by default, deliberate session-target startup,
-default clipboard provider installation/enablement through the NixOS module alias,
+default clipboard/Weather provider installation/enablement through the NixOS module alias,
 custom XDG library paths, disabled installed example catalog, explicit enabled-only
 base generation, unmanaged overrides and separate shell cgroup ownership.
 

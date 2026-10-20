@@ -200,6 +200,7 @@
           oxibar-example = pluginPackage "example";
           oxibar-tray = pluginPackage "tray";
           oxibar-workspaces = pluginPackage "workspaces";
+          oxibar-weather = pluginPackage "weather";
           default = oxibar;
         };
         checks =

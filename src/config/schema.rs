@@ -190,12 +190,14 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
             TextList,
             Some(Value::Array(
                 [
+                    "Overview",
                     "Audio",
                     "Network",
                     "Bluetooth",
                     "Battery",
                     "Notifications",
                     "Clock",
+                    "Weather",
                     "System",
                 ]
                 .into_iter()
@@ -205,7 +207,15 @@ pub fn host_schema() -> Vec<SettingDescriptor> {
             Live,
         )
         .description(
-            "Ordered plugin names. Available control views share the running plugin models.",
+            "Ordered sections, including Overview. Available control views share the running plugin models.",
+        ),
+        SettingDescriptor::new(
+            "control_center.overview.widgets", "Overview cards", TextList,
+            Some(Value::Array(["Audio:media", "Weather:current", "Clock:next-event", "Audio:volume", "Network:wifi", "Bluetooth:power"].into_iter().map(|id| Value::String(id.into())).collect())), Live,
+        ).description("Ordered Provider:subwidget IDs. Also editable directly from Overview."),
+        SettingDescriptor::new(
+            "control_center.overview.columns", "Overview columns", SettingKind::Integer { min: 1, max: 3 },
+            Some(Value::Integer(2)), Live,
         ),
         SettingDescriptor::new(
             "osd.enabled",
@@ -581,6 +591,8 @@ pub struct HostConfig {
     pub control_center_enabled: bool,
     pub control_center_size: (u32, u32),
     pub control_center_widgets: Vec<String>,
+    pub control_center_overview_widgets: Vec<String>,
+    pub control_center_overview_columns: usize,
 }
 
 pub(crate) fn fallback_layout(host: &HostConfig, overrides: &Table) -> bool {
@@ -649,6 +661,8 @@ impl HostConfig {
                 integer("control_center.height"),
             ),
             control_center_widgets: list("control_center.widgets"),
+            control_center_overview_widgets: list("control_center.overview.widgets"),
+            control_center_overview_columns: integer("control_center.overview.columns") as usize,
         }
     }
 }

@@ -98,22 +98,19 @@ pub fn controls(model: &Model, include_session: bool) -> Element<'static, Plugin
             brightness =
                 brightness.push(oxi_plugin::level_meter(f32::from(device.percent()), 100.0));
         }
-    } else {
-        brightness = brightness.push(label("No backlight is available."));
     }
     if let Some(error) = &model.snapshot.brightness_error {
         brightness = brightness.push(label(error.clone()));
     }
-    body = body.push(oxi_plugin::settings_card(brightness));
+    if model.snapshot.backlight(&model.preferred).is_some() {
+        body = body.push(oxi_plugin::settings_card(brightness));
+    }
 
     let mut profiles = Column::new().spacing(OXITHEME.padding_lg).push(
         text("Power profile")
             .size(OXITHEME.font_lg)
             .style(oxi_plugin::text_primary),
     );
-    if model.snapshot.profiles.is_empty() {
-        profiles = profiles.push(label("No power-profile service is available."));
-    }
     for profile in &model.snapshot.profiles {
         let enabled = model.snapshot.profile_ready && !model.pending.contains_key(&Domain::Profile);
         let active = model.snapshot.active_profile.as_ref() == Some(profile);
@@ -129,9 +126,22 @@ pub fn controls(model: &Model, include_session: bool) -> Element<'static, Plugin
     if let Some(error) = &model.snapshot.profile_error {
         profiles = profiles.push(label(error.clone()));
     }
-    body = body.push(oxi_plugin::settings_card(profiles));
+    if !model.snapshot.profiles.is_empty() {
+        body = body.push(oxi_plugin::settings_card(profiles));
+    }
 
-    if include_session {
+    if include_session
+        && (model.lock_enabled && model.locker.is_some()
+            || [
+                SessionAction::Suspend,
+                SessionAction::Hibernate,
+                SessionAction::Logout,
+                SessionAction::Reboot,
+                SessionAction::PowerOff,
+            ]
+            .into_iter()
+            .any(|action| model.snapshot.can(action)))
+    {
         let mut session = Column::new().spacing(OXITHEME.padding_lg).push(
             text("Session")
                 .size(OXITHEME.font_lg)
@@ -139,9 +149,8 @@ pub fn controls(model: &Model, include_session: bool) -> Element<'static, Plugin
         );
         let busy = model.pending.contains_key(&Domain::Session);
         let lock = model.lock_enabled && model.locker.is_some() && !busy;
-        session = session.push(action("Lock", lock.then_some(Message::Lock), true));
-        if model.lock_enabled && model.locker.is_none() {
-            session = session.push(label("Set system.lock_command to your dedicated locker."));
+        if model.lock_enabled && model.locker.is_some() {
+            session = session.push(action("Lock", lock.then_some(Message::Lock), true));
         }
         for action_kind in [
             SessionAction::Suspend,
@@ -150,6 +159,9 @@ pub fn controls(model: &Model, include_session: bool) -> Element<'static, Plugin
             SessionAction::Reboot,
             SessionAction::PowerOff,
         ] {
+            if !model.snapshot.can(action_kind) {
+                continue;
+            }
             let allowed = model.snapshot.can(action_kind) && !busy;
             let mut row = Row::new()
                 .spacing(OXITHEME.padding_lg)

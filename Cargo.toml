@@ -24,6 +24,7 @@ members = [
     "plugins/example",
 	"plugins/tray",
 	"plugins/workspaces",
+	"plugins/weather",
 ]
 
 [workspace.dependencies]

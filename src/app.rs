@@ -741,7 +741,7 @@ impl OxiBar {
             | Message::SetExclusiveZone(_, _)
             | Message::OpenLauncherLayer(_, _, _)
             | Message::CloseLauncherLayer(_)
-            | Message::OpenModalLayer(_)
+            | Message::OpenModalLayer(_, _)
             | Message::CloseModalLayer(_)
             | Message::OpenPanelLayer(_)
             | Message::ClosePanelLayer(_)
@@ -791,6 +791,7 @@ impl OxiBar {
                 if funcs.runner_entries.is_some() {
                     self.launcher.refresh(&self.plugins);
                 }
+                self.normalize_control_center_selection();
                 let refresh = if self.popup_open
                     && self.popup_plugin.as_deref() == Some(plugin_id.as_str())
                 {
@@ -895,6 +896,11 @@ impl OxiBar {
             Action::MoveFocus(forward) => {
                 self.launcher.move_focus(forward);
                 Task::none()
+            }
+            Action::CycleMode(forward) => {
+                let query = self.launcher.cycled_mode_query(&self.plugins, forward);
+                self.update_launcher(Action::Query(query))
+                    .chain(iced::widget::operation::focus(launcher::SEARCH_ID))
             }
             Action::LaunchFocused => self.launch_runner_entry(self.launcher.focused),
             Action::Launch(index) => self.launch_runner_entry(index),
@@ -1115,13 +1121,7 @@ impl OxiBar {
             && self.config.snapshot.host.menus.attach_to_clock
             && let Some(bar) = self.dropdown_bar()
         {
-            return if self.control_center.attached_to == Some(bar)
-                && self
-                    .control_center
-                    .selected
-                    .as_deref()
-                    .is_some_and(|name| name.eq_ignore_ascii_case(&plugin_id))
-            {
+            return if self.control_center.attached_to == Some(bar) {
                 self.close_bar_dropdown()
             } else {
                 self.open_attached_controls(bar, Some(plugin_id))
@@ -1175,7 +1175,7 @@ impl OxiBar {
     }
 
     fn open_plugin_modal(&mut self, plugin_id: String) -> Task<Message> {
-        let Some((_model, funcs)) = self.plugins.get(&plugin_id) else {
+        let Some((model, funcs)) = self.plugins.get(&plugin_id) else {
             tracing::warn!(plugin = plugin_id, "unknown plugin requested modal");
             return Task::none();
         };
@@ -1189,6 +1189,10 @@ impl OxiBar {
         if self.modal_plugin.as_deref() == Some(plugin_id.as_str()) {
             return Task::none();
         }
+        let preferred_size = funcs
+            .modal_size
+            .map(|size| unsafe { size(model.clone()) })
+            .unwrap_or(crate::layout::MODAL_SIZE);
 
         let id = IcedId::unique();
         let owner = self
@@ -1202,6 +1206,23 @@ impl OxiBar {
         } else {
             self.output_for_bar(owner).or_else(|| self.overlay_output())
         };
+        let size = self
+            .shell
+            .inventory
+            .as_ref()
+            .and_then(|inventory| {
+                inventory
+                    .outputs
+                    .iter()
+                    .find(|item| Some(&item.name) == output.as_ref())
+            })
+            .map(|output| {
+                (
+                    preferred_size.0.min(output.logical_size.0 * 9 / 10).max(1),
+                    preferred_size.1.min(output.logical_size.1 * 9 / 10).max(1),
+                )
+            })
+            .unwrap_or((preferred_size.0.max(1), preferred_size.1.max(1)));
         let close_existing = self.close_modal();
         self.register_overlay(
             id,
@@ -1211,13 +1232,18 @@ impl OxiBar {
         );
         self.modal_plugin = Some(plugin_id);
         self.modal_window_id = Some(id);
+        self.shell
+            .registry
+            .get_mut(id)
+            .expect("registered modal")
+            .size = Some(size);
         Task::batch([
             close_existing,
             self.close_oxipaste(),
             self.close_bar_dropdown(),
             Task::done(Message::OnOutput(
                 output,
-                Box::new(Message::OpenModalLayer(id)),
+                Box::new(Message::OpenModalLayer(id, size)),
             )),
         ])
     }
@@ -1717,7 +1743,8 @@ impl OxiBar {
             || self.modal_plugin.as_deref().is_some_and(matches)
             || self.panel_plugin.as_deref().is_some_and(matches)
             || (self.control_center.window_id.is_some()
-                && self.control_center.selected.as_deref().is_some_and(matches))
+                && (self.control_center.selected.as_deref().is_some_and(matches)
+                    || self.control_center_uses_subwidgets(name)))
     }
 }
 

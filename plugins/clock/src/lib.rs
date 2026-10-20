@@ -35,6 +35,7 @@ use oxiced::theme::theme_impl::OXITHEME;
 use oxiced::widgets::oxi_plugin;
 use oxiced::widgets::oxi_plugin::text;
 
+mod agenda;
 mod caldav;
 mod worker;
 
@@ -153,6 +154,7 @@ pub struct Model {
     now: DateTime<Local>,
     calendar_month: NaiveDate,
     calendar_open: bool,
+    agenda: agenda::Agenda,
     errors: Vec<String>,
 }
 
@@ -191,6 +193,7 @@ impl Model {
             now: Local::now(),
             calendar_month: current_month_start(),
             calendar_open: false,
+            agenda: agenda::Agenda::default(),
             errors: Vec::new(),
         }
     }
@@ -317,6 +320,7 @@ pub enum Message {
     RefreshCalendar,
     CalendarLoaded(Result<Vec<CalendarEvent>, String>),
     CalendarOpenResult(Result<(), String>),
+    Agenda(agenda::Action),
 }
 
 fn msg(m: Message) -> PluginMsg {
@@ -350,7 +354,10 @@ pub extern "Rust" fn model(global_config: Table) -> (PluginModel, Option<Task<Pl
     // Seed with an immediate tick so the bar shows the time before the
     // first subscription wakeup.
     let model = Model::new(global_config);
-    let mut tasks = vec![Task::done(msg(Message::Tick(Local::now())))];
+    let mut tasks = vec![
+        Task::done(msg(Message::Tick(Local::now()))),
+        agenda::load_task(),
+    ];
     if model.caldav_config.is_some() {
         tasks.push(Task::done(msg(Message::RefreshCalendar)));
     }
@@ -390,13 +397,8 @@ pub extern "Rust" fn update(model: PluginModel, msg_in: PluginMsg) -> Option<Tas
             model.calendar_month = add_months(model.calendar_month, 1);
             None
         }
-        Message::OpenDay(date) => {
-            let command = model.calendar_command.clone();
-            Some(Task::perform(
-                worker::run(move || open_calendar_day(date, command)),
-                |result| msg(Message::CalendarOpenResult(result)),
-            ))
-        }
+        Message::OpenDay(date) => Some(agenda::open(model, date)),
+        Message::Agenda(action) => agenda::update(model, action),
         Message::RefreshCalendar => start_caldav_refresh(model),
         Message::CalendarLoaded(result) => {
             model.calendar_pending = false;
@@ -437,7 +439,7 @@ fn start_caldav_refresh(model: &mut Model) -> Option<Task<PluginMsg>> {
 
 #[unsafe(no_mangle)]
 pub extern "Rust" fn command(
-    model: PluginModel,
+    _model: PluginModel,
     command: String,
     arguments: Vec<String>,
 ) -> Result<Task<oxibar_plugin_api::CommandOutcome>, String> {
@@ -453,16 +455,10 @@ pub extern "Rust" fn command(
         ("day", [date]) => {
             let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
                 .map_err(|_| "Use an ISO date: YYYY-MM-DD".to_owned())?;
-            let command =
-                with_model_read::<Model, _>(&model, |model| model.calendar_command.clone())
-                    .map_err(|error| error.to_string())?;
-            Ok(Task::perform(
-                worker::run(move || open_calendar_day(date, command)),
-                |result| oxibar_plugin_api::CommandOutcome {
-                    message: msg(Message::CalendarOpenResult(result.clone())),
-                    result,
-                },
-            ))
+            Ok(Task::done(oxibar_plugin_api::CommandOutcome {
+                message: msg(Message::OpenDay(date)),
+                result: Ok(()),
+            }))
         }
         _ => Err("Use Clock popup, refresh, or day <YYYY-MM-DD>".to_owned()),
     }
@@ -535,7 +531,7 @@ pub extern "Rust" fn popup_view(
             .width(Length::Fill);
 
         let mut column = Column::new()
-            .spacing(OXITHEME.padding_md)
+            .spacing(OXITHEME.padding_lg)
             .padding([OXITHEME.padding_md, OXITHEME.padding_lg])
             .push(header);
 
@@ -571,6 +567,15 @@ pub extern "Rust" fn popup_view(
                     .filter(|event| event.date == date)
                     .cloned()
                     .collect::<Vec<_>>();
+                let mut events = events;
+                events.extend(
+                    model
+                        .agenda
+                        .events
+                        .iter()
+                        .map(agenda::Event::calendar_event)
+                        .filter(|event| event.date == date),
+                );
                 row = row.push(day_cell(date, is_current_month, is_today, events));
             }
             column = column.push(row);
@@ -586,6 +591,79 @@ pub extern "Rust" fn desktop_view(
     _: oxibar_plugin_api::PluginViewContext,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
     popup_view(model)
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn modal_view(
+    model: PluginModel,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| vec![agenda::view(model)])
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn modal_size(_: PluginModel) -> (u32, u32) {
+    (760, 680)
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn modal_closed(model: PluginModel) -> Option<Task<PluginMsg>> {
+    with_model_write::<Model, _>(&model, |model| agenda::closed(&mut model.agenda));
+    None
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn subwidgets(_: PluginModel) -> Vec<oxibar_plugin_api::SubwidgetDescriptor> {
+    vec![oxibar_plugin_api::SubwidgetDescriptor {
+        id: "next-event".into(),
+        title: "Next event".into(),
+    }]
+}
+
+#[unsafe(no_mangle)]
+pub extern "Rust" fn subwidget_view(
+    model: PluginModel,
+    id: &str,
+) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
+    with_model_read::<Model, _>(&model, |model| {
+        if id != "next-event" {
+            return Vec::new();
+        }
+        let today = model.now.date_naive();
+        let mut events = model.calendar_events.clone();
+        events.extend(
+            model
+                .agenda
+                .events
+                .iter()
+                .filter(|event| event.upcoming(model.now.naive_local()))
+                .map(agenda::Event::calendar_event),
+        );
+        events.sort_by(|a, b| (a.date, &a.summary).cmp(&(b.date, &b.summary)));
+        let next = events.iter().find(|event| event.date >= today);
+        let mut content = Column::new().spacing(OXITHEME.padding_md);
+        let day = if let Some(event) = next {
+            content = content
+                .push(text(event.summary.clone()).size(OXITHEME.font_lg))
+                .push(
+                    text(event.date.format("%A, %B %-d").to_string()).style(oxi_plugin::text_muted),
+                );
+            if let Some(location) = &event.location {
+                content = content.push(text(location.clone()).style(oxi_plugin::text_muted));
+            }
+            event.date
+        } else {
+            content = content.push(text("No upcoming events").style(oxi_plugin::text_muted));
+            today
+        };
+        vec![
+            content
+                .push(
+                    oxi_plugin::surface_button(text("Open calendar"), false)
+                        .on_press(msg(Message::OpenDay(day))),
+                )
+                .into(),
+        ]
+    })
 }
 
 fn calendar_nav_button(label: &'static str, message: Message) -> Element<'static, PluginMsg> {
@@ -676,7 +754,7 @@ fn calendar_event_tooltip(
 ) -> Element<'static, PluginMsg> {
     let palette = &OXITHEME;
     let mut content = Column::new()
-        .spacing(OXITHEME.padding_sm)
+        .spacing(OXITHEME.padding_lg)
         .width(CALENDAR_TOOLTIP_WIDTH)
         .push(
             text(date.format("%A, %Y-%m-%d").to_string())

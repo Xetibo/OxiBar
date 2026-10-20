@@ -1,6 +1,7 @@
 # Oxibar
 
-Current UI refinements include clock-attached controls, a bar inbox, centered
+Current UI refinements include clock-attached controls, configurable Overview cards,
+opt-in weather, a built-in calendar event editor, a bar inbox, centered
 OxiShut-style session tiles, icon-only bars with live optional labels,
 three-column layout dragging with pointer previews, live provider enablement,
 configurable shortcuts, animated nested settings navigation, monitor-edge snapping,
@@ -47,7 +48,7 @@ nix develop -c cargo build --workspace
 scripts/install-plugins.sh
 ```
 
-The installer includes Applications, Commands and OxiPaste and checks all fourteen
+The installer includes Applications, Commands, OxiPaste and Weather and checks all fifteen
 libraries before writing anything. It respects `CARGO_TARGET_DIR` and `XDG_CONFIG_HOME`; pass `release` after
 a release build. Restart Oxibar after replacing initialized plugin libraries.
 
@@ -84,7 +85,8 @@ installation, build `.#oxibar-oxipaste`, install `liboxipaste.so` and enable it.
 Open the centered picker with `oxibar oxipaste`.
 It also supports **OxiPaste** in the bar, control center or desktop layout.
 Row clicks paste into the application below after native keyboard
-focus release; a separate **Copy** button keeps the picker open. Use
+focus release; inline **Copy** and **Delete** icon buttons provide separate actions.
+All/Text/Addresses/Images filters combine with text/MIME search. Copy keeps the picker open. Use
 `oxipaste.paste_shortcut = "ctrl+shift+v"` for terminals that require it.
 History remains compatible with `$XDG_CONFIG_HOME/oxipaste/items`. An already
 running updated OxiPaste daemon can still supply the shared history service.
@@ -135,13 +137,21 @@ bindsym $mod+Escape exec oxibar session toggle
 - Music and notification toasts share configurable `toasts.position`, `margin` and
   `spacing`, with independent stacks per output. All dropdowns close with Escape.
 - Centered OxiShut-style session tiles using System's cached capabilities and native
-  confirmation flow, with configurable action order and inclusion.
+  confirmation flow, configurable action order and inclusion, and no hover effects.
+- Control Center Overview with reusable media, volume, weather, next-event and
+  Wi-Fi/Bluetooth cards. Add, remove and reorder cards live; unsupported System
+  domains disappear while the shared service remains ready for hotplug.
+- Built-in calendar event details and persisted local add/edit/delete, plus read-only
+  CalDAV sync. Weather uses explicit coordinates and stays offline until enabled.
 - Existing oxiced palette with spacious Android-inspired forms; explicit live
   theme snapshots, fonts, density and reduced-motion preferences.
 - Localized applications and desktop actions, inherited icons, favorites/usage
   ranking, watched indexes and cancellable searches.
 - Launcher prefixes: `a ` applications, `>` commands, `=` calculator, `/` files,
   `@` bookmarks, `!` named argument actions and `:` opt-in clipboard history.
+  Ctrl+Tab / Ctrl+Shift+Tab cycle available prefix modes and All, preserving the query.
+- Audio, Network and Bluetooth dropdowns grow and shrink with their content;
+  bounded scrolling keeps longer lists reachable.
 - Native PulseAudio/PipeWire and BlueZ controls, cancellable typed pairing,
   brightness/power profiles/session controls and input-transparent OSDs.
 - Shared dock catalog and compositor window activation; persistent logical desktop

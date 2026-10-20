@@ -26,6 +26,7 @@ pub enum Action {
     Close,
     Query(String),
     MoveFocus(bool),
+    CycleMode(bool),
     Launch(usize),
     LaunchFocused,
     Activate(String, usize),
@@ -56,6 +57,23 @@ pub(crate) struct Launcher {
 }
 
 impl Launcher {
+    pub(crate) fn cycled_mode_query(&self, plugins: &PluginMap, forward: bool) -> String {
+        let mut prefixes = vec![String::new()];
+        for (model, funcs) in plugins.values() {
+            if funcs.runner_query.is_none() || funcs.runner_entries.is_none() {
+                continue;
+            }
+            if let Some(get) = funcs.runner_prefixes {
+                for prefix in unsafe { get(model.clone()) } {
+                    if !prefix.is_empty() && !prefixes.contains(&prefix) {
+                        prefixes.push(prefix);
+                    }
+                }
+            }
+        }
+        cycle_prefix(&self.query, &prefixes, forward)
+    }
+
     pub(crate) fn configure(&mut self, config: &crate::config::schema::HostConfig) {
         self.enabled = config.launcher_enabled;
         self.size = config.launcher_size;
@@ -341,6 +359,22 @@ impl Launcher {
     }
 }
 
+fn cycle_prefix(query: &str, prefixes: &[String], forward: bool) -> String {
+    let current = prefixes
+        .iter()
+        .enumerate()
+        .filter(|(_, prefix)| query.starts_with(prefix.as_str()))
+        .max_by_key(|(_, prefix)| prefix.len())
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let next = if forward {
+        (current + 1) % prefixes.len()
+    } else {
+        (current + prefixes.len() - 1) % prefixes.len()
+    };
+    format!("{}{}", prefixes[next], &query[prefixes[current].len()..])
+}
+
 fn rank_entries(entries: &mut Vec<Entry>, max_entries: usize) {
     entries.sort_by(|first, second| {
         second
@@ -357,6 +391,17 @@ fn rank_entries(entries: &mut Vec<Entry>, max_entries: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modes_wrap_in_both_directions_and_preserve_query_with_overlapping_prefixes() {
+        let prefixes = ["", ">", ">>", "🐾 "].map(str::to_owned);
+        assert_eq!(cycle_prefix("notes", &prefixes, true), ">notes");
+        assert_eq!(cycle_prefix(">>notes", &prefixes, true), "🐾 notes");
+        assert_eq!(cycle_prefix("🐾 notes", &prefixes, true), "notes");
+        assert_eq!(cycle_prefix("notes", &prefixes, false), "🐾 notes");
+        assert_eq!(cycle_prefix(">>notes", &prefixes, false), ">notes");
+        assert_eq!(cycle_prefix("notes", &[String::new()], true), "notes");
+    }
 
     fn entry(plugin_id: &str, index: usize, score: i64) -> Entry {
         Entry {

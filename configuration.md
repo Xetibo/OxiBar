@@ -18,8 +18,8 @@ any provider; a user-installed library always takes precedence.
 
 For manual development installation, run `nix develop -c cargo build --workspace`
 then `scripts/install-plugins.sh` (or pass `release` after a release build). The
-installer includes Applications, Commands and OxiPaste, respects `CARGO_TARGET_DIR`
-and `XDG_CONFIG_HOME`, and verifies all fourteen plugin files before installing any of them. Restart after
+installer includes Applications, Commands, OxiPaste and Weather, respects `CARGO_TARGET_DIR`
+and `XDG_CONFIG_HOME`, and verifies all fifteen plugin files before installing any of them. Restart after
 replacing initialized libraries; build the host and plugins together.
 
 ## Top-level keys
@@ -88,7 +88,7 @@ The optional SDK example exposes a shared counter and confirmation form:
 `oxibar action Example increment`, `reset`, `popup`, and `osd`. Its
 `example.label` is live; `example.available` is a restart-only availability probe.
 Clock also supports `oxibar action Clock popup`, `refresh`, and
-`day YYYY-MM-DD`, using the configured calendar launcher.
+`day YYYY-MM-DD`, which opens the built-in event modal for that day.
 
 See [release checks](docs/RELEASE_CHECKS.md) for reproducible package, catalog,
 Home Manager, private app-lifetime, compositor smoke and performance verification.
@@ -136,10 +136,13 @@ dismisses the picker. `oxibar status` reports `oxipaste_open` and `oxipaste_outp
 
 Clicking a row copies its exact bytes/MIME, then dismisses the shell's interactive
 surfaces and waits for native keyboard focus release before invoking `wtype`.
-**Copy** changes the clipboard without dismissal or key injection. Failed writes
+The inline **Copy** and **Delete** icon buttons share one row. Copy changes the
+clipboard without dismissal or key injection. Failed writes
 keep the picker open and show the actual backend error. Startup/unavailable status
 is distinct from a healthy empty history. Search uses text/MIME and preserves
-original payloads.
+original payloads. The **All**, **Text**, **Addresses** and **Images** filters
+intersect that search. Addresses include single-line URLs and paths; Text excludes
+those address entries. Images retain their original binary data and MIME type.
 
 The provider also supports an interactive desktop widget through the layout editor.
 History is stored atomically with private permissions in
@@ -208,9 +211,11 @@ fallback. Add `"settings"` to an explicit Nix/base layout to show its button.
 Popup size precedence is: `[bar.popup_sizes]` override, runtime
 `popup_metrics(model)`, plugin metadata, then the host default `320 × 300`.
 Audio declares `460 × 640`; Bluetooth and Network declare `460 × 420` via metadata.
-The default audio dropdown and taller control center fit media plus input/output
-controls without scrolling. Popups are bounded to the output's available headroom;
-smaller outputs or explicit size overrides retain scrolling.
+Their runtime metrics override those fallback sizes: media text, device controls,
+network scan results, paired-device actions, errors and expanded saved connections
+make the dropdown grow or shrink with content, up to 900 logical pixels and the
+output's available popup headroom. Embedded cards use natural content heights.
+Smaller outputs, long lists or explicit size overrides retain scrolling.
 
 For a bottom bar that appears when the pointer approaches it:
 
@@ -712,9 +717,10 @@ oxibar control-center open
 oxibar control-center close
 ```
 
-The center combines existing audio/media, network, Bluetooth, battery,
-notification, calendar and System controls inside its source bar by default. Clock
-opens it with the configured calendar selected. Alt+number selects a left-menu
+The center combines an Overview dashboard and existing audio/media, network,
+Bluetooth, battery, notification, calendar, weather and System controls inside its
+source bar by default. Clock opens it with the calendar selected; clicking Clock
+again closes that attached center even after selecting another page. Alt+number selects a left-menu
 entry; Escape closes the dropdown without removing the bar. The same models/subscriptions
 serve bar, popup/panel and center, including password/pairing modals and
 notification actions/replies. Settings, launcher and center dismiss each other.
@@ -726,7 +732,11 @@ width = 960
 height = 960
 presentation = "dropdown"
 attach_to_clock = true
-widgets = ["Audio", "Network", "Bluetooth", "Battery", "Notifications", "Clock", "System"]
+widgets = ["Overview", "Audio", "Network", "Bluetooth", "Battery", "Notifications", "Clock", "Weather", "System"]
+
+[control_center.overview]
+columns = 2
+widgets = ["Audio:media", "Weather:current", "Clock:next-event", "Audio:volume", "Network:wifi", "Bluetooth:power"]
 ```
 
 | Key | Type | Default | Description |
@@ -735,12 +745,24 @@ widgets = ["Audio", "Network", "Bluetooth", "Battery", "Notifications", "Clock",
 | `width` / `height` | integer `1..16384` | `960` / `960` | Logical dimensions; attached content is clamped to output headroom. |
 | `presentation` | `"dropdown"` / `"window"` | `"dropdown"` | Attached bar menu or optional standalone overlay. |
 | `attach_to_clock` | bool | `true` | Clock opens the center/calendar instead of an independent popup. |
-| `widgets` | string array | Seven providers shown above | Ordered plugin names, matched case-insensitively and deduplicated. Empty means no controls. |
+| `widgets` | string array | Overview and eight providers shown above | Ordered page names, matched case-insensitively and deduplicated. Empty means no controls. |
+
+Overview is a host-owned composition of reusable provider subwidgets. **Edit cards**
+offers Add, Remove, Up and Down controls; edits save the ordered
+`control_center.overview.widgets` list through the same sparse GUI overrides as
+Settings. `columns` accepts 1–3. Cards keep their natural height and share the
+provider's existing state and subscription. Uninstalled or disabled provider cards
+are skipped; listing a card never enables its provider. The bundled identifiers
+are shown above; providers may advertise additional stable `Provider:id` choices.
 
 Only running, available plugins with dedicated control-center or popup/panel
 content appear. Listing a provider here does not load/install its library;
 configure `plugins` and packaged libraries as usual. Plugins may optionally
 export `control_center_view`; legacy popup/panel content remains supported.
+An optional model-based availability hook hides pages without usable controls.
+System shows only available brightness/power-profile domains and is omitted if
+both are absent. Its session service remains loaded for the separate session menu
+and for capability changes or hotplug.
 
 Preferences apply live and are editable on the Control Center settings page
 (Alt+7). Left navigation stays visible; only selected detail content scrolls.
@@ -753,7 +775,8 @@ actual clicked-button offset, clamped to output edges.
 Selecting Notifications closes visible toasts and suppresses new notification
 toasts while that inbox is visible. Stored notifications remain available; later
 toasts resume after switching away or closing. Native audio and BlueZ devices are
-supported. System adds brightness, power profiles and session actions. More shell
+supported. System embeds brightness and power profiles; session actions stay in the
+separate session menu. More shell
 features remain tracked in `docs/SHELL_ROADMAP.md`.
 
 ### Inbox and session menu
@@ -764,8 +787,9 @@ that inbox suppresses visible toasts. Disable integration for the separate panel
 
 The reserved `"session"` bar item opens a centered OxiShut-style menu, up to
 800×480 logical units and bounded to 90% of its output. Three equal columns contain
-large icon-only action tiles with themed neutral fills, accent selection, hover
-descriptions and a selected-action label. The six default actions form two rows.
+large icon-only action tiles with themed neutral fills, keyboard accent selection
+and a selected-action label. Tiles have no hover highlight or hover tooltip.
+The six default actions form two rows.
 Choices come from the existing System provider's cached capabilities. Lock invokes
 its configured locker; logout/power choices open the ordinary confirmation modal
 before native logind/policy delegation. The menu releases its surface before that
@@ -1031,7 +1055,15 @@ activate = "Enter"
 
 [shortcuts.settings]
 search = "Ctrl+f"
+
+[shortcuts.launcher]
+next_mode = "Ctrl+Tab"
+previous_mode = "Ctrl+Shift+Tab"
 ```
+
+Launcher mode keys cycle forward/backward through loaded providers' advertised
+prefixes and the unprefixed All mode. Cycling wraps, recognizes the longest current
+prefix and preserves the query text. Plain Tab/Shift+Tab still navigate results.
 
 Base `config.toml` may remain an immutable Home Manager/Nix-store symlink. Oxibar
 never writes it. Override writes are validated, revision-checked, owner-only and
@@ -1137,8 +1169,9 @@ extracts what it needs.
 
 ### `[clock]` — clock plugin
 
-Renders the current local time as a transparent button. Click toggles an
-internal `calendar_open` flag and opens a popup calendar.
+Renders the current local time as a transparent button. Click opens/closes the
+clock-attached Control Center calendar by default, or an independent popup when
+`control_center.attach_to_clock = false`.
 
 | Key            | Type            | Default   | Description                                                                                                                                                                              |
 | -------------- | --------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1146,7 +1179,7 @@ internal `calendar_open` flag and opens a popup calendar.
 | `tick_seconds` | integer (`> 0`) | `60`      | Real-clock polling interval. Seconds formats still display simulated per-second ticks between polls. Timer changes require restart. |
 | `font_size`    | number (`> 0`)  | `14.0`    | Time-label font size in iced units. Accepts integers or floats.                                                                                                                          |
 | `bold`         | bool            | `false`   | Render the time label with bold weight in the current theme family. |
-| `calendar_command` | string | _unset_ | Shell command run when clicking a calendar day. Supports `{date}`, `{year}`, `{month}`, `{day}` placeholders, e.g. `gnome-calendar --date {date}`. |
+| `calendar_command` | string | _unset_ | Optional **Open external** action in the built-in day modal. Supports `{date}`, `{year}`, `{month}`, `{day}` placeholders, e.g. `gnome-calendar --date {date}`. |
 | `calendar_app` | string | _unset_ | Convenience integration. `"thunderbird"` maps to `thunderbird --calendar`; Thunderbird does not provide reliable date-focused CLI navigation, so use `calendar_command` for custom behavior. |
 
 Example:
@@ -1167,7 +1200,20 @@ For Thunderbird:
 calendar_app = "thunderbird"
 ```
 
-For Nextcloud/CalDAV event sync, configure an HTTPS CalDAV collection URL and put the app password in an environment variable. Oxibar rejects non-HTTPS URLs, forces curl to use HTTPS protocols, verifies TLS certificates by default, and passes credentials through a temporary `0600` curl config instead of command-line arguments. Sync starts at current month start, expands common recurring `VEVENT` rules, and marks event days in the calendar popup. Hover an event day to see summary, location, and description.
+Click a day to view its events in a roomy, output-bounded modal. Add/edit/delete
+local events with a title, date, optional local `HH:MM`, location and description.
+Delete uses inline confirmation. Local events save atomically in
+`$XDG_STATE_HOME/oxibar/calendar/events.json`, falling back to
+`~/.local/state/oxibar/calendar/events.json`, with private directory/file permissions.
+Unreadable or corrupt history is preserved and reported. Conflicting external
+edits are rejected instead of overwritten. Local recurrence and time-zone editing
+are not currently supported.
+
+The `Clock:next-event` Overview card shares these events and skips elapsed local
+timed events. Synced events currently use day-level precision. Closing the modal
+does not interrupt an already-started save or reopen it when that save completes.
+
+For Nextcloud/CalDAV event sync, configure an HTTPS CalDAV collection URL and put the app password in an environment variable. Oxibar rejects non-HTTPS URLs, forces curl to use HTTPS protocols, verifies TLS certificates by default, and passes credentials through a temporary `0600` curl config instead of command-line arguments. Sync starts at current month start, expands common recurring `VEVENT` rules, and marks event days in the calendar popup. Hover an event day or open its modal to see summary, location, and description. Synced CalDAV entries are read-only; local edits do not write to the remote collection.
 
 ```toml
 [clock.caldav]
@@ -1177,6 +1223,36 @@ password_env = "OXIBAR_CALDAV_PASSWORD"
 refresh_minutes = 15
 days_ahead = 30
 ```
+
+### `[weather]` — explicit-location weather
+
+Install/enable `libweather.so` (`.#oxibar-weather`), included in the Home Manager
+default plugin set. Requests stay disabled until configured; no IP or device
+geolocation is performed. Set your coordinates and enable weather:
+
+```toml
+[weather]
+enabled = true
+location = "Berlin"
+latitude = 52.52
+longitude = 13.405
+units = "celsius"
+```
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `enabled` | `false` | Enable HTTPS weather requests. |
+| `location` | `"Weather"` | Display label; coordinates determine the forecast. |
+| `latitude` | `0.0` | Finite number from -90 to 90. |
+| `longitude` | `0.0` | Finite number from -180 to 180. |
+| `units` | `"celsius"` | `"celsius"` or `"fahrenheit"`; wind is shown in km/h. |
+
+All settings apply live. Open-Meteo supplies current temperature/condition, apparent
+temperature, humidity, wind and a three-day forecast, with attribution in the view.
+One in-memory cache serves bar, desktop, Control Center and `Weather:current` cards.
+Refresh runs every ten minutes while visible and checks immediately on resume;
+last-good results remain visible on errors. Requests use bounded HTTPS curl jobs;
+the Nix host supplies curl in its runtime PATH. No API key is needed.
 
 ### `[workspaces]` — Hyprland workspaces plugin
 
@@ -1228,8 +1304,10 @@ to login1 and the system policy agent. Logout/brightness recheck session ownersh
 lock_command = "swaylock"
 ```
 
-Unavailable domains show independent inline health while useful cached state stays
-visible. A missing profile/login service does not disable ordinary file brightness.
+Unavailable domains are omitted from embedded controls; useful cached domains and
+their health stay visible. System disappears from Control Center when neither
+brightness nor power profiles is available. A missing profile/login service does
+not disable ordinary file brightness or the resident capability owner.
 Owners reconnect and reject expired/offline work rather than replaying it. Locking
 launches the configured locker; Oxibar does not turn its overlay into a session lock.
 

@@ -132,7 +132,7 @@ def main():
         for library in args.libraries:
             (config / "plugins" / Path(library).name).symlink_to(Path(library).resolve())
         assert required <= {Path(library).name for library in args.libraries}
-        initial = sorted(required - {"libapplications.so", "libcommands.so", "libtools.so"})
+        initial = sorted((required | ({"libweather.so"} & {Path(library).name for library in args.libraries})) - {"libapplications.so", "libcommands.so", "libtools.so"})
         base = root / "base.toml"
         base.write_text(f'''plugins={json.dumps(initial)}
 [bar]
@@ -147,7 +147,7 @@ lock_path={json.dumps(str(root / "lock"))}
 [ipc]
 socket_path={json.dumps(str(root / "socket"))}
 [control_center]
-widgets=["Clock","Audio","Bluetooth","Notifications","System","Stats"]
+widgets=["Clock","Audio","Bluetooth","Notifications","System","Stats","Overview"]
 [monitor]
 apply_on_start=false
 [system]
@@ -336,11 +336,50 @@ timeout_ms=10000
             keyboard("-M", "alt", "-k", str(status()["control_center_widgets"].index("System") + 1), "-m", "alt")
             wait(lambda: status()["control_center_selected"] == "System", "System power controls")
             picture("system-controls", "OxiBar")
+            button("Clock", output)
+            wait(lambda: not status()["popup_open"], "clock closes controls from another page")
+            button("Clock", output)
+            keyboard("-M", "alt", "-k", str(status()["control_center_widgets"].index("Overview") + 1), "-m", "alt")
+            wait(lambda: status()["control_center_selected"] == "Overview", "shared overview cards")
+            picture("overview-controls", "OxiBar")
+            cli("action", "Clock", "day", "2026-10-20")
+            wait(lambda: status()["modal_open"] and status()["modal_provider"] == "Clock", "integrated calendar event modal")
+            calendar = layer("OxiBar modal")
+            picture("calendar-events", "OxiBar modal")
+            monitor = next(value for value in json.loads(subprocess.check_output(["hyprctl", "-j", "monitors"], env=env)) if value["name"] == calendar["output"])
+            expected_size = (min(760, int(monitor["width"] / monitor["scale"] * .9)), min(680, int(monitor["height"] / monitor["scale"] * .9)))
+            wait(lambda: (layer("OxiBar modal")["w"], layer("OxiBar modal")["h"]) == expected_size, "output-bounded calendar dimensions")
+            click("OxiBar modal", 665, 132)
+            picture("calendar-editor", "OxiBar modal")
+            click("OxiBar modal", 160, 186)
+            keyboard("Private calendar fixture")
+            click("OxiBar modal", 500, 258)
+            keyboard("14:30")
+            click("OxiBar modal", 160, 329)
+            keyboard("Private room")
+            click("OxiBar modal", 160, 400)
+            keyboard("Owned compositor event")
+            click("OxiBar modal", 98, 455)
+            events_path = root / "state" / "oxibar" / "calendar" / "events.json"
+            events = wait(lambda: json.loads(events_path.read_text()) if events_path.exists() else None, "persist new calendar event")
+            assert events[0]["title"] == "Private calendar fixture" and events[0]["time"] == "14:30"
+            event_id = events[0]["id"]
+            picture("calendar-saved", "OxiBar modal")
+            click("OxiBar modal", 94, 358)
+            click("OxiBar modal", 160, 186)
+            keyboard("-M", "ctrl", "-k", "a", "-m", "ctrl", "Updated calendar fixture")
+            click("OxiBar modal", 98, 455)
+            wait(lambda: json.loads(events_path.read_text())[0]["title"] == "Updated calendar fixture", "edit existing calendar event")
+            assert json.loads(events_path.read_text())[0]["id"] == event_id
+            click("OxiBar modal", 170, 358)
+            picture("calendar-delete", "OxiBar modal")
+            click("OxiBar modal", 98, 480)
+            wait(lambda: json.loads(events_path.read_text()) == [], "confirm calendar event deletion")
             keyboard("-k", "Escape")
-            wait(lambda: not status()["popup_open"], "close attached controls")
+            wait(lambda: not status()["modal_open"], "close event modal")
             button("Audio", output)
             wait(lambda: status()["popup_open"] and status()["popup_provider"] == "Audio", "ordinary audio dropdown")
-            assert status()["dropdown"]["height"] == 640
+            assert 200 <= status()["dropdown"]["height"] <= 900
             picture("audio-dropdown", "OxiBar")
             keyboard("-k", "Escape")
             wait(lambda: not status()["popup_open"], "Escape closes ordinary audio dropdown")
@@ -437,6 +476,11 @@ timeout_ms=10000
             layer("OxiBar launcher")
             keyboard("Oxibar private launcher fixture")
             wait(lambda: any(row["provider"] == "Applications" for row in status()["launcher_results"]), "live application search")
+            revision = status()["launcher_query_revision"]
+            keyboard("-M", "ctrl", "-k", "Tab", "-m", "ctrl")
+            wait(lambda: status()["launcher_query_revision"] > revision, "forward mode key while search is focused")
+            keyboard("-M", "ctrl", "-M", "shift", "-k", "Tab", "-m", "shift", "-m", "ctrl")
+            wait(lambda: status()["launcher_query_revision"] >= revision + 2 and any(row["provider"] == "Applications" for row in status()["launcher_results"]), "backward mode key preserves query")
             keyboard("-k", "Return")
             wait(lambda: launcher_action.exists() and not status()["launcher_open"], "owned application activation")
             assert json.loads(launcher_action.read_text()) == dict(display=env["WAYLAND_DISPLAY"], socket=None)
@@ -573,7 +617,7 @@ timeout_ms=10000
             cli("config", "set", "bar.auto_hide", "false")
             wait(bar_visible, "disabling auto-hide restores bar")
             assert layer("OxiBar", output)["address"] == bar_address
-            print(json.dumps(dict(icon_only_bar_and_live_labels=True, oxishut_session_tiles=True, clock_controls_attached=True, left_navigation=True, system_controls_without_duplicate_session=True, button_anchor=True, inbox_in_bar=True, session_confirmation=True, session_commands=True, larger_settings=True, animated_nested_settings=True, sidebar_pointer_selection_all_motion_modes=True, reduced_motion_and_narrow_navigation=True, header_reset_and_compact_stable_footer=True, gui_live_default_providers=True, live_application_search_and_activation=True, separate_command_scope_and_literal_activation=True, actual_three_column_layout_drag=True, base24_accent=True, native_monitor_snapping_and_overlap_restore=True, native_monitors_preview_save_revert=True, bottom_bar_geometry=True, audio_dropdown_escape=True, shared_live_music_notification_placement=True, pointer_reveal_and_dropdown_pinning=True)), flush=True)
+            print(json.dumps(dict(icon_only_bar_and_live_labels=True, oxishut_session_tiles=True, clock_controls_attached=True, clock_reclick_closes_other_page=True, overview_shared_cards=True, calendar_modal_persistent_crud=True, launcher_mode_keys=True, left_navigation=True, system_controls_without_duplicate_session=True, button_anchor=True, inbox_in_bar=True, session_confirmation=True, session_commands=True, larger_settings=True, animated_nested_settings=True, sidebar_pointer_selection_all_motion_modes=True, reduced_motion_and_narrow_navigation=True, header_reset_and_compact_stable_footer=True, gui_live_default_providers=True, live_application_search_and_activation=True, separate_command_scope_and_literal_activation=True, actual_three_column_layout_drag=True, base24_accent=True, native_monitor_snapping_and_overlap_restore=True, native_monitors_preview_save_revert=True, bottom_bar_geometry=True, audio_dropdown_escape=True, shared_live_music_notification_placement=True, pointer_reveal_and_dropdown_pinning=True)), flush=True)
         finally:
             stop(hover_pointer)
             stop(daemon)

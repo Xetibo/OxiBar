@@ -201,6 +201,13 @@ pub extern "Rust" fn control_center_view(
     with_model_read::<Model, _>(&model, |model| vec![views::controls(model, false)])
 }
 #[unsafe(no_mangle)]
+pub extern "Rust" fn control_center_available(model: PluginModel) -> bool {
+    with_model_read::<Model, _>(&model, |model| {
+        model.snapshot.backlight(&model.preferred).is_some() || !model.snapshot.profiles.is_empty()
+    })
+    .unwrap_or(false)
+}
+#[unsafe(no_mangle)]
 pub extern "Rust" fn modal_view(
     model: PluginModel,
 ) -> Result<Vec<Element<'static, PluginMsg>>, std::io::Error> {
