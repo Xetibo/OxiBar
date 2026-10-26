@@ -73,10 +73,10 @@
                 libdrm
                 libpulseaudio
                 pam
-                xorg.libX11
-                xorg.libXrandr
-                xorg.libXi
-                xorg.libXcursor
+                libx11
+                libxrandr
+                libxi
+                libxcursor
                 libclang.lib
               ]
               ++ commonPkgs);
@@ -154,10 +154,10 @@
               pam
               libclang.lib
               vulkan-loader
-              xorg.libX11
-              xorg.libXrandr
-              xorg.libXi
-              xorg.libXcursor
+              libX11
+              libXrandr
+              libXi
+              libXcursor
               mesa
             ];
             nativeBuildInputs = [pkgs.pkg-config];

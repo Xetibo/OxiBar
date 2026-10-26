@@ -16,7 +16,10 @@
   libdrm,
   pam,
   vulkan-loader,
-  xorg,
+  libx11,
+  libxrandr,
+  libxi,
+  libxcursor,
   makeFontsConf,
   adwaita-fonts,
   cage,
@@ -30,10 +33,10 @@
     libdrm
     pam
     vulkan-loader
-    xorg.libX11
-    xorg.libXrandr
-    xorg.libXi
-    xorg.libXcursor
+    libx11
+    libxrandr
+    libxi
+    libxcursor
   ];
   fonts = makeFontsConf {fontDirectories = [adwaita-fonts];};
   args = {
@@ -51,10 +54,10 @@
       libdrm
       pam
       vulkan-loader
-      xorg.libX11
-      xorg.libXrandr
-      xorg.libXi
-      xorg.libXcursor
+      libx11
+      libxrandr
+      libxi
+      libxcursor
     ];
     nativeBuildInputs = [pkg-config makeWrapper];
     LD_LIBRARY_PATH = runtime;

@@ -15,7 +15,10 @@
   cargoVendorDir,
   src,
   vulkan-loader,
-  xorg,
+  libx11,
+  libxrandr,
+  libxi,
+  libxcursor,
   mesa,
   plugin,
   ...
@@ -25,20 +28,21 @@
   pluginLibName = "lib${lib.replaceStrings ["-"] ["_"] cargoToml.package.name}.so";
   audioInputs = lib.optionals (plugin == "audio") [libpulseaudio];
   runtimeLibPath = lib.makeLibraryPath ([
-    libGL
-    libglvnd
-    vulkan-loader
-    wayland
-    wayland-protocols
-    libxkbcommon
-    libdrm
-    xorg.libX11
-    xorg.libXrandr
-    xorg.libXi
-    xorg.libXcursor
-    libclang.lib
-    mesa
-  ] ++ audioInputs);
+      libGL
+      libglvnd
+      vulkan-loader
+      wayland
+      wayland-protocols
+      libxkbcommon
+      libdrm
+      libx11
+      libxrandr
+      libxi
+      libxcursor
+      libclang.lib
+      mesa
+    ]
+    ++ audioInputs);
 in
   craneLib.buildPackage rec {
     pname = cargoToml.package.name;
@@ -49,22 +53,24 @@ in
     cargoBuildExtraArgs = "-p ${pname}";
     cargoTestExtraArgs = "-p ${pname}";
 
-    buildInputs = [
-      pkg-config
-      libGL
-      libglvnd
-      libxkbcommon
-      wayland
-      wayland-protocols
-      libdrm
-      libclang.lib
-      vulkan-loader
-      xorg.libX11
-      xorg.libXrandr
-      xorg.libXi
-      xorg.libXcursor
-      mesa
-    ] ++ audioInputs;
+    buildInputs =
+      [
+        pkg-config
+        libGL
+        libglvnd
+        libxkbcommon
+        wayland
+        wayland-protocols
+        libdrm
+        libclang.lib
+        vulkan-loader
+        libx11
+        libxrandr
+        libxi
+        libxcursor
+        mesa
+      ]
+      ++ audioInputs;
 
     nativeBuildInputs = [pkg-config];
     preCheck = ''

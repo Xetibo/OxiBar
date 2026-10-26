@@ -15,7 +15,10 @@
   cargoVendorDir,
   src,
   vulkan-loader,
-  xorg,
+  libx11,
+  libxrandr,
+  libxi,
+  libxcursor,
   mesa,
   makeWrapper,
   makeFontsConf,
@@ -36,10 +39,10 @@
     wayland-protocols
     libxkbcommon
     libdrm
-    xorg.libX11
-    xorg.libXrandr
-    xorg.libXi
-    xorg.libXcursor
+    libx11
+    libxrandr
+    libxi
+    libxcursor
     libclang.lib
     mesa
   ];
@@ -79,10 +82,10 @@ in
       libdrm
       libclang.lib
       vulkan-loader
-      xorg.libX11
-      xorg.libXrandr
-      xorg.libXi
-      xorg.libXcursor
+      libx11
+      libxrandr
+      libxi
+      libxcursor
       mesa
     ];
 

@@ -39,10 +39,10 @@
       pam
       libclang.lib
       vulkan-loader
-      xorg.libX11
-      xorg.libXrandr
-      xorg.libXi
-      xorg.libXcursor
+      libx11
+      libxrandr
+      libxi
+      libxcursor
       mesa
     ];
     nativeBuildInputs = [pkgs.pkg-config];
