@@ -200,10 +200,15 @@ This file is the styling contract for Oxibar plugins and shell surfaces. New plu
 - Clock/Controls open attached control-center content by default. Notifications
   supplies an embedded inbox with its own header/padding; separate-panel mode is
   optional. Session uses a centered OxiShut-style tile overlay, with three equal
-  columns of large action icons, neutral themed fills, accent selection and muted
-  unavailable capabilities. Hover descriptions and the selected-action label retain
-  discoverability. Entries delegate to cached commands and task confirmations;
+  columns of large labeled action icons, neutral themed fills, shared keyboard focus
+  rings and muted unavailable capabilities. Tiles have no hover highlight or tooltip.
+  Entries delegate to cached commands and task confirmations;
   capture output context before retiring the menu for that handoff.
+- Popup, panel and modal actions use shared focusable controls and one host-owned
+  navigation policy. Tab/arrows/Vim traversal stays inside the active content,
+  scrolls focused controls into view and skips collapsed/disabled actions. Text
+  editors retain editing keys. Nested menus inherit bindings and dismiss before
+  their parent on Escape. Focus rings use theme accent without changing geometry.
 
 ## Dock and Desktop Surfaces
 

@@ -132,6 +132,13 @@
 - Host keys belong in the validated shortcut schema and central surface-scoped
   dispatcher. Reject overlapping-context conflicts, preserve text-input capture
   semantics and derive visible hints from effective bindings.
+- Use shared oxiced focusable button, toggler, slider and picklist helpers for
+  interactive shell/provider controls. The host owns navigation bindings and scope;
+  plugins must not add parallel navigation config or keyboard subscriptions.
+  Preserve native single/multiline editor keys and expose focus/scroll through
+  standard Iced operations. Keep logical focus across native leave/enter events.
+  Keyboard activation invokes the control's action directly, preserving nested
+  button/input targets instead of synthesizing a click on a parent card.
 - Keep plugin service ownership independent of output/view count. Preserve source
   context for UI-initiated asynchronous work without dropping model updates after
   the originating surface disappears.

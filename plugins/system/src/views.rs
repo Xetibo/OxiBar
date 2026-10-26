@@ -1,8 +1,9 @@
 use iced::{
     Element, Length,
-    widget::{Column, Row, slider},
+    widget::{Column, Row},
 };
 use oxibar_plugin_api::PluginMsg;
+use oxiced::widgets::oxi_control::slider;
 use oxiced::widgets::oxi_plugin::text;
 use oxiced::{
     theme::theme_impl::OXITHEME,
@@ -23,7 +24,7 @@ fn action(
     value: &'static str,
     message: Option<Message>,
     primary: bool,
-) -> iced::widget::Button<'static, PluginMsg> {
+) -> oxiced::widgets::oxi_control::Button<'static, PluginMsg> {
     oxi_plugin::surface_button(label(value), primary).on_press_maybe(message.map(plugin_message))
 }
 fn title(value: &str) -> String {

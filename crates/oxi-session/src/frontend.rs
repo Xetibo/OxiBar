@@ -646,7 +646,7 @@ impl Greeter {
         label: &'static str,
         control: Control,
         primary: bool,
-    ) -> iced::widget::Button<'a, Message> {
+    ) -> oxiced::widgets::oxi_control::Button<'a, Message> {
         let focused = self.focus == control;
         oxi_plugin::surface_button(oxi_plugin::text(label), primary).style(move |theme, status| {
             let mut style = if primary {

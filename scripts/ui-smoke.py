@@ -272,8 +272,17 @@ timeout_ms=10000
             if value: keyboard(value)
             time.sleep(.2)
         def first_input(value):
-            keyboard("-k", "Tab")
+            displays = status()["monitor_editor"]["draft"]
+            previous = 2 + (displays[0]["vrr"] is not None) + sum(6 + (display["vrr"] is not None) for display in displays[1:])
+            keyboard("-k", "Tab", "-k", "End")
+            keyboard("-M", "shift", *[item for _ in range(previous) for item in ("-k", "Tab")], "-m", "shift")
             keyboard("-M", "ctrl", "-k", "a", "-m", "ctrl", value)
+            # Return to the toolbar; traversal scrolls it back into view.
+            keyboard("-M", "shift", *[item for _ in range(4) for item in ("-k", "Tab")], "-m", "shift")
+        def monitor_toolbar(index):
+            keyboard("-M", "ctrl", "-k", "f", "-m", "ctrl")
+            # The two breadcrumbs precede the monitor toolbar.
+            keyboard(*[item for _ in range(2 + index) for item in ("-k", "Tab")], "-k", "Return")
         def bounds(key):
             return wait(lambda: next((row for row in status()["settings_navigation"]["rows"] if row["page"] == key and row["height"] > 2), None), key)
         def control(key, dx=0, dy=0, preview=False):
@@ -381,6 +390,33 @@ timeout_ms=10000
             wait(lambda: status()["popup_open"] and status()["popup_provider"] == "Audio", "ordinary audio dropdown")
             assert 200 <= status()["dropdown"]["height"] <= 900
             picture("audio-dropdown", "OxiBar")
+            cli("config", "set", "shortcuts.navigation.next", '"ArrowDown, n"')
+            cli("config", "set", "shortcuts.navigation.activate", '"x"')
+            cli("action", "Audio", "input-volume", "50")
+            cli("action", "Audio", "input-mute", "off")
+            def source():
+                name = subprocess.check_output(["pactl", "get-default-source"], env=env, text=True).strip()
+                return next(value for value in json.loads(subprocess.check_output(["pactl", "--format=json", "list", "sources"], env=env)) if value["name"] == name)
+            def volume(): return int(next(iter(source()["volume"].values()))["value_percent"].rstrip("%"))
+            wait(lambda: volume() == 50 and not source()["mute"], "private input baseline")
+            time.sleep(.3)
+            assert status()["popup_open"], "live remapping retains Audio dropdown"
+            keyboard("-k", "End")
+            picture("keyboard-last", "OxiBar")
+            keyboard("k")
+            picture("keyboard-mute", "OxiBar")
+            keyboard("k")
+            picture("keyboard-device", "OxiBar")
+            keyboard("x")
+            picture("keyboard-picklist", "OxiBar")
+            keyboard("-k", "Escape")
+            assert status()["popup_open"], "nested Escape retains Audio dropdown"
+            keyboard("n", "-k", "Return")
+            assert not source()["mute"], "remapped activation disables native Enter"
+            keyboard("x")
+            wait(lambda: source()["mute"], "remapped keyboard switch action")
+            keyboard("n", "h")
+            wait(lambda: volume() == 49, "Vim slider decrease on focused control")
             keyboard("-k", "Escape")
             wait(lambda: not status()["popup_open"], "Escape closes ordinary audio dropdown")
             notification = button("Notifications", output)
@@ -394,11 +430,14 @@ timeout_ms=10000
             assert session["w"] == 800 and session["h"] == 480
             assert not status()["popup_open"] and status()["session_open"]
             picture("session", "OxiBar session")
-            keyboard("-k", "Down", "-k", "Return")
+            keyboard("n", "x")
             wait(lambda: status()["modal_provider"] == "System" and status()["modal_open"], "session menu opens native confirmation")
             assert not status()["session_open"]
             assert not (root / "logout-called").exists()
-            keyboard("-k", "Escape")
+            keyboard("-k", "Home", "x")
+            wait(lambda: not status()["modal_open"], "keyboard activates native confirmation Cancel")
+            cli("config", "reset", "shortcuts.navigation.next")
+            cli("config", "reset", "shortcuts.navigation.activate")
             cli("session", "open")
             session_address = layer("OxiBar session")["address"]
             cli("session", "open")
@@ -545,9 +584,9 @@ timeout_ms=10000
             first_input("1.25")
             wait(lambda: status()["monitor_editor"]["draft"][0]["scale"] == 1.25, "GUI monitor scale")
             picture("monitors-before")
-            control("@monitor/preview")
+            keyboard("-k", "Return")
             wait(lambda: status()["monitor_editor"]["preview"] is not None, "native monitor preview")
-            control("@monitor/keep")
+            monitor_toolbar(2)
             wait(lambda: status()["monitor_editor"]["preview"] is None and setting("monitor.profiles"), "keep and save native monitor layout")
             profiles = setting("monitor.profiles")
             name = profiles[0]["name"]
@@ -555,17 +594,17 @@ timeout_ms=10000
             assert next(item for item in cli("outputs")["data"]["outputs"] if item["name"] == name)["scale"] == 1.25
             search()
             first_input("1.5")
-            control("@monitor/preview")
+            keyboard("-k", "Return")
             wait(lambda: status()["monitor_editor"]["preview"] is not None, "second native preview")
-            control("@monitor/revert")
+            monitor_toolbar(1)
             wait(lambda: status()["monitor_editor"]["preview"] is None and not status()["monitor_editor"]["busy"], "GUI native revert")
             assert next(item for item in cli("outputs")["data"]["outputs"] if item["name"] == name)["scale"] == 1.25
             assert setting("monitor.profiles") == profiles
             search()
             first_input("1")
-            control("@monitor/preview")
+            keyboard("-k", "Return")
             wait(lambda: status()["monitor_editor"]["preview"] is not None, "restore fixture scale preview")
-            control("@monitor/keep")
+            monitor_toolbar(2)
             wait(lambda: status()["monitor_editor"]["preview"] is None and setting("monitor.profiles")[0]["scale"] == 1, "restore and save fixture layout")
             picture("monitors")
             keyboard("-k", "Escape")
@@ -618,6 +657,9 @@ timeout_ms=10000
             wait(bar_visible, "disabling auto-hide restores bar")
             assert layer("OxiBar", output)["address"] == bar_address
             print(json.dumps(dict(icon_only_bar_and_live_labels=True, oxishut_session_tiles=True, clock_controls_attached=True, clock_reclick_closes_other_page=True, overview_shared_cards=True, calendar_modal_persistent_crud=True, launcher_mode_keys=True, left_navigation=True, system_controls_without_duplicate_session=True, button_anchor=True, inbox_in_bar=True, session_confirmation=True, session_commands=True, larger_settings=True, animated_nested_settings=True, sidebar_pointer_selection_all_motion_modes=True, reduced_motion_and_narrow_navigation=True, header_reset_and_compact_stable_footer=True, gui_live_default_providers=True, live_application_search_and_activation=True, separate_command_scope_and_literal_activation=True, actual_three_column_layout_drag=True, base24_accent=True, native_monitor_snapping_and_overlap_restore=True, native_monitors_preview_save_revert=True, bottom_bar_geometry=True, audio_dropdown_escape=True, shared_live_music_notification_placement=True, pointer_reveal_and_dropdown_pinning=True)), flush=True)
+        except BaseException:
+            print("".join(logs), file=sys.stderr)
+            raise
         finally:
             stop(hover_pointer)
             stop(daemon)

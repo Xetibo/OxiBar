@@ -13,7 +13,7 @@ use iced::{
     },
     futures::Stream,
     stream,
-    widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, svg},
+    widget::{Column, Row, Space, container, image, mouse_area, scrollable, svg},
 };
 use oxibar_plugin_api::{
     ABI_VERSION, HOST_REQUEST_TOGGLE_POPUP, PluginMetadata, PluginModel, PluginMsg,
@@ -21,6 +21,7 @@ use oxibar_plugin_api::{
     with_model_read, with_model_write,
 };
 use oxiced::theme::theme_impl::OXITHEME;
+use oxiced::widgets::oxi_control::button;
 use oxiced::widgets::oxi_plugin;
 use oxiced::widgets::oxi_plugin::text;
 use zbus::{blocking::Connection, fdo::RequestNameFlags, interface, message::Header};
@@ -404,6 +405,7 @@ fn tray_item_row(
         key: key.clone(),
         action: TrayAction::Activate,
     }))
+    .on_context_menu(msg(Message::ToggleContextMenu(item.key.clone())))
     .style(tray_item_button_style)
     .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
     .width(Length::Fill);
@@ -425,7 +427,13 @@ fn tray_item_row(
         .on_right_press(msg(Message::ToggleContextMenu(item.key.clone())));
 
     if let Some(menu) = menu {
-        ContextMenuOverlay::new(row.into(), tray_context_menu(&item.key, menu), position).into()
+        ContextMenuOverlay::new(
+            row.into(),
+            tray_context_menu(&item.key, menu),
+            position,
+            msg(Message::ToggleContextMenu(item.key.clone())),
+        )
+        .into()
     } else {
         row.into()
     }
@@ -482,7 +490,7 @@ fn tray_context_menu(key: &str, items: &[TrayMenuItem]) -> Element<'static, Plug
         }
     }
 
-    container(menu)
+    container(scrollable(menu).height(Length::Shrink))
         .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
         .width(CONTEXT_MENU_WIDTH)
         .style(tray_context_menu_style)
@@ -493,14 +501,21 @@ struct ContextMenuOverlay<'a> {
     content: Element<'a, PluginMsg>,
     menu: Element<'a, PluginMsg>,
     position: Point,
+    close: PluginMsg,
 }
 
 impl<'a> ContextMenuOverlay<'a> {
-    fn new(content: Element<'a, PluginMsg>, menu: Element<'a, PluginMsg>, position: Point) -> Self {
+    fn new(
+        content: Element<'a, PluginMsg>,
+        menu: Element<'a, PluginMsg>,
+        position: Point,
+        close: PluginMsg,
+    ) -> Self {
         Self {
             content,
             menu,
             position,
+            close,
         }
     }
 }
@@ -608,6 +623,7 @@ impl<'a> Widget<PluginMsg, iced::Theme, iced::Renderer> for ContextMenuOverlay<'
             menu: &mut self.menu,
             tree: &mut tree.children[1],
             position,
+            close: self.close.clone(),
         })))
     }
 
@@ -634,9 +650,20 @@ struct ContextMenuOverlayLayer<'a, 'b> {
     menu: &'b mut Element<'a, PluginMsg>,
     tree: &'b mut Tree,
     position: Point,
+    close: PluginMsg,
 }
 
 impl overlay::Overlay<PluginMsg, iced::Theme, iced::Renderer> for ContextMenuOverlayLayer<'_, '_> {
+    fn operate(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.menu
+            .as_widget_mut()
+            .operate(self.tree, layout, renderer, operation);
+    }
     fn layout(&mut self, renderer: &iced::Renderer, bounds: Size) -> layout::Node {
         let max_size = Size::new(
             CONTEXT_MENU_WIDTH + CONTEXT_MENU_LIMIT_EXTRA,
@@ -683,6 +710,17 @@ impl overlay::Overlay<PluginMsg, iced::Theme, iced::Renderer> for ContextMenuOve
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, PluginMsg>,
     ) {
+        if matches!(
+            event,
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                ..
+            })
+        ) {
+            shell.publish(self.close.clone());
+            shell.capture_event();
+            return;
+        }
         self.menu.as_widget_mut().update(
             self.tree,
             event,
@@ -693,6 +731,12 @@ impl overlay::Overlay<PluginMsg, iced::Theme, iced::Renderer> for ContextMenuOve
             shell,
             &Rectangle::with_size(Size::INFINITE),
         );
+        if matches!(
+            event,
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { .. })
+        ) {
+            shell.capture_event();
+        }
     }
 
     fn mouse_interaction(

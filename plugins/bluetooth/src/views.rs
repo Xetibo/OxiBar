@@ -388,7 +388,10 @@ pub(super) fn modal(model: &Model) -> Element<'static, PluginMsg> {
     scrollable(body.push(actions)).height(Length::Fill).into()
 }
 
-fn action_button(label: &str, primary: bool) -> iced::widget::button::Button<'static, PluginMsg> {
+fn action_button(
+    label: &str,
+    primary: bool,
+) -> oxiced::widgets::oxi_control::Button<'static, PluginMsg> {
     oxi_plugin::surface_button(text(label.to_owned()).size(OXITHEME.font_md), primary)
 }
 fn copy(label: &str) -> Element<'static, PluginMsg> {

@@ -1,6 +1,9 @@
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, overlay, renderer,
-    widget::{Operation, Tree},
+    widget::{
+        Id, Operation, Tree,
+        operation::{Focusable, Scrollable, TextInput},
+    },
 };
 use iced::{Element, Event, Length, Rectangle, Size, Vector, mouse};
 
@@ -20,6 +23,53 @@ pub struct Reveal<'a, M> {
     content: Element<'a, M>,
     full: f32,
     visible: f32,
+}
+
+struct VisibleFocus<'a> {
+    inner: &'a mut dyn Operation,
+    bounds: Rectangle,
+}
+impl Operation for VisibleFocus<'_> {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+        self.inner.traverse(&mut |inner| {
+            operate(&mut VisibleFocus {
+                inner,
+                bounds: self.bounds,
+            })
+        });
+    }
+    fn container(&mut self, id: Option<&Id>, bounds: Rectangle) {
+        self.inner.container(id, bounds);
+    }
+    fn focusable(&mut self, id: Option<&Id>, bounds: Rectangle, state: &mut dyn Focusable) {
+        if self.bounds.contains(bounds.center()) {
+            self.inner.focusable(id, bounds, state);
+        } else {
+            state.unfocus();
+        }
+    }
+    fn text_input(&mut self, id: Option<&Id>, bounds: Rectangle, state: &mut dyn TextInput) {
+        if self.bounds.contains(bounds.center()) {
+            self.inner.text_input(id, bounds, state);
+        }
+    }
+    fn scrollable(
+        &mut self,
+        id: Option<&Id>,
+        bounds: Rectangle,
+        content: Rectangle,
+        translation: Vector,
+        state: &mut dyn Scrollable,
+    ) {
+        self.inner
+            .scrollable(id, bounds, content, translation, state);
+    }
+    fn text(&mut self, id: Option<&Id>, bounds: Rectangle, text: &str) {
+        self.inner.text(id, bounds, text);
+    }
+    fn custom(&mut self, id: Option<&Id>, bounds: Rectangle, state: &mut dyn std::any::Any) {
+        self.inner.custom(id, bounds, state);
+    }
 }
 fn content_limits(limits: &layout::Limits, full: f32) -> layout::Limits {
     layout::Limits::new(Size::ZERO, Size::new(limits.max().width, full))
@@ -67,6 +117,15 @@ impl<M> Widget<M, iced::Theme, iced::Renderer> for Reveal<'_, M> {
         r: &iced::Renderer,
         op: &mut dyn Operation,
     ) {
+        let mut visible = VisibleFocus {
+            inner: op,
+            bounds: l.bounds(),
+        };
+        let op: &mut dyn Operation = if self.visible < self.full {
+            &mut visible
+        } else {
+            visible.inner
+        };
         self.content.as_widget_mut().operate(
             &mut tree.children[0],
             l.children().next().unwrap(),

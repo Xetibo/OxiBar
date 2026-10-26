@@ -787,14 +787,14 @@ that inbox suppresses visible toasts. Disable integration for the separate panel
 
 The reserved `"session"` bar item opens a centered OxiShut-style menu, up to
 800×480 logical units and bounded to 90% of its output. Three equal columns contain
-large icon-only action tiles with themed neutral fills, keyboard accent selection
-and a selected-action label. Tiles have no hover highlight or hover tooltip.
+large labeled action tiles with themed neutral fills and shared keyboard focus
+rings. Tiles have no hover highlight or hover tooltip.
 The six default actions form two rows.
 Choices come from the existing System provider's cached capabilities. Lock invokes
 its configured locker; logout/power choices open the ordinary confirmation modal
 before native logind/policy delegation. The menu releases its surface before that
-handoff and preserves the originating output. Arrow/Tab navigation and Enter are
-scoped to its current window and skip unavailable actions.
+handoff and preserves the originating output. Shared arrow/Vim/Tab navigation and
+activation bindings are scoped to its current window and skip unavailable actions.
 Compositor bindings can open the same resident menu directly:
 
 ```sh
@@ -1021,19 +1021,21 @@ selection use the same neutral theme roles as launcher/bar controls.
 
 Keyboard controls: Ctrl+F focuses search, Alt+1 through Alt+9 selects the first nine
 root categories, Alt+0 selects Theme and Alt+S selects Shortcuts,
-Tab/Shift+Tab traverses text fields, Enter applies a field, and Escape closes the
+Tab/Shift+Tab traverses enabled controls, Enter applies a field, and Escape closes the
 settings surface. Settings access remains available when the launcher is disabled.
 
 ### Shortcuts
 
-Settings → Shortcuts contains every host-owned key binding: overlay dismissal,
-form traversal, settings search/categories, control-center sections, launcher,
-session, overview and desktop editing. Changes apply live. Global daemon-opening
+Settings → Shortcuts contains shared popup/modal navigation and host-owned bindings:
+overlay dismissal, control traversal, settings search/categories, control-center
+sections, launcher, session, overview and desktop editing. Changes apply live to
+the host and every bundled plugin; plugins need no separate navigation config.
+Global daemon-opening
 bindings remain in the compositor configuration.
 
 Bindings are comma-separated alternatives with `Ctrl`, `Alt`, `Shift` or `Super`
 modifiers joined by `+`. Named keys include `Escape`, `Enter`, `Tab`, `Space`,
-`ArrowLeft/Down/Up/Right`, `Home`, `End`, `PageUp/Down`, `Backspace`, `Delete`
+`ArrowLeft/Down/Up/Right`, `Home`, `End`, `PageUp/Down`, `Backspace`, `Delete`, `Menu`
 and `F1`–`F12`; use `Plus`/`Comma` for literal separator keys. An empty string
 disables an action. Invalid names and conflicting bindings in overlapping contexts
 are rejected before saving; unrelated surfaces may reuse a key.
@@ -1043,6 +1045,16 @@ are rejected before saving; unrelated surfaces may reuse a key.
 close = "Escape"
 focus_next = "Tab"
 focus_previous = "Shift+Tab"
+
+[shortcuts.navigation]
+next = "ArrowDown, j"
+previous = "ArrowUp, k"
+left = "ArrowLeft, h"
+right = "ArrowRight, l"
+first = "Home"
+last = "End"
+activate = "Enter, Space"
+context_menu = "Shift+F10, Menu"
 
 [shortcuts.overview]
 next_window = "Tab"
@@ -1061,9 +1073,26 @@ next_mode = "Ctrl+Tab"
 previous_mode = "Ctrl+Shift+Tab"
 ```
 
+Shared navigation applies to settings, control center, provider popups/panels,
+task modals, clipboard, launcher and session controls. Tab/Shift+Tab and j/k wrap
+through enabled controls; hidden controls are skipped and scrolling follows focus.
+Home/End selects the first/last control. h/l adjusts a focused slider, opens a
+picklist, or moves between other controls. Enter/Space activates the focused
+control; Shift+F10/Menu opens a tray item's context menu. Nested menus inherit the
+same bindings. Escape dismisses an open menu first, then its owning surface on the
+next press. Focus stays within the active surface, excluding its bar buttons.
+
+Text inputs and multiline editors keep typing and editing keys, including h/j/k/l,
+arrows, Home/End and Enter. Use Tab/Shift+Tab to leave an editor. Desktop placement
+arrows keep moving/resizing the draft until Tab enters its editing controls.
+The Session page's optional extra bindings are compatibility aliases, empty by
+default; session controls otherwise use the shared bindings.
+
 Launcher mode keys cycle forward/backward through loaded providers' advertised
 prefixes and the unprefixed All mode. Cycling wraps, recognizes the longest current
-prefix and preserves the query text. Plain Tab/Shift+Tab still navigate results.
+prefix and preserves the query text. Launcher-specific result bindings apply while
+editing search. Tab/Shift+Tab reaches all controls, including results and favorites;
+shared navigation applies after leaving search.
 
 Base `config.toml` may remain an immutable Home Manager/Nix-store symlink. Oxibar
 never writes it. Override writes are validated, revision-checked, owner-only and

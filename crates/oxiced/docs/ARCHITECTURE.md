@@ -57,3 +57,16 @@ state when the preview appears/disappears or replaces an empty surface.
 Bounds-capture wrappers optionally carry logical identity. A same-sized replacement
 clears the prior geometry cache and republishes bounds; unchanged identity preserves
 the cache. The owning application supplies stable slot/action identity.
+
+## Keyboard Navigation
+
+`oxi_control` adapts buttons, togglers and sliders to standard Iced focus
+operations; the custom picklist exposes both its control and menu options.
+`oxi_navigation` accepts caller-owned `Bindings`, scopes focus to one content tree,
+wraps traversal and scrolls targets into view synchronously. Nested overlays inherit
+the same policy. No library-global config or plugin event subscription is needed.
+
+Shared action controls use a standard operation ID marker, avoiding custom `Any`
+identity across dylibs. Unmarked native focusables retain editor semantics, including
+multiline editors. Logical focus survives native leave/enter. The navigation root
+owns pointer-to-keyboard focus, keeping bar-only controls outside popup traversal.

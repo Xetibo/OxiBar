@@ -17,3 +17,8 @@
   calculation pure and bounded.
 - Avoid vertical `Fill` inside an unbounded scroll body. Alignment helpers that set
   `Fill` can override a previously fixed height and collapse an enclosing row.
+- Compose shared focusable helpers for actions. Keep key configuration in the caller's
+  navigation root and translate to canonical control keys there, including overlays.
+  Use standard Iced focus/scroll operations across dylibs, not custom `Any` policy.
+  Preserve unknown native focusables as editors and retain logical focus across
+  leave/enter. Activate callbacks directly so nested controls keep their own targets.

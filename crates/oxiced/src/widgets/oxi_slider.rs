@@ -1,12 +1,10 @@
 use iced::{
     Border, Color, Theme,
     border::Radius,
-    widget::{
-        Slider,
-        slider::{Handle, HandleShape, Rail, Status, Style},
-    },
+    widget::slider::{Handle, HandleShape, Rail, Status, Style},
 };
 
+use super::oxi_control::{self, Slider};
 use crate::theme::theme_impl::OXITHEME;
 
 pub fn slider_style(_: &Theme, status: Status) -> Style {
@@ -47,5 +45,5 @@ where
     V: Copy + From<u8> + std::cmp::PartialOrd,
     M: Clone,
 {
-    iced::widget::slider(range, value, on_change).style(slider_style)
+    oxi_control::slider(range, value, on_change).style(slider_style)
 }

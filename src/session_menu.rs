@@ -1,9 +1,10 @@
 use crate::{app::OxiBar, messages::Message};
 use iced::{
     Alignment, Element, Length, Task,
-    widget::{Column, Row, Space, button, container},
+    widget::{Column, Row, Space, container},
 };
 use iced_layershell::reexport::IcedId;
+use oxiced::widgets::oxi_control::button;
 use oxiced::{
     theme::theme_impl::OXITHEME,
     widgets::oxi_plugin::{self, text},
@@ -238,12 +239,11 @@ impl OxiBar {
         let mut tiles = Column::new()
             .spacing(OXITHEME.padding_xl)
             .height(Length::Fill);
-        for (row_index, chunk) in entries.chunks(3).enumerate() {
+        for chunk in entries.chunks(3) {
             let mut row = Row::new()
                 .spacing(OXITHEME.padding_xl)
                 .height(Length::FillPortion(1));
-            for (column_index, (_, entry)) in chunk.iter().enumerate() {
-                let selected = row_index * 3 + column_index == self.shell.session_focused;
+            for (_, entry) in chunk {
                 let enabled = entry.enabled;
                 let icon = oxi_plugin::icon(session_icon(&entry.action))
                     .width(80)
@@ -255,26 +255,29 @@ impl OxiBar {
                             OXITHEME.text_muted
                         }),
                     });
-                let tile = button(container(icon).center(Length::Fill))
-                    .style(move |theme, status| {
-                        let status = if status == button::Status::Hovered {
-                            button::Status::Active
-                        } else {
-                            status
-                        };
-                        let mut style = oxi_plugin::flat_primary_bg_button_style(theme, status);
-                        if selected && enabled && status == button::Status::Active {
-                            style.background = Some(OXITHEME.primary_bg_hover.into());
-                            style.border.color = OXITHEME.border_color_strong;
-                            style.border.width = 1.0;
-                        }
-                        style
-                    })
-                    .width(Length::FillPortion(1))
-                    .height(Length::Fill)
-                    .on_press_maybe(
-                        enabled.then_some(Message::Session(Action::Choose(entry.action.clone()))),
-                    );
+                let tile = button(
+                    container(
+                        Column::new()
+                            .push(icon)
+                            .push(text(entry.label.clone()).size(OXITHEME.font_md))
+                            .spacing(OXITHEME.padding_sm)
+                            .align_x(Alignment::Center),
+                    )
+                    .center(Length::Fill),
+                )
+                .style(move |theme, status| {
+                    let status = if status == button::Status::Hovered {
+                        button::Status::Active
+                    } else {
+                        status
+                    };
+                    oxi_plugin::flat_primary_bg_button_style(theme, status)
+                })
+                .width(Length::FillPortion(1))
+                .height(Length::Fill)
+                .on_press_maybe(
+                    enabled.then_some(Message::Session(Action::Choose(entry.action.clone()))),
+                );
                 row = row.push(tile);
             }
             for _ in chunk.len()..3 {
@@ -283,24 +286,16 @@ impl OxiBar {
             tiles = tiles.push(row);
         }
         if !entries.is_empty() {
-            body = body.push(tiles).push(
-                text(
-                    entries
-                        .get(self.shell.session_focused)
-                        .map(|(_, entry)| entry.label.clone())
-                        .unwrap_or_default(),
-                )
-                .size(OXITHEME.font_md)
-                .style(oxi_plugin::text_accent),
-            );
+            body = body.push(tiles);
         } else {
             body = body.push(Space::new().height(Length::Fill));
         }
         let body = body.push(
             text(format!(
-                "{}: choose · {}: open · {}: close",
-                self.shortcut_label("session.next"),
-                self.shortcut_label("session.activate"),
+                "{} / {}: choose · {}: open · {}: close",
+                self.shortcut_label("focus_next"),
+                self.shortcut_label("navigation.next"),
+                self.shortcut_label("navigation.activate"),
                 self.shortcut_label("close")
             ))
             .size(OXITHEME.font_sm)

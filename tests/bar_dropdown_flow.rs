@@ -20,7 +20,7 @@ fn array(names: &[&str]) -> Value {
 }
 
 #[test]
-fn ordinary_dropdowns_and_legacy_panels_close_with_scoped_escape_even_when_captured() {
+fn ordinary_dropdowns_and_legacy_panels_keep_nested_escape_then_close_scoped() {
     let mut host = TestHost::with_plugins([
         ("Audio", FakePluginOptions::popup()),
         ("Notifications", FakePluginOptions::all_surfaces()),
@@ -29,17 +29,19 @@ fn ordinary_dropdowns_and_legacy_panels_close_with_scoped_escape_even_when_captu
     let opened = host.drive(Message::TogglePluginPopup("Audio".into()));
     assert!(opened.iter().any(|message| matches!(message,
         Message::SetToastKeyboardInteractivity(id, KeyboardInteractivity::Exclusive) if *id == bar)));
-    let escape = |id| {
+    let escape = |id, status| {
         Message::ShortcutKey(
             id,
             iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
             iced::keyboard::Modifiers::empty(),
-            iced::event::Status::Captured,
+            status,
         )
     };
-    host.drive(escape(IcedId::unique()));
+    host.drive(escape(IcedId::unique(), iced::event::Status::Ignored));
     assert!(host.popup_open());
-    host.drive(escape(bar));
+    host.drive(escape(bar, iced::event::Status::Captured));
+    assert!(host.popup_open());
+    host.drive(escape(bar, iced::event::Status::Ignored));
     assert!(!host.popup_open());
     set(
         &mut host,
@@ -57,9 +59,11 @@ fn ordinary_dropdowns_and_legacy_panels_close_with_scoped_escape_even_when_captu
             _ => None,
         })
         .unwrap();
-    host.drive(escape(bar));
+    host.drive(escape(bar, iced::event::Status::Ignored));
     assert!(host.panel_open());
-    host.drive(escape(panel));
+    host.drive(escape(panel, iced::event::Status::Captured));
+    assert!(host.panel_open());
+    host.drive(escape(panel, iced::event::Status::Ignored));
     assert!(!host.panel_open());
     assert_eq!(host.bar_windows(), [bar]);
 }

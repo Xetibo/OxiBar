@@ -151,7 +151,8 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   action tiles and keyboard navigation, delegated through the provider's ordinary
   command/confirmation flow.
 - `src/shortcuts.rs`: validated live key bindings, context conflict checks and one
-  surface-scoped keyboard dispatcher for all host-owned interactions.
+  surface-scoped keyboard dispatcher. It also supplies one navigation policy to
+  shared host/plugin controls, without provider-specific keyboard configuration.
 - `src/paste.rs`: generation-scoped provider paste handoffs. After the provider's
   acknowledged copy, the host dismisses interactive surfaces, waits for native
   Unfocused/Closed events and owns one bounded, cancellable virtual-keyboard job.
@@ -178,6 +179,11 @@ Oxibar is a Rust workspace containing the host bar, a shared plugin API crate, a
   state and debounced filesystem watchers with nonrecursive missing-root fallbacks.
 - `crates/oxiced`: local shared theme/widget library imported from the previously
   pinned upstream revision; host/plugins use one workspace dependency and lockfile.
+  Its focusable control adapters and surface navigation wrapper synchronously
+  traverse standard Iced focus/scroll operations, preserve editor input and pass
+  the host policy into nested overlays. Standard operation IDs mark action controls
+  across dylibs; unknown native focusables retain editor semantics. Rebuild host
+  and providers together when changing shared widget APIs; ABI exports are unchanged.
 - `plugins/*`: dynamic crates from `$XDG_CONFIG_HOME/oxibar/plugins/`, loaded when
   their filename appears in either enabled plugin list.
 - `plugins/*/src/system.rs`: command/DBus/sysfs integration, parsing, and domain

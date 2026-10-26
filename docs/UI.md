@@ -172,6 +172,11 @@
   Closing a dropdown restores bar input/keyboard policy.
 - Every dropdown requests keyboard focus while open and closes with scoped Escape,
   including ordinary provider popups and standalone inbox panels.
+- Shared popup/modal controls support Tab/Shift+Tab, arrows and configurable Vim
+  navigation from one host policy. Use a theme-accent focus ring without changing
+  layout. Skip disabled/collapsed controls, scroll focused items into view and keep
+  focus inside the active surface. Editors retain typing/editing keys; Tab leaves
+  editing. Nested menus inherit bindings and consume Escape before their parent.
 - Clipboard pickers distinguish row-click Paste from a separate Copy action that
   retains the picker. Copy must acknowledge success before dismissal/injection;
   paste releases native keyboard ownership first. Keep action failures visible
@@ -179,8 +184,8 @@
   Copy/Delete use inline icon buttons. All/Text/Addresses/Images filtering
   intersects case-insensitive search without modifying original bytes or MIME.
 - Session uses a centered, output-bounded OxiShut-style overlay: three equal columns
-  of large icon-only tiles, neutral theme fills, accent selection, disabled capability
-  styling and a selected-action label. Tiles have no hover highlight or tooltip.
+  of large labeled icon tiles, neutral theme fills, shared keyboard focus rings and
+  disabled capability styling. Tiles have no hover highlight or tooltip.
   Native confirmation
   retains the originating output after the menu closes.
 - Bar/Layout uses three equal Left/Center/Right columns of draggable cards with a

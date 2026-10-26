@@ -257,6 +257,11 @@ selection, sidebar folding/expansion, reduced motion, the narrow full-path picke
 header reset placement and a compact footer that retains its bounds across saves.
 Pointer clicks select every sidebar root and Dock children with normal, reduced and
 zero-duration motion, after transitions settle.
+Keyboard assertions live-remap shared navigation/activation,
+open/dismiss a native Audio picklist without closing its parent, reject the old
+activation key, change an owned PulseAudio source's mute/volume, and navigate/cancel
+the System confirmation. Monitor scale editing and Preview/Keep/Revert also run
+through keyboard traversal and focus scrolling.
 Real pointer drags exercise edge snapping and overlap restoration on both outputs
 before the existing native preview/Keep/Revert flow. Dedicated session tiles remain;
 embedded System content omits duplicate session actions.
@@ -875,6 +880,10 @@ disabled in normal runtime.
 
 ## Known Gaps
 
+- The current pinned toolchain reports pre-existing Clippy warnings in legacy
+  radio/palette, authentication/buffer and overview code (`collapsible_match`,
+  `manual_is_multiple_of`, `useless_borrows_in_formatting`, `chunks_exact_to_as_chunks`).
+  Plain workspace Clippy completes; the strict `-D warnings` gate needs baseline cleanup.
 - Normal tests avoid live system services. Opt-in tests exercise the real runner
   timer, native audio events/actions, private BlueZ state/pairing/cancellation and
   private System domains/actions, modern/compatible clipboard, real example and
@@ -883,6 +892,9 @@ disabled in normal runtime.
 - Ordinary component tests validate constructed elements rather than full application
   golden images. Native overview tests additionally inspect real RGBA buffers and
   private compositor RGB output; broader full-surface visual snapshots remain manual.
-- Keyboard search, text-field traversal/application, category shortcuts and Escape
-  are verified; generic checkbox/button keyboard focus and screen-reader support
-  remain a shared-control follow-up.
+- Shared-control headless tests drive actual widget trees and nested overlays:
+  scoped/wrapping traversal, disabled/collapsed skipping, scrolling, live remapping,
+  single/multiline editing, nested activation, slider release, context menus and
+  leave/enter focus preservation. Host-flow tests distinguish nested captured Escape
+  from surface dismissal. Screen-reader support and unused legacy checkbox/radio
+  keyboard adapters remain follow-up work.

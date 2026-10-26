@@ -839,9 +839,17 @@ impl OxiBar {
         stack
             .push(
                 Column::new().push(Space::new().height(Length::Fill)).push(
-                    container(widget_card(controls.into(), false))
-                        .padding(OXITHEME.padding_lg)
-                        .width(Length::Fill),
+                    container(widget_card(
+                        oxiced::widgets::oxi_navigation::navigation(
+                            controls,
+                            self.config.snapshot.host.shortcuts.navigation(),
+                        )
+                        .focus_on_direction(false)
+                        .into(),
+                        false,
+                    ))
+                    .padding(OXITHEME.padding_lg)
+                    .width(Length::Fill),
                 ),
             )
             .into()

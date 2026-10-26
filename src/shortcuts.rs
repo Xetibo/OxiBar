@@ -5,6 +5,7 @@ use iced::{
 };
 use iced_layershell::reexport::IcedId;
 use oxibar_plugin_api::{ApplyMode, SettingDescriptor, SettingKind};
+use oxiced::widgets::oxi_navigation::{Action as Navigation, Bindings};
 use toml::{Table, Value};
 
 use crate::{app::OxiBar, messages::Message};
@@ -28,6 +29,7 @@ enum Context {
 enum Command {
     Close,
     Focus(bool),
+    Navigate(Navigation),
     Search,
     Category(usize),
     Control(usize),
@@ -71,18 +73,61 @@ fn definitions() -> Vec<Definition> {
     );
     add(
         "focus_next",
-        "Next form field",
+        "Next control / form field",
         "Tab",
         Forms,
         Command::Focus(true),
     );
     add(
         "focus_previous",
-        "Previous form field",
+        "Previous control / form field",
         "Shift+Tab",
         Forms,
         Command::Focus(false),
     );
+    for (name, label, keys, action) in [
+        ("next", "Next control", "ArrowDown, j", Navigation::Next),
+        (
+            "previous",
+            "Previous control",
+            "ArrowUp, k",
+            Navigation::Previous,
+        ),
+        (
+            "left",
+            "Previous control / decrease value",
+            "ArrowLeft, h",
+            Navigation::Left,
+        ),
+        (
+            "right",
+            "Next control / increase value",
+            "ArrowRight, l",
+            Navigation::Right,
+        ),
+        ("first", "First control / option", "Home", Navigation::First),
+        ("last", "Last control / option", "End", Navigation::Last),
+        (
+            "activate",
+            "Activate control / choose option",
+            "Enter, Space",
+            Navigation::Activate,
+        ),
+        (
+            "context_menu",
+            "Open focused item's context menu",
+            "Shift+F10, Menu",
+            Navigation::ContextMenu,
+        ),
+    ] {
+        add(
+            &format!("navigation.{name}"),
+            label,
+            keys,
+            Forms,
+            Command::Navigate(action),
+        );
+    }
     add(
         "settings.search",
         "Settings: focus search",
@@ -150,22 +195,22 @@ fn definitions() -> Vec<Definition> {
     );
     add(
         "session.next",
-        "Session: next action",
-        "ArrowDown, ArrowRight, Tab",
+        "Session: extra next-control binding",
+        "",
         Session,
         Command::Next(true),
     );
     add(
         "session.previous",
-        "Session: previous action",
-        "ArrowUp, ArrowLeft, Shift+Tab",
+        "Session: extra previous-control binding",
+        "",
         Session,
         Command::Next(false),
     );
     add(
         "session.activate",
-        "Session: choose action",
-        "Enter",
+        "Session: extra activation binding",
+        "",
         Session,
         Command::Activate,
     );
@@ -296,6 +341,7 @@ fn parse(value: &str) -> Result<Vec<Chord>, String> {
                 "pagedown" => Key::Named(Named::PageDown),
                 "backspace" => Key::Named(Named::Backspace),
                 "delete" => Key::Named(Named::Delete),
+                "menu" | "contextmenu" => Key::Named(Named::ContextMenu),
                 "plus" => Key::Character("+".into()),
                 "comma" => Key::Character(",".into()),
                 "f1" => Key::Named(Named::F1),
@@ -341,11 +387,54 @@ fn applies(binding: Context, current: Context) -> bool {
         || binding == Context::Forms
             && matches!(
                 current,
-                Context::Settings | Context::Controls | Context::Modal | Context::OxiPaste
+                Context::Settings
+                    | Context::Controls
+                    | Context::Modal
+                    | Context::OxiPaste
+                    | Context::Dropdown
             )
 }
 
 impl Config {
+    pub(crate) fn session_navigation(&self) -> Bindings {
+        let mut bindings: Vec<_> = self
+            .bindings
+            .iter()
+            .filter_map(|binding| {
+                if binding.context != Context::Session {
+                    return None;
+                }
+                let action = match binding.command {
+                    Command::Next(true) => Navigation::Next,
+                    Command::Next(false) => Navigation::Previous,
+                    Command::Activate => Navigation::Activate,
+                    _ => return None,
+                };
+                Some((binding.chord.key.clone(), binding.chord.modifiers, action))
+            })
+            .collect();
+        bindings.extend(self.navigation().0);
+        Bindings(bindings)
+    }
+
+    pub(crate) fn navigation(&self) -> Bindings {
+        Bindings(
+            self.bindings
+                .iter()
+                .filter_map(|binding| {
+                    let action = match binding.command {
+                        Command::Focus(true) => Navigation::FocusNext,
+                        Command::Focus(false) => Navigation::FocusPrevious,
+                        Command::Navigate(action) => action,
+                        Command::Close => Navigation::Cancel,
+                        _ => return None,
+                    };
+                    Some((binding.chord.key.clone(), binding.chord.modifiers, action))
+                })
+                .collect(),
+        )
+    }
+
     pub(crate) fn read(table: &Table) -> Result<Self, String> {
         let mut bindings: Vec<Binding> = Vec::new();
         for d in definitions() {
@@ -395,8 +484,14 @@ impl Config {
             .map(|b| b.command)
             .filter(|command| {
                 status == Status::Ignored
-                    || !(matches!(command, Command::Focus(_) | Command::Nudge(..))
-                        || context == Context::Launcher && matches!(command, Command::Activate))
+                    || !(matches!(
+                        command,
+                        Command::Focus(_) | Command::Navigate(_) | Command::Nudge(..)
+                    ) || matches!(command, Command::Close)
+                        && (applies(Context::Forms, context)
+                            || matches!(context, Context::Launcher | Context::Session))
+                        || matches!(context, Context::Launcher | Context::Session)
+                            && matches!(command, Command::Activate | Command::Next(_)))
             })
     }
 }
@@ -561,7 +656,7 @@ mod tests {
                 Modifiers::empty(),
                 Status::Ignored
             ),
-            None
+            Some(Command::Navigate(Navigation::Left))
         );
         assert_eq!(
             config.command(
@@ -602,5 +697,118 @@ mod tests {
         assert!(parse("Ctrl+Unknown").is_err());
         assert!(parse("").unwrap().is_empty());
         assert_eq!(parse("Super+Shift+F12, Ctrl+Plus").unwrap().len(), 2);
+    }
+
+    #[test]
+    fn shared_navigation_reaches_plugins_and_nested_capture_stays_local() {
+        let mut table = Table::new();
+        crate::config::store::set_path(
+            &mut table,
+            "shortcuts.navigation.next",
+            Value::String("Ctrl+n".into()),
+        )
+        .unwrap();
+        let config = Config::read(&table).unwrap();
+        let policy = config.navigation();
+        assert!(policy.0.contains(&(
+            Key::Character("n".into()),
+            Modifiers::CTRL,
+            Navigation::Next
+        )));
+        assert!(
+            !policy
+                .0
+                .iter()
+                .any(|(key, _, _)| key == &Key::Character("j".into()))
+        );
+        for context in [
+            Context::Modal,
+            Context::Dropdown,
+            Context::Controls,
+            Context::OxiPaste,
+        ] {
+            assert_eq!(
+                config.command(
+                    context,
+                    Key::Named(Named::Tab),
+                    Modifiers::empty(),
+                    Status::Ignored
+                ),
+                Some(Command::Focus(true))
+            );
+            assert_eq!(
+                config.command(
+                    context,
+                    Key::Named(Named::Escape),
+                    Modifiers::empty(),
+                    Status::Captured
+                ),
+                None
+            );
+            assert_eq!(
+                config.command(
+                    context,
+                    Key::Named(Named::Escape),
+                    Modifiers::empty(),
+                    Status::Ignored
+                ),
+                Some(Command::Close)
+            );
+        }
+        assert_eq!(
+            parse("Menu").unwrap()[0].key,
+            Key::Named(Named::ContextMenu)
+        );
+        crate::config::store::set_path(
+            &mut table,
+            "shortcuts.navigation.next",
+            Value::String("Ctrl+f".into()),
+        )
+        .unwrap();
+        assert!(
+            Config::read(&table)
+                .unwrap_err()
+                .contains("conflicts with shortcuts.navigation.next")
+        );
+    }
+
+    #[test]
+    fn session_inherits_global_remaps_and_keeps_explicit_aliases() {
+        let mut table = Table::new();
+        crate::config::store::set_path(
+            &mut table,
+            "shortcuts.navigation.activate",
+            Value::String("x".into()),
+        )
+        .unwrap();
+        let config = Config::read(&table).unwrap();
+        assert_eq!(config.session_navigation(), config.navigation());
+        assert!(
+            !config
+                .session_navigation()
+                .0
+                .iter()
+                .any(|(key, _, _)| { key == &Key::Named(Named::Enter) })
+        );
+        crate::config::store::set_path(
+            &mut table,
+            "shortcuts.session.activate",
+            Value::String("Ctrl+Enter".into()),
+        )
+        .unwrap();
+        let policy = Config::read(&table).unwrap().session_navigation();
+        assert_eq!(
+            policy.0[0],
+            (
+                Key::Named(Named::Enter),
+                Modifiers::CTRL,
+                Navigation::Activate
+            )
+        );
+        assert!(policy.0.contains(&(
+            Key::Character("x".into()),
+            Modifiers::empty(),
+            Navigation::Activate
+        )));
     }
 }

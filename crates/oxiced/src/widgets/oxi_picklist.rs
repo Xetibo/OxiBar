@@ -10,7 +10,10 @@ use iced::{
     Size, Theme, Vector, alignment, keyboard, touch, window,
 };
 
+use super::oxi_control::{Focus, draw_focus};
+use super::oxi_navigation::{control_focus, reveal_focused};
 use crate::theme::theme_impl::OXITHEME;
+use iced::advanced::widget::{Operation, operation::Focusable};
 
 pub fn picklist_style(_: &Theme, status: Status) -> Style {
     let palette = &OXITHEME;
@@ -242,6 +245,23 @@ where
         }
     }
 
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        _: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        control_focus(
+            operation,
+            layout.bounds(),
+            &mut tree
+                .state
+                .downcast_mut::<State<Renderer::Paragraph>>()
+                .focus,
+        );
+    }
+
     fn layout(
         &mut self,
         tree: &mut Tree,
@@ -333,6 +353,35 @@ where
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
 
         match event {
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key:
+                    keyboard::Key::Named(
+                        keyboard::key::Named::Enter
+                        | keyboard::key::Named::Space
+                        | keyboard::key::Named::ArrowLeft
+                        | keyboard::key::Named::ArrowRight,
+                    ),
+                repeat,
+                ..
+            }) if state.focus.0 => {
+                if !repeat && !state.is_open {
+                    state.is_open = true;
+                    state.menu.reveal = true;
+                    state.hovered_option = self
+                        .options
+                        .borrow()
+                        .iter()
+                        .position(|option| {
+                            self.selected.as_ref().map(Borrow::borrow) == Some(option)
+                        })
+                        .or_else(|| (!self.options.borrow().is_empty()).then_some(0));
+                    if let Some(on_open) = &self.on_open {
+                        shell.publish(on_open.clone());
+                    }
+                }
+                shell.capture_event();
+                shell.request_redraw();
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
                 if state.is_open {
@@ -344,14 +393,17 @@ where
 
                     shell.capture_event();
                 } else if cursor.is_over(layout.bounds()) {
+                    state.focus.0 = true;
                     let selected = self.selected.as_ref().map(Borrow::borrow);
 
                     state.is_open = true;
+                    state.menu.reveal = true;
                     state.hovered_option = self
                         .options
                         .borrow()
                         .iter()
-                        .position(|option| Some(option) == selected);
+                        .position(|option| Some(option) == selected)
+                        .or_else(|| (!self.options.borrow().is_empty()).then_some(0));
 
                     if let Some(on_open) = &self.on_open {
                         shell.publish(on_open.clone());
@@ -566,6 +618,9 @@ where
                 *viewport,
             );
         }
+        if state.focus.0 {
+            draw_focus(renderer, bounds);
+        }
     }
 
     fn overlay<'b>(
@@ -588,13 +643,10 @@ where
                 &mut state.menu,
                 self.options.borrow(),
                 &mut state.hovered_option,
-                |option| {
-                    state.is_open = false;
-
-                    (on_select)(option)
-                },
+                on_select,
                 None,
                 &self.menu_class,
+                (&mut state.is_open, self.on_close.clone()),
             )
             .width(bounds.width)
             .padding(self.padding)
@@ -635,6 +687,7 @@ where
 
 #[derive(Debug)]
 struct State<P: text::Paragraph> {
+    focus: Focus,
     menu: MenuState,
     keyboard_modifiers: keyboard::Modifiers,
     is_open: bool,
@@ -646,6 +699,7 @@ struct State<P: text::Paragraph> {
 impl<P: text::Paragraph> State<P> {
     fn new() -> Self {
         Self {
+            focus: Focus::default(),
             menu: MenuState::default(),
             keyboard_modifiers: keyboard::Modifiers::default(),
             is_open: bool::default(),
@@ -771,6 +825,7 @@ where
     hovered_option: &'a mut Option<usize>,
     on_selected: Box<dyn FnMut(T) -> Message + 'a>,
     on_option_hovered: Option<&'a dyn Fn(T) -> Message>,
+    closing: (&'a mut bool, Option<Message>),
     width: f32,
     padding: Padding,
     text_size: Option<Pixels>,
@@ -783,7 +838,7 @@ where
 impl<'a, 'b, T, Message, Theme, Renderer> Menu<'a, 'b, T, Message, Theme, Renderer>
 where
     T: ToString + Clone,
-    Message: 'a,
+    Message: Clone + 'a,
     Theme: MenuCatalog + 'a,
     Renderer: text::Renderer + 'a,
     'b: 'a,
@@ -795,6 +850,7 @@ where
         on_selected: impl FnMut(T) -> Message + 'a,
         on_option_hovered: Option<&'a dyn Fn(T) -> Message>,
         class: &'a <Theme as MenuCatalog>::Class<'b>,
+        closing: (&'a mut bool, Option<Message>),
     ) -> Self {
         Self {
             state,
@@ -802,6 +858,7 @@ where
             hovered_option,
             on_selected: Box::new(on_selected),
             on_option_hovered,
+            closing,
             width: 0.0,
             padding: Padding::ZERO,
             text_size: None,
@@ -862,12 +919,14 @@ where
 #[derive(Debug)]
 struct MenuState {
     tree: Tree,
+    reveal: bool,
 }
 
 impl MenuState {
     fn new() -> Self {
         Self {
             tree: Tree::empty(),
+            reveal: true,
         }
     }
 }
@@ -890,11 +949,12 @@ where
     width: f32,
     target_height: f32,
     class: &'a <Theme as MenuCatalog>::Class<'b>,
+    reveal: &'a mut bool,
 }
 
 impl<'a, 'b, Message, Theme, Renderer> MenuOverlay<'a, 'b, Message, Theme, Renderer>
 where
-    Message: 'a,
+    Message: Clone + 'a,
     Theme: MenuCatalog + 'a,
     Renderer: text::Renderer + 'a,
     'b: 'a,
@@ -915,6 +975,7 @@ where
             hovered_option,
             on_selected,
             on_option_hovered,
+            closing,
             width,
             padding,
             font,
@@ -929,6 +990,7 @@ where
             hovered_option,
             on_selected,
             on_option_hovered,
+            closing,
             font,
             text_size,
             text_line_height,
@@ -944,6 +1006,7 @@ where
             position,
             viewport,
             tree: &mut state.tree,
+            reveal: &mut state.reveal,
             list,
             width,
             target_height,
@@ -955,6 +1018,7 @@ where
 impl<Message, Theme, Renderer> Overlay<Message, Theme, Renderer>
     for MenuOverlay<'_, '_, Message, Theme, Renderer>
 where
+    Message: Clone,
     Theme: MenuCatalog,
     Renderer: text::Renderer,
 {
@@ -978,11 +1042,23 @@ where
         let node = self.list.layout(self.tree, renderer, &limits);
         let size = node.size();
 
-        node.move_to(if space_below > space_above {
+        let node = node.move_to(if space_below > space_above {
             self.position + Vector::new(0.0, self.target_height)
         } else {
             self.position - Vector::new(0.0, size.height)
-        })
+        });
+        if *self.reveal {
+            reveal_focused(|operation| {
+                self.list
+                    .operate(self.tree, Layout::new(&node), renderer, operation)
+            });
+            *self.reveal = false;
+        }
+        node
+    }
+
+    fn operate(&mut self, layout: Layout<'_>, renderer: &Renderer, operation: &mut dyn Operation) {
+        self.list.operate(self.tree, layout, renderer, operation);
     }
 
     fn update(
@@ -999,6 +1075,9 @@ where
         self.list.update(
             self.tree, event, layout, cursor, renderer, clipboard, shell, &bounds,
         );
+        if matches!(event, Event::Keyboard(keyboard::Event::KeyPressed { .. })) {
+            shell.capture_event();
+        }
     }
 
     fn mouse_interaction(
@@ -1076,6 +1155,7 @@ where
     hovered_option: &'a mut Option<usize>,
     on_selected: Box<dyn FnMut(T) -> Message + 'a>,
     on_option_hovered: Option<&'a dyn Fn(T) -> Message>,
+    closing: (&'a mut bool, Option<Message>),
     padding: Padding,
     text_size: Option<Pixels>,
     text_line_height: text::LineHeight,
@@ -1088,10 +1168,29 @@ struct MenuListState {
     is_hovered: Option<bool>,
 }
 
+struct OptionFocus<'a> {
+    selected: &'a mut Option<usize>,
+    index: usize,
+}
+impl Focusable for OptionFocus<'_> {
+    fn is_focused(&self) -> bool {
+        *self.selected == Some(self.index)
+    }
+    fn focus(&mut self) {
+        *self.selected = Some(self.index);
+    }
+    fn unfocus(&mut self) {
+        if self.is_focused() {
+            *self.selected = None;
+        }
+    }
+}
+
 impl<T, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for MenuList<'_, '_, T, Message, Theme, Renderer>
 where
     T: Clone + ToString,
+    Message: Clone,
     Theme: MenuCatalog,
     Renderer: text::Renderer,
 {
@@ -1143,11 +1242,37 @@ where
         _viewport: &Rectangle,
     ) {
         match event {
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                ..
+            }) => {
+                *self.closing.0 = false;
+                if let Some(message) = self.closing.1.clone() {
+                    shell.publish(message);
+                }
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space),
+                repeat,
+                ..
+            }) => {
+                if !repeat
+                    && let Some(option) = self.hovered_option.and_then(|i| self.options.get(i))
+                {
+                    *self.closing.0 = false;
+                    shell.publish((self.on_selected)(option.clone()));
+                    shell.request_redraw();
+                }
+                shell.capture_event();
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if cursor.is_over(layout.bounds())
                     && let Some(index) = *self.hovered_option
                     && let Some(option) = self.options.get(index)
                 {
+                    *self.closing.0 = false;
                     shell.publish((self.on_selected)(option.clone()));
                     shell.capture_event();
                 }
@@ -1186,6 +1311,7 @@ where
                     if let Some(index) = *self.hovered_option
                         && let Some(option) = self.options.get(index)
                     {
+                        *self.closing.0 = false;
                         shell.publish((self.on_selected)(option.clone()));
                         shell.capture_event();
                     }
@@ -1203,6 +1329,32 @@ where
             .is_some_and(|is_hovered| is_hovered != cursor.is_over(layout.bounds()))
         {
             shell.request_redraw();
+        }
+    }
+
+    fn operate(
+        &mut self,
+        _: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        let text_size = self.text_size.unwrap_or_else(|| renderer.default_size());
+        let height = f32::from(self.text_line_height.to_absolute(text_size)) + self.padding.y();
+        for index in 0..self.options.len() {
+            let bounds = Rectangle {
+                y: layout.bounds().y + height * index as f32,
+                height,
+                ..layout.bounds()
+            };
+            control_focus(
+                operation,
+                bounds,
+                &mut OptionFocus {
+                    selected: self.hovered_option,
+                    index,
+                },
+            );
         }
     }
 
@@ -1298,7 +1450,7 @@ impl<'a, 'b, T, Message, Theme, Renderer> From<MenuList<'a, 'b, T, Message, Them
     for Element<'a, Message, Theme, Renderer>
 where
     T: ToString + Clone,
-    Message: 'a,
+    Message: Clone + 'a,
     Theme: 'a + MenuCatalog,
     Renderer: 'a + text::Renderer,
     'b: 'a,

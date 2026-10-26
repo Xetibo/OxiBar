@@ -118,6 +118,7 @@ impl Navigation {
             "theme/spacing",
             "theme/motion",
             "shortcuts/common",
+            "shortcuts/navigation",
             "shortcuts/settings",
             "shortcuts/controls",
             "shortcuts/launcher",
@@ -383,6 +384,11 @@ fn metadata(id: &str) -> (String, String, Content) {
         "advanced/runtime" => (
             "Shell runtime",
             "Startup recovery and instance ownership.",
+            Content::Fields,
+        ),
+        "shortcuts/navigation" => (
+            "Shared navigation",
+            "Arrow and Vim keys for every popup, modal and plugin. Text fields keep their editing keys; Tab moves between controls.",
             Content::Fields,
         ),
         "monitors/profiles" => (

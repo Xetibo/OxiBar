@@ -1276,7 +1276,7 @@ fn media_button(
     label: &'static str,
     message: Message,
     busy: bool,
-) -> iced::widget::Button<'static, PluginMsg> {
+) -> oxiced::widgets::oxi_control::Button<'static, PluginMsg> {
     let button = oxi_button::button(
         text(label).size(OXITHEME.font_md),
         oxi_button::ButtonVariant::PrimaryBg,

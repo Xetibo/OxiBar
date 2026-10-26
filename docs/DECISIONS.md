@@ -1,5 +1,31 @@
 # Decisions
 
+## 2026-10-26: Shared configurable popup and modal navigation
+
+- Keep one live `shortcuts.navigation.*` policy in the host, with arrow/Vim defaults,
+  common Tab traversal, activation and context-menu actions. Shared oxiced controls
+  and nested overlays inherit it; plugins need no keyboard configuration or exports.
+  Preserve explicit session shortcuts as optional aliases; launcher search retains
+  its specialized result/mode bindings while ordinary controls use shared navigation.
+- Add focusable button/toggler/slider adapters and picklist option traversal.
+  Standard Iced focus/scroll operations and a standard role ID work across dylibs;
+  unmarked native focusables retain single/multiline editing behavior. Navigation
+  synchronously wraps focus, skips collapsed/disabled actions and reveals targets.
+- Keep pointer focus owned by the navigation root so bar controls cannot activate
+  behind an attached popup. Logical focus survives keyboard leave/enter; private
+  native testing caught virtual-keyboard replacement clearing custom control focus.
+  Nested captured Escape closes only the menu, then an uncaptured press closes the
+  owning surface and preserves existing cancellation/cleanup behavior.
+- Session tiles expose per-action labels and shared focus rings, replacing a stale
+  selected-index highlight/footer label. Desktop editing enters form controls with
+  Tab while retaining placement arrows before entry. Rebuild host/providers together;
+  required ABI-6 exports and dependencies are unchanged.
+- Verification: full workspace tests/build pass, including seven headless navigation
+  regressions and host scoping/remapping tests. The complete private-compositor smoke
+  passes live Audio remapping, nested Escape, mute/slider changes, session confirmation,
+  keyboard monitor editing/preview/save/revert and existing UI flows. Plain Clippy
+  completes; strict Clippy remains blocked by existing baseline warnings.
+
 ## 2026-10-20: Composed controls, local calendar and clipboard recovery
 
 - Add a synthetic Control Center Overview page with ordered `Provider:id` cards,

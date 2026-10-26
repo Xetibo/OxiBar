@@ -12,9 +12,10 @@ use std::{
 use iced::{
     Alignment, Background, Border, Color, ContentFit, Element, Length, Shadow, Theme,
     futures::channel::mpsc,
-    widget::{Column, Row, Space, button, column, container, image, mouse_area, row},
+    widget::{Column, Row, Space, column, container, image, mouse_area, row},
 };
 use oxibar_plugin_api::{PluginMsg, toml::Table};
+use oxiced::widgets::oxi_control::button;
 use oxiced::widgets::oxi_plugin::text;
 use oxiced::{
     theme::theme_impl::OXITHEME,
@@ -610,11 +611,15 @@ fn notification_card(
         .padding(palette.padding_md)
         .style(move |theme| notification_style(theme, &urgency, hovered));
 
-    mouse_area(card)
-        .on_enter(msg(Event::HoverChanged(id, true)))
-        .on_exit(msg(Event::HoverChanged(id, false)))
-        .on_press(msg(card_event))
-        .into()
+    mouse_area(
+        button(card)
+            .padding(0)
+            .style(|_, _| button::Style::default())
+            .on_press(msg(card_event)),
+    )
+    .on_enter(msg(Event::HoverChanged(id, true)))
+    .on_exit(msg(Event::HoverChanged(id, false)))
+    .into()
 }
 
 fn notification_height(notification: &Notification) -> u32 {

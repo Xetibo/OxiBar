@@ -75,10 +75,12 @@ impl OxiBar {
                     );
                 }
                 breadcrumbs = breadcrumbs.push(
-                    iced::widget::button(text(ancestor.label.clone()).size(OXITHEME.font_sm))
-                        .style(oxi_plugin::bar_button_style)
-                        .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
-                        .on_press(Message::Settings(Action::Page(ancestor.id.clone()))),
+                    oxiced::widgets::oxi_control::button(
+                        text(ancestor.label.clone()).size(OXITHEME.font_sm),
+                    )
+                    .style(oxi_plugin::bar_button_style)
+                    .padding([OXITHEME.padding_xs, OXITHEME.padding_sm])
+                    .on_press(Message::Settings(Action::Page(ancestor.id.clone()))),
                 );
             }
             body = body.push(breadcrumbs);
@@ -984,7 +986,7 @@ fn action_button<'a>(
     label: &'a str,
     action: Action,
     disabled: bool,
-) -> iced::widget::Button<'a, Message> {
+) -> oxiced::widgets::oxi_control::Button<'a, Message> {
     let primary = matches!(
         action,
         Action::Apply(_) | Action::SaveAdvanced | Action::AddWidget(_)

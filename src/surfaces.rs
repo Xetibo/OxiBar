@@ -149,6 +149,45 @@ impl OxiBar {
             Some(SurfaceKind::Bar(_)) => self.bar_surface_view(id),
             None => return self.empty_surface(),
         };
+        let content = if matches!(
+            self.shell.registry.get(id).map(|r| &r.kind),
+            Some(
+                SurfaceKind::Settings
+                    | SurfaceKind::ControlCenter
+                    | SurfaceKind::OxiPaste
+                    | SurfaceKind::Session
+                    | SurfaceKind::Launcher
+                    | SurfaceKind::Modal(_)
+                    | SurfaceKind::Panel(_)
+            )
+        ) {
+            let session = matches!(
+                self.shell.registry.get(id).map(|r| &r.kind),
+                Some(SurfaceKind::Session)
+            );
+            let shortcuts = &self.config.snapshot.host.shortcuts;
+            let navigation = oxiced::widgets::oxi_navigation::navigation(
+                content,
+                if session {
+                    shortcuts.session_navigation()
+                } else {
+                    shortcuts.navigation()
+                },
+            );
+            if session {
+                navigation
+                    .initial_focus(usize::from(
+                        self.session_entries()
+                            .iter()
+                            .any(|(_, entry)| entry.enabled),
+                    ))
+                    .into()
+            } else {
+                navigation.into()
+            }
+        } else {
+            content
+        };
         content.map(move |message| Message::FromSurface(id, Box::new(message)))
     }
 
@@ -446,6 +485,26 @@ impl OxiBar {
             Space::new().into()
         };
 
+        let shortcuts = &self.config.snapshot.host.shortcuts;
+        let popup_content = oxiced::widgets::oxi_navigation::navigation(
+            popup_content,
+            if plugin_id == "@session" {
+                shortcuts.session_navigation()
+            } else {
+                shortcuts.navigation()
+            },
+        );
+        let popup_content: Element<'_, Message> = if plugin_id == "@session" {
+            popup_content
+                .initial_focus(usize::from(
+                    self.session_entries()
+                        .iter()
+                        .any(|(_, entry)| entry.enabled),
+                ))
+                .into()
+        } else {
+            popup_content.into()
+        };
         let metrics = self.popup_metrics(plugin_id);
         let input_height = input_height.max(1.0);
         let popup_height = visible_height.max(1.0);

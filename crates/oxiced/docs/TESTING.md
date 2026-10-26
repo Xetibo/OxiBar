@@ -7,6 +7,10 @@
 - Widget-tree tests cover empty-root replacement and optional drag-preview child
   transitions, plus equal-geometry replacement with changed bounds identity;
   reveal tests preserve full child layout through animation.
+- Seven headless navigation regressions drive real controls and nested menu overlays:
+  wrapping/scoped focus, disabled/collapsed skipping, remapping, scrolling,
+  single/multiline editor preservation, nested activation, sliders/togglers,
+  context menus and logical focus across native leave/enter.
 - Oxibar's isolated GUI smoke exercises actual shared controls, pointer previews,
   SVG/raster application rendering, icon-only/live-label controls, session action
   tiles, theme changes and calendar layout.

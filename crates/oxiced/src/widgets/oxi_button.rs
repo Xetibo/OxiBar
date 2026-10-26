@@ -4,6 +4,7 @@ use iced::{
     widget::button::{Status, Style},
 };
 
+use super::oxi_control::{self, Button};
 use crate::theme::theme_impl::OXITHEME;
 
 pub enum ButtonVariant {
@@ -115,10 +116,7 @@ pub fn danger_button(_: &Theme, status: Status) -> Style {
     states(status, base, palette.bad_active, palette.bad_hover)
 }
 
-pub fn button<'a, M>(
-    content: impl Into<Element<'a, M>>,
-    variant: ButtonVariant,
-) -> iced::widget::Button<'a, M> {
+pub fn button<'a, M>(content: impl Into<Element<'a, M>>, variant: ButtonVariant) -> Button<'a, M> {
     let style = match variant {
         ButtonVariant::Primary => primary_button,
         ButtonVariant::Secondary => secondary_button,
@@ -127,7 +125,7 @@ pub fn button<'a, M>(
         ButtonVariant::PrimaryBg => primary_bg_button,
         ButtonVariant::SecondaryBg => secondary_bg_button,
     };
-    iced::widget::button(content)
+    oxi_control::button(content)
         .padding(OXITHEME.padding_md)
         .style(style)
 }
@@ -135,6 +133,6 @@ pub fn button<'a, M>(
 pub fn row_button<'a, M>(
     content: impl Into<Element<'a, M>>,
     variant: ButtonVariant,
-) -> iced::widget::Button<'a, M> {
+) -> Button<'a, M> {
     button(content, variant).width(Length::Fill)
 }

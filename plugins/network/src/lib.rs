@@ -6,7 +6,7 @@ use std::time::Duration;
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Shadow, Task,
     futures::{Stream, StreamExt},
-    widget::{Column, Container, Row, Space, button, scrollable},
+    widget::{Column, Container, Row, Space, scrollable},
 };
 use iced_anim::{AnimationBuilder, transition::Easing};
 use oxibar_plugin_api::{
@@ -14,6 +14,7 @@ use oxibar_plugin_api::{
     PluginMetadata, PluginModel, PluginMsg, PluginStream, drain_model_errors, plugin_model,
     toml::Table, with_model_read, with_model_write,
 };
+use oxiced::widgets::oxi_control::button;
 use oxiced::widgets::oxi_plugin::text;
 use oxiced::{
     theme::theme_impl::OXITHEME,

@@ -8,6 +8,10 @@
   retain their explicit family; reduced/zero motion bypasses animation builders.
 - Prefer small reusable helpers over copy-pasted local styles.
 - Button helpers should expose active, hovered, pressed, and disabled states.
+- Focusable action helpers draw a theme-accent ring without changing geometry.
+  The caller's navigation root handles Tab/arrows/Vim keys, disabled/hidden skipping,
+  focus scrolling and nested menus. Editors keep their typing/editing keys; Tab
+  exits editing. Nested Escape dismisses the menu before its owning surface.
 - Shared helpers should avoid application-specific names unless they are intentionally reusable patterns.
 - Keep helper defaults conservative so downstream apps can still override padding, width, height, and actions.
 - Compact plugin/status-bar controls should use `oxi_plugin::bar_button` or `oxi_plugin::bar_button_style` for 22.5 height, `[0, 8]` padding, transparent idle/hover background, and shadowless pressed feedback.

@@ -1,5 +1,12 @@
 # Technical Debt
 
+## Toolchain Lint Baseline
+
+- Workspace Clippy completes, but the pinned toolchain exposes existing warnings
+  in legacy radio/palette, authentication/buffer and overview code. Clean up
+  `collapsible_match`, `manual_is_multiple_of`, `useless_borrows_in_formatting` and
+  `chunks_exact_to_as_chunks` before the strict `-D warnings` gate is clean.
+
 ## Dock and Desktop Extensions
 
 - Initial dock/widgets are implemented and verified. Running-window activation is
@@ -330,13 +337,12 @@ It also tracks non-UI runtime/testing limitations that affect future plugin work
 
 ### Settings and Control-center Accessibility
 
-- Status: shared-control accessibility follow-up.
-- Current state: keyboard search, text-field traversal, Enter/Apply, category/tab
-  shortcuts and window-scoped Escape work. Settings now have animated nested
-  groups, breadcrumbs and a narrow full-path picker. Generic Iced button/switch keyboard
-  focus and screen-reader semantics are not yet uniformly exposed by shared controls.
-- Target fix: reusable focusable/accessible controls in `crates/oxiced`, with
-  full form navigation and runtime checks as the settings pages expand.
+- Resolved: shared buttons, switches, sliders and picklists support scoped keyboard
+  traversal, globally configurable Vim bindings, nested menus and focus scrolling.
+  Native leave/enter preserves logical focus; single/multiline editors keep typing.
+- Remaining: screen-reader semantics are not uniformly exposed by shared controls.
+  Third-party widgets must compose the shared focusable helpers to inherit action
+  navigation; raw native Iced buttons do not expose keyboard focus.
 
 ### Native Locking and Login Handoff
 

@@ -1,5 +1,22 @@
 # Decisions
 
+## 2026-10-26 — Caller-owned keyboard navigation
+
+- Add focusable button/toggler/slider adapters and picklist menu-option focus.
+  One caller-owned navigation policy covers content and nested overlays; standard
+  Iced operations and role IDs preserve cross-dylib behavior without new dependencies.
+  Unmarked native focusables retain editor keys, including multiline input.
+- Traverse synchronously, wrap enabled targets and scroll focused controls into view.
+  Filter collapsed reveal children. Invoke action callbacks directly so a focused
+  parent card cannot trigger its nested child accidentally.
+- Preserve logical focus across native leave/enter. The navigation root assigns
+  pointer focus, keeping out-of-scope bar buttons from intercepting popup activation.
+  Nested Escape is consumed before outer-surface dismissal.
+- Seven headless regressions and the downstream full workspace tests/build pass.
+  Private native smoke verifies live remapping, nested menus, real private audio
+  actions, confirmation cancellation and keyboard monitor forms. Strict Clippy has
+  existing baseline warnings documented by the host; plain workspace Clippy completes.
+
 ## 2026-10-12 — Flat bar-icon hover
 
 - Keep shared bar controls transparent on hover and retain pressed feedback.

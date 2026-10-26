@@ -4,9 +4,10 @@
 - Some downstream apps still carry local themed popup row/card styles that can move into `oxiced::widgets::oxi_plugin` once patterns stabilize.
 - The theme API exposes colors and spacing but only limited semantic text roles.
 - `oxi_plugin` covers primary, muted, and accent text roles; title/disabled/accent-muted roles are still not formalized.
-- Generic keyboard focus/screen-reader behavior for button and checkbox wrappers
-  remains a follow-up for complete form accessibility; text-input/editor traversal
-  is supported by the initial settings UI.
+- Resolved: button/toggler/slider/picklist keyboard focus, caller-owned remappable
+  navigation, nested menus and scrolling. Native text inputs/editors retain typing.
+- Screen-reader semantics and keyboard adapters for unused legacy checkbox/radio
+  widgets remain follow-up work; action widgets should compose the focusable helpers.
 - Base16/Base24 automatic text contrast is checked on opaque semantic backgrounds.
   Explicit role overrides and transparent backdrops can intentionally defeat that
   guarantee; a GUI contrast report for custom roles remains a possible extension.

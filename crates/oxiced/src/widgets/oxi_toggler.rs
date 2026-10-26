@@ -49,8 +49,8 @@ use lilt::Animated;
 
 use crate::theme::theme_impl::OXITHEME;
 
-pub fn toggler<'a, M>(enabled: bool) -> widget::Toggler<'a, M> {
-    widget::toggler(enabled)
+pub fn toggler<'a, M>(enabled: bool) -> super::oxi_control::Toggler<'a, M> {
+    super::oxi_control::toggler(enabled)
         .font(crate::theme::snapshot::current_font())
         .size(OXITHEME.font_lg + OXITHEME.padding_sm)
         .spacing(OXITHEME.padding_lg)

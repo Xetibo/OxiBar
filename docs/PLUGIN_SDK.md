@@ -149,6 +149,16 @@ full-height scroller. The host wraps source-surface messages so asynchronous
 pairing/password tasks retain their originating output. Never infer the output
 from a globally shared plugin model.
 
+Use the focusable `oxi_control::button`, existing `oxi_button`/`oxi_plugin` button
+helpers, `oxi_toggler::toggler`, `oxi_slider::slider` and `oxi_picklist::pick_list`
+for actions. The host supplies live `shortcuts.navigation.*` bindings and a scoped
+navigation wrapper to popup, modal and panel content, including nested menus.
+Compose these helpers for custom action widgets; native Iced buttons alone are
+not keyboard-focusable. Native text inputs/editors retain editing keys and
+participate in Tab traversal. No provider-owned navigation config or subscription
+is needed. These shared Rust widget changes require rebuilding host/providers
+together; required ABI-6 exports remain unchanged.
+
 Use the SDK's string host requests, including `HostOsdRequest::into_message()` and
 serialized toast requests. SDK-defined `Any` identities can differ between build
 graphs; plugin-local message types are for that plugin's `update` function.

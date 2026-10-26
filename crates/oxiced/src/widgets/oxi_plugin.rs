@@ -1,9 +1,10 @@
 use iced::{
     Background, Border, Color, Element, Length, Shadow, Theme,
     border::Radius,
-    widget::{Button, Container, Row, Scrollable, button, container, scrollable, svg},
+    widget::{Container, Row, Scrollable, container, scrollable, svg},
 };
 
+use super::oxi_control::{Button, button};
 use crate::theme::theme_impl::OXITHEME;
 
 pub const BAR_CONTROL_HEIGHT: f32 = 22.5;

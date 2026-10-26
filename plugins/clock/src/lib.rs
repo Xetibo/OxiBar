@@ -25,13 +25,14 @@ use iced::{
     border::Radius,
     font::Weight,
     futures::Stream,
-    widget::{Column, Row, button, container, tooltip},
+    widget::{Column, Row, container, tooltip},
 };
 use oxibar_plugin_api::{
     ABI_VERSION, HOST_REQUEST_TOGGLE_POPUP, PluginMetadata, PluginModel, PluginMsg, PluginStream,
     drain_model_errors, plugin_model, toml::Table, with_model_read, with_model_write,
 };
 use oxiced::theme::theme_impl::OXITHEME;
+use oxiced::widgets::oxi_control::button;
 use oxiced::widgets::oxi_plugin;
 use oxiced::widgets::oxi_plugin::text;
 

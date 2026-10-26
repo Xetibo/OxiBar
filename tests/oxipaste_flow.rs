@@ -125,7 +125,7 @@ fn picker_is_source_scoped_bounded_and_shares_one_visible_provider() {
 }
 
 #[test]
-fn exclusive_surfaces_dismiss_picker_and_escape_is_scoped_even_when_captured() {
+fn exclusive_surfaces_dismiss_picker_and_nested_escape_is_scoped() {
     let mut host = host();
     set(&mut host, "control_center.presentation", "window".into());
     for open_other in [
@@ -159,6 +159,13 @@ fn exclusive_surfaces_dismiss_picker_and_escape_is_scoped_even_when_captured() {
         Key::Named(Named::Escape),
         Modifiers::empty(),
         Status::Captured,
+    ));
+    assert_eq!(host.oxipaste_window(), Some(picker));
+    host.drive(Message::ShortcutKey(
+        picker,
+        Key::Named(Named::Escape),
+        Modifiers::empty(),
+        Status::Ignored,
     ));
     assert!(host.oxipaste_window().is_none());
 }

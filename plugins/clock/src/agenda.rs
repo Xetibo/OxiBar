@@ -407,7 +407,7 @@ pub fn view(model: &Model) -> Element<'static, PluginMsg> {
     )
     .into()
 }
-fn button(label: &'static str) -> iced::widget::Button<'static, PluginMsg> {
+fn button(label: &'static str) -> oxiced::widgets::oxi_control::Button<'static, PluginMsg> {
     oxi_plugin::surface_button(text(label), false)
 }
 fn field(
